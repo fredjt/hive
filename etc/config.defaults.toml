@@ -1,0 +1,130 @@
+# Hive default configuration. Override at ~/.config/hive/config.toml.
+
+[paths]
+# Root of the hive install. Auto-detected; only override if running from a non-standard location.
+hive_root = "~/.local/share/hive"
+
+[claude]
+# Path to the Claude Code CLI binary. Defaults to whatever is on PATH.
+bin = "claude"
+# Flags appended to every spawn. --dangerously-skip-permissions because spawned
+# agents can't interact with a permission prompt. --output-format json because
+# downstream parsers expect machine-readable output.
+flags = ["--dangerously-skip-permissions", "--output-format", "json"]
+# Model used for verification agents (stage 5: verify).
+# When set, verification spawns use --model "$verification_model" to use a
+# stronger model than the default. This is important because verification is
+# the most cognitively demanding stage — reviewing diffs, checking logic,
+# assessing correctness — and a weak model produces high failure rates.
+# The default model (from ANTHROPIC_MODEL or Claude Code config) is used
+# for all other agents (CEO, VPs, ICs). Set this to a stronger model
+# (e.g. "claude-sonnet-5", "claude-opus-4-8") for better verification.
+verification_model = ""
+
+[mcp]
+# HTTP transport for the dashboard, the CLI, and parallel-spawned agents.
+host = "127.0.0.1"
+port = 7891
+# stdio is also available; used when an agent is spawned with --mcp-config pointing here.
+
+[dashboard]
+host = "127.0.0.1"
+port = 3456
+# `hive` (no args) opens this in a browser. Set false to start the server only.
+auto_open = true
+
+[llm_tiny]
+# Small model for classification. See lib/tools/llm-tiny-README.md.
+url = "http://tanchin.org:8081/v1/chat/completions"
+model = "qwen"
+timeout = 30
+retries = 2
+max_tokens = 64
+temperature = 0.0
+thinking = false
+
+[logs]
+# All daemon and spawn logs go under .company/logs/<name>.log.
+# Set to true to also tee to systemd journal (requires hive run via systemd unit).
+journal = false
+
+[github]
+# Used by gh-init.sh and gh-issue-poll.sh. All gh-*.sh scripts no-op cleanly
+# when no remote is configured, so leaving this section default is safe.
+remote          = "origin"
+default_branch  = "main"
+mirror_issues   = true   # round-promote runs gh-issue-poll between rounds
+post_status_comments = true
+issue_label_prefix_dept     = "dept:"
+issue_label_prefix_type     = "type:"
+issue_label_prefix_priority = "priority:"
+# Auth: GITHUB_TOKEN in ~/.config/hive/env.sh takes precedence; falls back
+# to gh CLI's stored credentials (`gh auth login`).
+
+[release]
+# Release runs as stages 6-8 of every sprint (build-and-test → release-verify
+# → release-publish), driven by stage-advance.sh. No CEO request needed.
+require_clean_main          = true
+require_changelog_section   = true
+adversarial_smoke_test      = true   # release-ic adversarial review (stage 7)
+# Pluggable publisher. Default: lib/templates/publishers/github.sh.
+# Override with an absolute path to your own script with this signature:
+#   publisher.sh <version> <tarball_path> <sha256_path> <changelog_section_path>
+# See lib/templates/publishers/local-only.sh for an alternative.
+publisher_script            = ""        # empty = default github publisher
+max_release_retries         = 3         # Loop B cap: 3 bug-fix attempts then give up
+
+[sprint]
+# Sprint-staged lifecycle (stage-advance.sh).
+# Cap on tickets per dept that sprint-fill promotes from backlog → sprint-current.
+# Picks the top-priority backlog tickets (critical > high > medium > low,
+# ties broken by oldest first). If a dept already has >= this many active
+# tickets (sprint-current + in-progress), no new promotion happens.
+max_active_tickets          = 5         # sprint-fill --max argument
+# Loop A safety valve. Verification IC is the SOLE arbiter of whether a
+# ticket is done; this cap exists ONLY so that a single never-converging
+# ticket can't block the sprint from reaching release forever. When it
+# fires, remaining unfinished tickets are DEFERRED TO BACKLOG (their
+# verification rejection still stands; PRs + branches preserved; future
+# sprints can pick the work back up). NEVER auto-completes a ticket the
+# verification IC was rejecting. Set to 0 to disable the safety valve
+# entirely (sprint can hang on a stuck ticket).
+max_loop_iterations         = 100
+# Per-ticket verification bounce limit. After this many bounces, the ticket
+# is deferred to backlog (same mechanism as max_loop_iterations, but per-ticket).
+# The verification IC is the sole quality gate; this cap prevents a single ticket
+# from burning the entire sprint's iterations when the IC repeatedly bounces it.
+max_verification_bounces    = 5
+
+[worktree]
+# Stale worktree cleanup interval (seconds). The health supervisor calls
+# cleanup-worktrees.sh on this schedule (dedup'd). Prunes git's internal
+# stale entries, removes rebase helper branches (hive-check-rebase-*,
+# ci-rebase-test-*), nested temp worktrees (tmp.* paths), and detached
+# non-feature worktrees. Set to 0 to disable entirely.
+cleanup_interval     = 300
+# Maximum number of worktrees before logging a warning. The health
+# supervisor logs a one-time alert when the count exceeds this.
+max_worktrees        = 50
+
+[health]
+# Disk usage monitoring thresholds (percentage of filesystem capacity).
+# When disk usage exceeds these thresholds, the health supervisor logs
+# a one-time alert (dedup'd per threshold, 15-minute window).
+# Set to 0 to disable disk monitoring entirely.
+disk_usage_warn_pct  = 80
+disk_usage_crit_pct  = 90
+# Ticket directory disk usage report interval (seconds).
+# Reports total disk usage of done/ and archive/ directories across
+# all departments. Does NOT delete anything — reporting only.
+ticket_disk_report_interval = 300
+
+[tdd]
+# Hard-split TDD: stage-enqueue-tdd-red enqueues ic-tester for each
+# sprint-current ticket, then stage-enqueue-tdd-green enqueues
+# ic-engineer/ic-infra for each in-progress ticket with a [TDD-RED] commit.
+# The tdd-order gate enforces "first commit on the branch must touch a test file."
+hard_split             = true
+applies_to_agents      = ["ic-engineer", "ic-infra"]
+red_commit_prefix      = "[TDD-RED]"
+green_commit_prefix    = "[TDD-GREEN]"

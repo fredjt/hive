@@ -1,0 +1,59 @@
+# Auto-installed by hive's gh-init.sh. Fires when a tag of the form vX.Y.Z
+# is pushed (release-runner.sh does that after release-gates.sh passes).
+# Re-builds the tarball deterministically on a clean runner, validates the
+# sha256, and uploads the artifacts to the GitHub release page.
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Verify VERSION matches tag
+        run: |
+          tag="${GITHUB_REF##*/}"        # e.g. v0.3.0
+          ver_in_file=""
+          [ -f VERSION ] && ver_in_file=$(tr -d '[:space:]' < VERSION)
+          if [ "v${ver_in_file}" != "$tag" ]; then
+            echo "::error::tag $tag does not match VERSION '$ver_in_file' (expected v$ver_in_file)"
+            exit 1
+          fi
+
+      - name: Re-build deterministically
+        run: |
+          if [ -x packaging/build-package.sh ]; then
+            bash packaging/build-package.sh
+          else
+            echo "::warning::no packaging/build-package.sh — skipping deterministic rebuild"
+          fi
+
+      - name: Verify sha256 sidecar
+        run: |
+          ver="${GITHUB_REF##*/v}"
+          if [ -f "dist/hive-${ver}.sha256" ]; then
+            (cd dist && sha256sum -c "hive-${ver}.sha256")
+          else
+            echo "::warning::no dist/hive-${ver}.sha256 to verify"
+          fi
+
+      - name: Upload to GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          tag="${GITHUB_REF##*/}"
+          ver="${tag#v}"
+          if [ -f "dist/hive-${ver}.tar.gz" ]; then
+            gh release upload "$tag" "dist/hive-${ver}.tar.gz" "dist/hive-${ver}.sha256" --clobber
+          else
+            echo "::warning::no tarball at dist/hive-${ver}.tar.gz to upload"
+          fi

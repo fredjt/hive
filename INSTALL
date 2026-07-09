@@ -1,0 +1,10 @@
+Hive 0.5.14 — installation
+
+  1. Extract this archive (you've already done this)
+  2. Run: bash packaging/install.sh --copy-to ~/.local/share/hive
+  3. Verify: hive doctor
+
+That copies the tree to ~/.local/share/hive, creates a Python venv there with
+required packages, and symlinks ~/.local/bin/hive → bin/hive.
+
+For more docs, see share/docs/README.md, ARCHITECTURE.md, CLI.md, MCP-TOOLS.md.

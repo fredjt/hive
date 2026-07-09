@@ -1,0 +1,100 @@
+# Auto-installed by hive's gh-init.sh. Mirrors verification-gates.sh on
+# GitHub's runners so the verification IC can read `gh pr checks` before
+# merging. Customize per project as needed.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  gates:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # need full history for tdd-order check
+
+      - name: Classify PR (code vs non-code)
+        id: classify
+        run: |
+          # Mirrors verification-gates.sh: PRs from non-developer departments
+          # (marketing, legal, finance, HR docs, research deliverables) ship
+          # documents, not source. If the diff has no source-language files,
+          # the code gates below would all fail spuriously — skip them.
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            base="origin/${{ github.base_ref }}"
+          else
+            base="HEAD~1"
+          fi
+          changed=$(git diff --name-only "$base"..HEAD 2>/dev/null || true)
+          source_changed=$(echo "$changed" | grep -E '\.(js|ts|jsx|tsx|mjs|cjs|py|rs|go|java|kt|c|cc|cpp|h|hpp|rb|php|cs|swift|sh)$' || true)
+          if [ -z "$source_changed" ]; then
+            echo "is_code=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Non-code PR (no source-language files changed) — skipping TDD-order, tests, lint, security gates."
+          else
+            echo "is_code=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Setup Node
+        if: steps.classify.outputs.is_code == 'true' && hashFiles('package.json') != ''
+        uses: actions/setup-node@v4
+        with: { node-version: '20', cache: 'npm' }
+
+      - name: Setup Python
+        if: steps.classify.outputs.is_code == 'true' && (hashFiles('pyproject.toml') != '' || hashFiles('requirements.txt') != '')
+        uses: actions/setup-python@v5
+        with: { python-version: '3.x' }
+
+      - name: Install
+        if: steps.classify.outputs.is_code == 'true'
+        run: |
+          set -e
+          if [ -f package.json ]; then npm ci || npm install; fi
+          if [ -f pyproject.toml ]; then python -m pip install -e ".[dev]" 2>/dev/null || python -m pip install -e .; fi
+          if [ -f requirements.txt ]; then python -m pip install -r requirements.txt; fi
+          if [ -f Cargo.toml ]; then rustup default stable; fi
+
+      - name: TDD-order gate (PR only)
+        if: steps.classify.outputs.is_code == 'true' && github.event_name == 'pull_request'
+        run: |
+          base=$(git merge-base origin/${{ github.base_ref }} HEAD)
+          first_commit=$(git rev-list --reverse "$base..HEAD" | head -1)
+          [ -z "$first_commit" ] && { echo "no commits on branch"; exit 0; }
+          changed=$(git diff-tree --no-commit-id --name-only -r "$first_commit")
+          echo "First commit ($first_commit) changed:"
+          echo "$changed"
+          if echo "$changed" | grep -qE '(^|/)(tests?|__tests__|spec)(/|$)' || \
+             echo "$changed" | grep -qE '(test_|_test\.|\.test\.|\.spec\.)'; then
+            echo "::notice::TDD-order gate passed"
+          else
+            echo "::error::TDD violation: first commit on this branch must add/modify a test file. Refactor: write test first, then implementation."
+            exit 1
+          fi
+
+      - name: Tests
+        if: steps.classify.outputs.is_code == 'true'
+        run: |
+          set -e
+          if [ -f package.json ] && jq -e '.scripts.test' package.json >/dev/null; then npm test --silent; fi
+          if [ -f pyproject.toml ] || [ -f pytest.ini ] || [ -f setup.cfg ]; then pytest -q || true; fi
+          if [ -f Cargo.toml ]; then cargo test --quiet; fi
+          if [ -f go.mod ]; then go test ./...; fi
+
+      - name: Lint
+        if: steps.classify.outputs.is_code == 'true'
+        continue-on-error: false
+        run: |
+          if [ -f package.json ] && jq -e '.scripts.lint' package.json >/dev/null; then npm run lint --silent; fi
+          if [ -f pyproject.toml ] && command -v ruff >/dev/null; then ruff check .; fi
+          if [ -f Cargo.toml ]; then cargo clippy --quiet -- -D warnings; fi
+          if [ -f go.mod ]; then go vet ./...; fi
+
+      - name: Security
+        if: steps.classify.outputs.is_code == 'true'
+        continue-on-error: true
+        run: |
+          if [ -f package.json ]; then npm audit --audit-level=high || true; fi
+          if [ -f pyproject.toml ] && command -v pip-audit >/dev/null; then pip-audit --disable-pip || true; fi
+          if [ -f Cargo.toml ] && command -v cargo-audit >/dev/null; then cargo audit --quiet || true; fi

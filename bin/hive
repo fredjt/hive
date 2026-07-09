@@ -1,0 +1,89 @@
+#!/usr/bin/env bash
+# hive — entry point. Resolves the Python venv from the global install,
+# the per-project .hive/ scaffold from the current working directory, and
+# delegates to lib/hive_cli/main.py.
+#
+# Two roots are involved:
+#   HIVE_INSTALL_DIR — global install (~/.local/share/hive). Holds the venv,
+#                      MCP server source, CLI source, dashboard source, the
+#                      two PreToolUse hooks, and packaging scripts.
+#   HIVE_ROOT        — per-project scaffold (<project>/.hive/). Holds the
+#                      agents, tools, templates, core/{spawn,init,orchestrator},
+#                      and config.toml that the project's running company uses.
+#                      Tweakable per-project; pre-seeded into .gitignore so
+#                      tweaks are opt-in via negation entries.
+#
+# `hive init` is the exception: it CREATES .hive/, so it tolerates missing
+# scaffold and falls back to HIVE_ROOT=HIVE_INSTALL_DIR until init.sh has
+# run scaffold-extract.
+
+set -euo pipefail
+
+SCRIPT="$(readlink -f "$0")"
+HIVE_INSTALL_DIR="$(cd "$(dirname "$SCRIPT")/.." && pwd)"
+export HIVE_INSTALL_DIR
+
+VENV_PY="$HIVE_INSTALL_DIR/venv/bin/python"
+if [ ! -x "$VENV_PY" ]; then
+  echo "hive: venv not found at $HIVE_INSTALL_DIR/venv. Run $HIVE_INSTALL_DIR/packaging/install.sh" >&2
+  exit 1
+fi
+
+# Walk up from CWD looking for a .company/ sentinel. If found, that's the
+# project root and HIVE_ROOT is its sibling .hive/. If not found, this is
+# probably `hive init` — leave HIVE_ROOT pointing at the install so init's
+# scripts can find their sources.
+PROJECT_ROOT=""
+HIVE_ROOT=""
+SEARCH_DIR="$PWD"
+while [ "$SEARCH_DIR" != "/" ]; do
+  if [ -d "$SEARCH_DIR/.company" ]; then
+    PROJECT_ROOT="$SEARCH_DIR"
+    break
+  fi
+  SEARCH_DIR="$(dirname "$SEARCH_DIR")"
+done
+
+if [ -n "$PROJECT_ROOT" ]; then
+  export PROJECT_ROOT
+  export COMPANY_DIR="$PROJECT_ROOT/.company"
+  if [ -d "$PROJECT_ROOT/.hive" ]; then
+    HIVE_ROOT="$PROJECT_ROOT/.hive"
+  else
+    # Sentinel found but no .hive/ → flag-day upgrade required. Allow the
+    # `scaffold` subcommand to proceed (it'll create .hive/); for
+    # everything else, demand the extraction first.
+    case "${1:-}" in
+      scaffold|--help|-h|help|"")
+        HIVE_ROOT="$HIVE_INSTALL_DIR"
+        ;;
+      *)
+        cat >&2 <<EOF
+hive: $PROJECT_ROOT/.hive/ does not exist.
+
+This project was created with an older version of hive that did not
+extract a per-project scaffold. Every project must have a .hive/ directory
+containing its tweakable agents, tools, templates, and config (the .company/
+directory continues to hold locked runtime state).
+
+To upgrade:
+  cd "$PROJECT_ROOT"
+  hive scaffold extract
+
+This is a one-time per-project step.
+EOF
+        exit 1
+        ;;
+    esac
+  fi
+else
+  HIVE_ROOT="$HIVE_INSTALL_DIR"
+fi
+export HIVE_ROOT
+
+# Legacy alias many scripts still consult before falling back to walk-up.
+export SKILL_DIR="$HIVE_ROOT"
+
+export PYTHONPATH="$HIVE_INSTALL_DIR/lib${PYTHONPATH:+:$PYTHONPATH}"
+
+exec "$VENV_PY" -m hive_cli.main "$@"

@@ -1,0 +1,6 @@
+# Hive Python deps. Pin minimum versions.
+mcp>=1.0
+fastapi>=0.110
+uvicorn[standard]>=0.27
+httpx>=0.27
+tomli>=2.0; python_version < "3.11"

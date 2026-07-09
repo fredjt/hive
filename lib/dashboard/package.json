@@ -1,0 +1,14 @@
+{
+  "name": "company-board",
+  "version": "1.0.0",
+  "description": "Web UI for viewing and managing Company skill ticket boards",
+  "main": "server.js",
+  "bin": {
+    "company-board": "./server.js"
+  },
+  "scripts": {
+    "start": "node server.js"
+  },
+  "keywords": ["ticket", "kanban", "company", "claude"],
+  "license": "MIT"
+}

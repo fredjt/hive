@@ -1,0 +1,27 @@
+# Runtime state — per-project, never committed
+.company/
+.worktrees/
+
+# Local config overrides
+etc/config.toml
+
+# Node
+node_modules/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+venv/
+.venv/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
