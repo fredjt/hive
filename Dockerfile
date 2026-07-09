@@ -5,7 +5,6 @@
 # inaccessible.
 #
 # Build:
-#   cp "$(which claude)" .
 #   docker build -t hive-claude .
 #
 # Run (agent spawn):
@@ -15,10 +14,12 @@
 #     -v "$WORKTREE_DIR:/work:rw" \
 #     -w /work \
 #     --tmpfs /root/.claude:noexec,nosuid,size=100m \
+#     -v "$MCP_CONFIG:/mcp-config:ro" \
 #     --network host \
 #     hive-claude \
 #     claude -p "<prompt>" --dangerously-skip-permissions \
-#            --output-format stream-json --verbose
+#            --output-format stream-json --verbose \
+#            --mcp-config /mcp-config
 #
 # Security model:
 #   • The container has NO access to .company/ or the host filesystem.
@@ -38,19 +39,21 @@
 FROM debian:trixie-slim
 
 # ca-certificates for HTTPS to Anthropic API.
-# curl for health-check / diagnostic use.
+# curl for the installer and diagnostic use.
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates \
         curl \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy the claude CLI binary (placed in build context by the caller)
-COPY claude /usr/local/bin/claude
-RUN chmod +x /usr/local/bin/claude
+# Install Claude Code CLI from the official installer.
+# The installer downloads the binary, verifies its SHA256 checksum against
+# the signed manifest, and sets up the launcher in ~/.local/bin.
+RUN curl -fsSL https://claude.ai/install.sh | bash
 
 # Environment
 ENV CLAUDE_HOME=/root/.claude
 ENV HOME=/root
+ENV PATH="/root/.local/bin:$PATH"
 
 # Default: show help so the image is inspectable without an API key
 CMD ["claude", "--help"]
