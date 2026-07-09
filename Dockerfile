@@ -11,15 +11,14 @@
 #   docker run --rm \
 #     -e ANTHROPIC_API_KEY="$ANTHROPIC_API_KEY" \
 #     -e ANTHROPIC_BASE_URL="$ANTHROPIC_BASE_URL" \
+#     -v "$HIVE_ROOT/.claude:/host-claude:ro" \
 #     -v "$WORKTREE_DIR:/work:rw" \
 #     -w /work \
 #     --tmpfs /root/.claude:noexec,nosuid,size=100m \
 #     -v "$MCP_CONFIG:/mcp-config:ro" \
 #     --network host \
 #     hive-claude \
-#     claude -p "<prompt>" --dangerously-skip-permissions \
-#            --output-format stream-json --verbose \
-#            --mcp-config /mcp-config
+#     /entrypoint.sh "<prompt>"
 #
 # Security model:
 #   • The container has NO access to .company/ or the host filesystem.
@@ -54,6 +53,13 @@ RUN curl -fsSL https://claude.ai/install.sh | bash
 ENV CLAUDE_HOME=/root/.claude
 ENV HOME=/root
 ENV PATH="/root/.local/bin:$PATH"
+
+# The project's .claude/ directory (settings, permissions, etc.) is mounted
+# read-only at /host-claude at runtime. An entrypoint script copies config
+# files into the ephemeral /root/.claude tmpfs so Claude Code sees them.
+
+COPY entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
 
 # Default: show help so the image is inspectable without an API key
 CMD ["claude", "--help"]
