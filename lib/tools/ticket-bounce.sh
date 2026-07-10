@@ -58,7 +58,7 @@ $RATIONALE"; then
 fi
 
 # 2. If --skip-tdd-red, set the flag on the ticket file BEFORE moving it,
-# so stage-enqueue-tdd-green sees it on the next loop.
+# so sprint-lifecycle bounces it to tdd-red on the next loop.
 if [ "$SKIP_TDD_RED" = 1 ]; then
   for st in in-review in-progress sprint-current; do
     f="$COMPANY_DIR/departments/$DEPT/tickets/$st/${TICKET_ID}.json"
@@ -70,16 +70,16 @@ if [ "$SKIP_TDD_RED" = 1 ]; then
   done
 fi
 
-# 2b. Increment verification_bounce_count on the ticket. This is used by
-# stage-enqueue-verify.sh and round-runner.sh to enforce a per-ticket
-# bounce limit (MAX_VERIFICATION_BOUNCES, default 5) so a single ticket
-# cannot burn the entire sprint's iterations when the verification IC
-# repeatedly bounces it.  (photonic-proc ENGINEERING-0047 had 47 bounces.)
+# 2b. Increment bounce_count on the ticket. This is used by
+# sprint-lifecycle.sh to enforce a per-ticket bounce limit
+# (MAX_VERIFICATION_BOUNCES, default 5) so a single ticket cannot
+# burn the entire sprint's iterations when verification repeatedly
+# bounces it.  (photonic-proc ENGINEERING-0047 had 47 bounces.)
 for st in in-review in-progress sprint-current; do
   f="$COMPANY_DIR/departments/$DEPT/tickets/$st/${TICKET_ID}.json"
   if [ -f "$f" ]; then
     tmp="${f}.tmp.$$"
-    jq '.verification_bounce_count = ((.verification_bounce_count // 0) + 1)' \
+    jq '.bounce_count = ((.bounce_count // 0) + 1)' \
       "$f" > "$tmp" && mv "$tmp" "$f"
     break
   fi

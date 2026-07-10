@@ -249,7 +249,7 @@ def _add_release(sub) -> None:
 
 
 def _add_round(sub) -> None:
-    p = sub.add_parser("round", help="Inspect / control the round-runner queue")
+    p = sub.add_parser("round", help="Inspect / control the round queue")
     sp = p.add_subparsers(dest="action", required=True)
     sp.add_parser("status",   help="Print current round + cursor position")
     sp.add_parser("next",     help="Print the CEO's pending next-plan.json (if any)")

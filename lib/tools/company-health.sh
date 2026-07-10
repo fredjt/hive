@@ -388,8 +388,8 @@ except Exception:
           return 1
         fi
         ;;
-      round-runner)
-        HIVE_ROOT="$SKILL_DIR" bash "$SCRIPT_DIR/round-runner.sh" "$PROJECT_ROOT" >> "$log_file" 2>&1 &
+      sprint-lifecycle)
+        HIVE_ROOT="$SKILL_DIR" bash "$SCRIPT_DIR/sprint-lifecycle.sh" "$PROJECT_ROOT" >> "$log_file" 2>&1 &
         new_pid=$!
         ;;
       dashboard-generator)

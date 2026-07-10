@@ -1,0 +1,158 @@
+digraph "sprint-lifecycle" {
+  rankdir=TB;
+  fontname="Helvetica";
+  node [fontname="Helvetica", fontsize=11, shape=box, style="rounded,filled", fillcolor="#f0f0f0", penwidth=2];
+  edge [fontname="Helvetica", fontsize=10];
+
+  // ── Colors ──
+  subgraph cluster_colors {
+    label = "Legend";
+    style=dashed;
+    fontsize=10;
+    c_start [label="Start", shape=circle, fillcolor="#4CAF50", fontcolor=white, style=filled, penwidth=3];
+    c_planning [label="Planning", fillcolor="#90CAF9"];
+    c_ticket [label="Ticket lifecycle", fillcolor="#FFF59D"];
+    c_release [label="Release", fillcolor="#CE93D8"];
+    c_end [label="End", shape=circle, fillcolor="#4CAF50", fontcolor=white, style=filled, penwidth=3];
+    c_fail [label="Failure", fillcolor="#EF5350", fontcolor=white];
+    c_gate [label="Gates", fillcolor="#FFB74D"];
+    c_verify [label="Verification", fillcolor="#81C784"];
+    labelloc = "t";
+    label = "Legend";
+    c_start -> c_planning [style=invis];
+    c_planning -> c_ticket [style=invis];
+    c_ticket -> c_release [style=invis];
+    c_release -> c_end [style=invis];
+  }
+
+  // ── Sprint start ──
+  start [label="Sprint start", shape=doublecircle, fillcolor="#4CAF50", fontcolor=white, style=filled];
+
+  // ── Planning phase ──
+  ceo_plan [label="CEO planning\nper-dept direction", fillcolor="#90CAF9"];
+  vp_plan [label="VP planning\nper department\nfiles backlog tickets", fillcolor="#90CAF9"];
+  sprint_fill [label="Sprint-fill\nbacklog → sprint-current\n(max active tickets)", fillcolor="#90CAF9"];
+
+  // ── Ticket loop ──
+  check_active [label="Any active\ntickets?", shape=diamond, fillcolor="#E3F2FD", style="rounded,filled"];
+  no_tickets [label="No active tickets\n→ release pipeline", shape=diamond, fillcolor="#E3F2FD", style="rounded,filled"];
+
+  pick_ticket [label="Pick next ticket\nfrom sprint-current", fillcolor="#FFF59D"];
+
+  loop_safety [label="Loop iteration\n< MAX_LOOP?", shape=diamond, fillcolor="#E3F2FD", style="rounded,filled"];
+  safety_defer [label="Defer all remaining\ntickets to backlog", fillcolor="#EF5350", fontcolor=white, style="rounded,filled"];
+
+  // ── Per-ticket lifecycle ──
+  ensure_worktree [label="Create worktree\nat main tip", fillcolor="#FFF59D"];
+  move_in_progress [label="Move → in-progress", fillcolor="#FFF59D"];
+
+  // TDD-RED
+  has_red_commit [label="[TDD-RED] commit\nexists?", shape=diamond, fillcolor="#FFF59D", style="rounded,filled"];
+  skip_red [label="skip_tdd_red\nflag set?", shape=diamond, fillcolor="#FFF59D", style="rounded,filled"];
+  spawn_tester [label="Spawn ic-cycle-tester\nwrite failing test", fillcolor="#FFF59D"];
+  tester_ok [label="Tester produced\n[TDD-RED] commit?", shape=diamond, fillcolor="#FFF59D", style="rounded,filled"];
+  tdd_red_attempts [label="tdd_red_attempts\n< 3?", shape=diamond, fillcolor="#FFF59D", style="rounded,filled"];
+  set_skip_red [label="Set skip_tdd_red=true\ncomment on ticket", fillcolor="#FFB74D"];
+
+  // TDD-GREEN
+  spawn_engineer [label="Spawn ic-cycle-engineer\nor ic-infra\nimplement code", fillcolor="#FFF59D"];
+  engineer_ok [label="Engineer exited\n0?", shape=diamond, fillcolor="#FFF59D", style="rounded,filled"];
+  bounce_to_ip [label="Bounce → in-progress\nbounce_count++", fillcolor="#FFB74D"];
+
+  // Gates
+  move_in_review [label="Move → in-review", fillcolor="#FFF59D"];
+  run_gates [label="Run verification-gates.sh\nGate 0: skip_tdd_red?\nGates 1-7: worktree, commits,\nTDD order, tests-exist,\ntests-pass, lint-pass,\nsecurity-clean", fillcolor="#FFB74D"];
+  gates_skip_red [label="skip_tdd_red = true\n(Gate 0)", shape=diamond, fillcolor="#FFB74D", style="rounded,filled"];
+  gates_pass [label="All gates\npassed?", shape=diamond, fillcolor="#FFB74D", style="rounded,filled"];
+  gates_bounce_red [label="Bounce → tdd-red\nbounce_count++", fillcolor="#FFB74D"];
+  gates_bounce_green [label="Bounce → tdd-green\nbounce_count++", fillcolor="#FFB74D"];
+
+  // Verification
+  spawn_verifier [label="Spawn verification-IC\n(or verification-ic-admin)", fillcolor="#81C784"];
+  verifier_ok [label="Verifier approved\n→ done?", shape=diamond, fillcolor="#81C784", style="rounded,filled"];
+  verifier_bounce [label="Verifier bounced\n→ in-progress", fillcolor="#81C784"];
+  check_bounce_limit [label="bounce_count\n< MAX_VERIFICATION?", shape=diamond, fillcolor="#81C784", style="rounded,filled"];
+  bounce_backlog [label="Bounce limit exceeded\n→ backlog\ndel bounce_count", fillcolor="#EF5350", fontcolor=white, style="rounded,filled"];
+
+  // ── Release pipeline ──
+  build_test [label="Build-and-test\nrelease-test-suite.sh", fillcolor="#CE93D8"];
+  build_pass [label="Build pass?", shape=diamond, fillcolor="#CE93D8", style="rounded,filled"];
+  release_retry [label="release_retry_count\n< MAX_RELEASE_RETRIES?", shape=diamond, fillcolor="#CE93D8", style="rounded,filled"];
+  bugfix_cycle [label="Bugfix cycle:\nCEO plan → VP plan →\nsprint-fill → tdd-red", fillcolor="#CE93D8"];
+  release_verify [label="Release-verify\nrelease-IC adversarial review", fillcolor="#CE93D8"];
+  release_pass [label="Release GO?", shape=diamond, fillcolor="#CE93D8", style="rounded,filled"];
+  release_publish [label="Release-publish\n(pluggable publisher)", fillcolor="#CE93D8"];
+  vp_review [label="VP-review\nper-dept sprint review", fillcolor="#CE93D8"];
+  archive [label="Archive sprint\nstart new sprint", fillcolor="#CE93D8"];
+
+  // ── Edges ──
+  start -> ceo_plan [label=""];
+  ceo_plan -> vp_plan [label=""];
+  vp_plan -> sprint_fill [label=""];
+  sprint_fill -> check_active [label=""];
+
+  check_active -> pick_ticket [label="yes"];
+  check_active -> no_tickets [label="no"];
+
+  pick_ticket -> loop_safety [label=""];
+  loop_safety -> safety_defer [label="no", color=red];
+  loop_safety -> ensure_worktree [label="yes", color=green];
+  safety_defer -> no_tickets [label="deferred", color=red];
+
+  ensure_worktree -> move_in_progress [label=""];
+  move_in_progress -> has_red_commit [label=""];
+
+  has_red_commit -> skip_red [label="no"];
+  has_red_commit -> spawn_engineer [label="yes"];
+
+  skip_red -> spawn_engineer [label="yes", color=orange, labelcolor=orange];
+  skip_red -> spawn_tester [label="no"];
+
+  spawn_tester -> tester_ok [label=""];
+  tester_ok -> has_red_commit [label="retry", color=orange];
+  tester_ok -> tdd_red_attempts [label="no"];
+
+  tdd_red_attempts -> set_skip_red [label="no"];
+  tdd_red_attempts -> spawn_engineer [label="yes"];
+  set_skip_red -> has_red_commit [label="retry", color=orange];
+
+  spawn_engineer -> engineer_ok [label=""];
+  engineer_ok -> move_in_review [label="yes", color=green];
+  engineer_ok -> bounce_to_ip [label="no", color=red];
+  bounce_to_ip -> spawn_engineer [label="re-enqueue", color=orange];
+
+  move_in_review -> run_gates [label=""];
+  run_gates -> gates_skip_red [label="Gate 0"];
+  gates_skip_red -> gates_bounce_red [label="yes", color=red, labelcolor=red];
+  gates_skip_red -> gates_pass [label="no"];
+  gates_pass -> spawn_verifier [label="yes", color=green];
+  gates_pass -> gates_bounce_green [label="no", color=red];
+  gates_bounce_red -> spawn_engineer [label="bounce to tdd-red", color=orange];
+  gates_bounce_green -> spawn_engineer [label="bounce to tdd-green", color=orange];
+
+  spawn_verifier -> verifier_ok [label=""];
+  verifier_ok -> check_bounce_limit [label="no"];
+  verifier_ok -> ticket_done [label="approved", shape=ellipse, fillcolor="#4CAF50", fontcolor=white, style=filled];
+
+  verifier_bounce -> check_bounce_limit [label="no"];
+  check_bounce_limit -> pick_ticket [label="yes", color=green];
+  check_bounce_limit -> bounce_backlog [label="no", color=red];
+  bounce_backlog -> no_tickets [label="deferred", color=red];
+  verifier_bounce -> spawn_engineer [label="bounce to in-progress", color=orange];
+
+  no_tickets -> build_test [label=""];
+  build_test -> build_pass [label=""];
+  build_pass -> release_verify [label="yes", color=green];
+  build_pass -> release_retry [label="no"];
+  release_retry -> bugfix_cycle [label="yes", color=green];
+  release_retry -> vp_review [label="no", color=red];
+  bugfix_cycle -> check_active [label="re-enter ticket loop", color=orange];
+
+  release_verify -> release_pass [label=""];
+  release_pass -> release_publish [label="yes", color=green];
+  release_pass -> release_retry [label="no"];
+
+  release_publish -> vp_review [label=""];
+  vp_review -> archive [label=""];
+  archive -> start [label="new sprint", style=dashed];
+}

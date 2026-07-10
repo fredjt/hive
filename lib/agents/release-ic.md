@@ -112,11 +112,11 @@ bash $SKILL_DIR/lib/tools/release-verdict-write.sh NO-GO \
 EOF
 ```
 
-Either form writes to `$VERIFY_LOG` in the exact format `stage-advance.sh`
+Either form writes to `$VERIFY_LOG` in the exact format `sprint-lifecycle.sh`
 expects (first line `VERDICT: GO|NO-GO`, then RATIONALE / BLOCKERS
 sections).
 
-`stage-advance.sh` parses the first line (`VERDICT:`) and:
+`sprint-lifecycle.sh` parses the first line (`VERDICT:`) and:
 - GO → stage 8 (release-publish) runs.
 - NO-GO → stage 6a (ceo-bugfix-plan) runs; the CEO reads your blocker
   bullets and writes a per-dept bugfix direction.

@@ -25,7 +25,7 @@ def handle(args) -> int:
     if args.action in ("start", "publish", "abort"):
         # release_start / release_publish / release_abort were removed under
         # the sprint-staged lifecycle (release runs as stages 6-8 of every
-        # sprint, driven by stage-advance.sh). Releases are not human-initiated.
+        # sprint, driven by sprint-lifecycle.sh). Releases are not human-initiated.
         print(f"hive release {args.action}: removed. The release pipeline runs")
         print("automatically at the end of every sprint (stages 6-8). To set the")
         print("release version, edit .company/sprints/current.json's release.version")

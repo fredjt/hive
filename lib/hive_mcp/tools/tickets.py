@@ -71,8 +71,8 @@ def register(server: FastMCP) -> None:
         will return an error redirecting you back to those tools.
 
         Most ticket moves under the sprint-staged lifecycle are SCRIPTED
-        (round-runner moves sprint-current → in-progress; engineer's exit-0
-        moves in-progress → in-review; orphan-recovery bounces unverified
+        (sprint-lifecycle moves sprint-current → in-progress; engineer's exit-0
+        moves in-progress → in-review; crash recovery bounces unverified
         tickets). The only agent-allowed move via ticket_move is:
 
           - VP rejection: new_status="done", reason="rejected" — only

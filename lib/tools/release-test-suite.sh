@@ -15,7 +15,7 @@ set -uo pipefail
 #   1  test suite failed (actual test failures)
 #   2  bad usage / missing project root
 #   3  resource-killed (timed out or OOM'd by memory limit — logged to
-#      test log with details; stage-advance treats same as exit 1 for
+#      test log with details; sprint-lifecycle treats same as exit 1 for
 #      retry cap purposes but the log clearly signals a resource issue)
 
 PROJECT_ROOT="${1:-${PROJECT_ROOT:-$PWD}}"

@@ -4,7 +4,7 @@ set -uo pipefail
 # worktree-merger.sh — backstop for PR opening + worktree cleanup. Refreshes
 # local main from origin so newly created worktrees fork off the latest tip.
 #
-# Under the round-runner + GitHub-remote architecture, this script does NOT
+# Under the sprint-lifecycle + GitHub-remote architecture, this script does NOT
 # merge anything itself. The verification IC merges the PR via gh-pr-merge.sh
 # during its own queue entry. PR opening is normally done SYNCHRONOUSLY by
 # ticket-move.sh when a ticket transitions to in-review. This daemon is a

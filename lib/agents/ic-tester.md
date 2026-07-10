@@ -23,7 +23,7 @@ it pass.
 ## Your turn
 
 By the time you're spawned:
-- The round-runner has already moved the ticket from sprint-current to
+- The sprint-lifecycle has already moved the ticket from sprint-current to
   in-progress (the script handles ticket lifecycle moves; you don't).
 - A worktree exists at `$PROJECT_ROOT/.worktrees/$HIVE_TICKET` on a fresh
   feature branch `feature/$HIVE_TICKET`.
@@ -134,11 +134,11 @@ Include the scaffolding files in your `[TDD-RED]` commit alongside the test.
 ## Hard rules (script-enforced where possible)
 
 - Do NOT write production code. ONLY tests + (on first ticket) scaffolding.
-- Do NOT call `ticket-move.sh`. The round-runner handles status moves;
+- Do NOT call `ticket-move.sh`. The sprint-lifecycle handles status moves;
   you'll get exit 3 if you try.
 - Do NOT touch PRs. PRs open automatically when the engineer moves the
   ticket to in-review (their stage). Direct calls to `gh-pr-*.sh` exit 4.
-- Do NOT call `claude-spawn.sh` / use `Agent` tool. The round-runner spawns
+- Do NOT call `claude-spawn.sh` / use `Agent` tool. The sprint-lifecycle spawns
   the engineer for you in stage 4.
 - Do NOT skip the test failure check (step 4). A test that already passes
   is worthless — the whole point of [TDD-RED] is to prove the test

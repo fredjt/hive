@@ -63,7 +63,7 @@ issue_label_prefix_priority = "priority:"
 
 [release]
 # Release runs as stages 6-8 of every sprint (build-and-test → release-verify
-# → release-publish), driven by stage-advance.sh. No CEO request needed.
+# → release-publish), driven by sprint-lifecycle.sh. No CEO request needed.
 require_clean_main          = true
 require_changelog_section   = true
 adversarial_smoke_test      = true   # release-ic adversarial review (stage 7)
@@ -75,7 +75,7 @@ publisher_script            = ""        # empty = default github publisher
 max_release_retries         = 3         # Loop B cap: 3 bug-fix attempts then give up
 
 [sprint]
-# Sprint-staged lifecycle (stage-advance.sh).
+# Sprint-staged lifecycle (sprint-lifecycle.sh).
 # Cap on tickets per dept that sprint-fill promotes from backlog → sprint-current.
 # Picks the top-priority backlog tickets (critical > high > medium > low,
 # ties broken by oldest first). If a dept already has >= this many active
@@ -120,9 +120,9 @@ disk_usage_crit_pct  = 90
 ticket_disk_report_interval = 300
 
 [tdd]
-# Hard-split TDD: stage-enqueue-tdd-red enqueues ic-tester for each
-# sprint-current ticket, then stage-enqueue-tdd-green enqueues
-# ic-engineer/ic-infra for each in-progress ticket with a [TDD-RED] commit.
+# Hard-split TDD: sprint-lifecycle enqueues ic-tester for each
+# sprint-current ticket, then re-enqueues ic-engineer/ic-infra for each
+# in-progress ticket with a [TDD-RED] commit.
 # The tdd-order gate enforces "first commit on the branch must touch a test file."
 hard_split             = true
 applies_to_agents      = ["ic-engineer", "ic-infra"]

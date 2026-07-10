@@ -2,8 +2,8 @@
 # dept-helpers.sh — sourced helpers for distinguishing admin (planning-only)
 # departments from engineering (code-producing) departments.
 #
-# Single source of truth so stage-enqueue scripts, verification-gates,
-# and stage-advance all agree.
+# Single source of truth so sprint-fill, verification-gates,
+# and sprint-lifecycle all agree.
 #
 # Usage:
 #   . "$SKILL_DIR/lib/tools/dept-helpers.sh"

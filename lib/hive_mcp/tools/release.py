@@ -3,7 +3,7 @@
 Lifecycle control (release_start / release_publish / release_abort) is
 intentionally NOT exposed via MCP. The release pipeline runs as stages 6-8
 of every sprint (build-and-test → release-verify → release-publish), driven
-by stage-advance.sh. Agents shouldn't initiate releases — the sprint cycle
+by sprint-lifecycle.sh. Agents shouldn't initiate releases — the sprint cycle
 does.
 
 Exposed:
@@ -36,7 +36,7 @@ def register(server: FastMCP) -> None:
         company_dir: str | None = None,
     ) -> dict:
         """Write the release-ic GO/NO-GO verdict for the current sprint's
-        release-verify stage. stage-advance reads the first VERDICT: line
+        release-verify stage. sprint-lifecycle reads the first VERDICT: line
         and routes the sprint to release-publish (GO) or ceo-bugfix-plan
         (NO-GO).
 

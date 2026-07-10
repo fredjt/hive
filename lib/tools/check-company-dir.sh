@@ -5,7 +5,7 @@ set -uo pipefail
 # symlink (most commonly: a self-loop, .company -> /path/to/.company itself,
 # which crashes everything that opens the directory with ELOOP).
 #
-# Run by company-start.sh on boot AND by round-runner.sh every iteration so
+# Run by company-start.sh on boot AND by sprint-lifecycle.sh every iteration so
 # corruption is caught the moment it happens, not 8 hours later when the
 # operator notices the dashboard is empty.
 #

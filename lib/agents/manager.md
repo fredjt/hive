@@ -13,7 +13,7 @@
 > - `verification-ic` (stage 5)
 > - `release-ic` (stage 7)
 >
-> manager used to oversee a team of ICs; replaced by VPs filing tickets + the round-runner spawning ICs per stage.
+> manager used to oversee a team of ICs; replaced by VPs filing tickets + the sprint-lifecycle spawning ICs per stage.
 >
 > If you are seeing this prompt because something invoked manager.md, that
 > something is out-of-band relative to the sprint cycle. Treat the

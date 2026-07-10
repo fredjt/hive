@@ -3,7 +3,7 @@ set -uo pipefail
 
 # release-verdict-write.sh — write the release-ic verdict file.
 #
-# stage-advance parses the first `VERDICT:` line and routes the sprint:
+# sprint-lifecycle parses the first `VERDICT:` line and routes the sprint:
 #   GO    -> release-publish (stage 8)
 #   NO-GO -> ceo-bugfix-plan (Loop B)
 #
@@ -70,7 +70,7 @@ SKILL_DIR="${HIVE_ROOT:-$(cd "$(dirname "$0")/../.." && pwd)}"
 
 VERIFY_LOG=$(ss_get_field .release.verify_log)
 if [ -z "$VERIFY_LOG" ] || [ "$VERIFY_LOG" = "null" ]; then
-  echo "release-verdict-write: .release.verify_log is not set in sprint state. Run stage-enqueue-release-verify first." >&2
+  echo "release-verdict-write: .release.verify_log is not set in sprint state. Release-IC must be running under sprint-lifecycle." >&2
   exit 1
 fi
 
@@ -89,7 +89,7 @@ if [ -z "$RATIONALE" ]; then
   exit 1
 fi
 
-# Build the file. Format MUST match what stage-advance parses:
+# Build the file. Format MUST match what sprint-lifecycle parses:
 #   first line: "VERDICT: GO" or "VERDICT: NO-GO"
 #   subsequent lines: free-form (RATIONALE / BLOCKERS sections recommended).
 {

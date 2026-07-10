@@ -69,15 +69,12 @@ PATTERNS=(
   "tools/company-board/server.js.*$COMPANY_DIR"
   # company-start.sh itself (the supervisor process)
   "company-start.sh.*$PROJECT_ROOT"
-  # The round-runner: SOLE consumer of claude-spawn under sprint-staged
-  # lifecycle. Without this pattern, a stale round-runner survives
-  # hive stop because processes.json may be missing/incomplete and a
-  # second hive start spawns a sibling — they fight over current-round.json.
-  "round-runner.sh.*$PROJECT_ROOT"
-  "stage-advance.sh.*$PROJECT_ROOT"
+  # The sprint-lifecycle runner: SOLE consumer of claude-spawn under
+  # the ticket-driven lifecycle. Without this pattern, a stale
+  # sprint-lifecycle survives hive stop.
+  "sprint-lifecycle.sh.*$PROJECT_ROOT"
   "release-test-suite.sh.*$PROJECT_ROOT"
   "release-publish-runner.sh.*$PROJECT_ROOT"
-  "orphan-recovery.sh.*$PROJECT_ROOT"
   # Background daemon loops, all scoped to this project
   "while true.*$COMPANY_DIR"
   "while true.*$PROJECT_ROOT"

@@ -10,9 +10,9 @@ You are spawned during stage 5 (verify) of a sprint. The deterministic gates
 in `verification-gates.sh` have ALREADY passed — your job is what the gates
 can't catch: logic, edge cases, security, error handling, contract compliance.
 
-The round-runner spawned you against ONE in-review ticket. After you exit,
-the round-runner moves on to the next ticket. If you neither approve nor
-reject the ticket, `orphan-recovery.sh` will auto-bounce it back to
+The sprint-lifecycle spawned you against ONE in-review ticket. After you exit,
+the sprint-lifecycle moves on to the next ticket. If you neither approve nor
+reject the ticket, `orphan recovery (removed)` will auto-bounce it back to
 in-progress with `skip_tdd_red=false` (re-run RED next loop iteration).
 
 ## Use the MCP tools — NOT the bash scripts directly
@@ -49,7 +49,11 @@ can't put the rationale in the wrong slot.
 ## Read these before deciding
 
 1. **The ticket** — `mcp__hive__ticket_get(dept=$HIVE_DEPT, ticket_id=$HIVE_TICKET)`
-2. **The diff** — `git -C $PROJECT_ROOT diff main..feature/$HIVE_TICKET`
+2. **The diff** — always diff against the remote main to avoid stale local main:
+   ```bash
+   git -C $PROJECT_ROOT fetch origin main 2>/dev/null || true
+   git -C $PROJECT_ROOT diff origin/main..feature/$HIVE_TICKET
+   ```
 3. **The PR** (if a remote is configured):
    ```bash
    . $SKILL_DIR/lib/tools/gh-helpers.sh
@@ -113,7 +117,7 @@ old "✅ APPROVED" comment AND a "REJECTED by verification: PR merge
 conflict on approve" comment from ticket-move. The verification fields
 are empty. The framework prompt will explicitly say "POST-CONFLICT
 RE-VERIFICATION." Do **not** read the prior APPROVED comment and exit
-thinking you're done — that leaves the ticket stuck, orphan-recovery
+thinking you're done — that leaves the ticket stuck, orphan recovery
 bounces it, you respawn, repeat forever.
 
 What to do instead:
@@ -256,7 +260,7 @@ mcp__hive__ticket_bounce(
 )
 ```
 
-That signals stage-advance to skip stage 3 (tdd-red) for this ticket next
+That signals sprint-lifecycle to skip stage 3 (tdd-red) for this ticket next
 loop and go straight to stage 4 (tdd-green). Default behavior (no flag) is
 to re-run RED — testing should expand to cover whatever you found.
 
@@ -267,14 +271,14 @@ RED — the tester needs to add coverage.
 ## Default outcome
 
 If you do nothing — neither approve nor bounce nor reject — the
-orphan-recovery script will bounce the ticket back to in-progress with
+orphan recovery script will bounce the ticket back to in-progress with
 `skip_tdd_red=false` (the safe default). This is a fallback, not the
 intended path. Always make an explicit call.
 
 ## What about the loop cap?
 
 If a ticket bounces too many times (default safety valve: 100 iterations),
-stage-advance will defer it to **backlog** so the sprint can advance. The
+sprint-lifecycle will defer it to **backlog** so the sprint can advance. The
 ticket is NOT auto-accepted — your last bounce still stands. The PR +
 branch are preserved; a future sprint can pick the work back up.
 

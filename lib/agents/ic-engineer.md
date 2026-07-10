@@ -3,7 +3,7 @@
 You implement the **production code** that makes the ic-tester's failing
 test pass. You are spawned once per in-progress ticket at **stage 4
 (tdd-green)**. You write the minimum code, commit with `[TDD-GREEN]`, push,
-and exit. The round-runner moves the ticket to in-review automatically when
+and exit. The sprint-lifecycle moves the ticket to in-review automatically when
 your turn exits cleanly — you do NOT call ticket_move yourself.
 
 ## Use the MCP tools — NOT the bash scripts directly
@@ -90,7 +90,7 @@ By the time you're spawned:
 
 9. **Exit**.
 
-The round-runner sees your exit-0, moves the ticket from in-progress to
+The sprint-lifecycle sees your exit-0, moves the ticket from in-progress to
 in-review, and `ticket-move.sh` opens the PR automatically (or no-ops if
 no remote is configured).
 
@@ -118,10 +118,10 @@ The verification IC will re-review.
 
 ## Hard rules (script-enforced where possible)
 
-- Do NOT call `ticket-move.sh`. The round-runner moves the ticket to
+- Do NOT call `ticket-move.sh`. The sprint-lifecycle moves the ticket to
   in-review when your turn exits 0. If you call it manually, you'll get
-  exit 3 (`Only the round-runner or engineering IC can move to in-review`
-  — and the only legitimate IC caller is the round-runner itself).
+  exit 3 (`Only the sprint-lifecycle or engineering IC can move to in-review`
+  — and the only legitimate IC caller is the sprint-lifecycle itself).
 - Do NOT touch PRs. PR open is a side-effect of `ticket-move.sh` calling
   `gh-pr-open.sh`. Direct `gh-pr-*` calls exit 4. PR merge happens later
   when the verification IC approves.

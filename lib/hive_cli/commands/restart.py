@@ -1,8 +1,8 @@
 """hive restart — restart the web dashboard without disturbing agents.
 
 Kills only the existing dashboard (company-board) process, waits for the port
-to free, then starts a fresh dashboard server.js.  The MCP server, round-runner,
-and all background daemons are left running.
+to free, then starts a fresh dashboard server.js.  The MCP server,
+sprint-lifecycle, and all background daemons are left running.
 
 Usage:
     hive restart <project-dir>     # restart dashboard for project

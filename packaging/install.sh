@@ -171,14 +171,14 @@ esac
 # Detect (but DO NOT kill) running daemons that may need restart for the
 # new code to take effect. The installer is non-destructive: stopping
 # anything is the operator's job via `hive stop`. Without this rule,
-# upgrading mid-sprint kills the round-runner and any in-flight Claude
+# upgrading mid-sprint kills the sprint-lifecycle and any in-flight Claude
 # turn, which is surprising and destructive — operators expect the
 # installer to update files on disk only.
 #
 # What needs a restart for changes to take effect:
 #   - hive_mcp server: tool registry frozen at process start. New MCP
 #     tools / new tool args won't appear to spawned agents until restart.
-#   - round-runner: new stage-advance / round-promote / stage-enqueue
+#   - sprint-lifecycle: new sprint-fill / round-promote / ticket-move
 #     logic loads on next iteration; long-running daemons keep running
 #     the old logic until they restart.
 #   - Background daemons (worktree-merger, verification-gates, etc.):
@@ -194,8 +194,8 @@ if pgrep -f 'hive_mcp/server\.py.*--transport http' >/dev/null 2>&1 \
    || pgrep -f 'hive_mcp\.server.*--transport http' >/dev/null 2>&1; then
   NEEDS_RESTART+=("MCP server (new tool defs won't appear in agent prompts)")
 fi
-if pgrep -f 'lib/tools/round-runner\.sh' >/dev/null 2>&1; then
-  NEEDS_RESTART+=("round-runner (new stage-advance / enqueue logic loads on restart)")
+if pgrep -f 'lib/tools/sprint-lifecycle\.sh' >/dev/null 2>&1; then
+  NEEDS_RESTART+=("sprint-lifecycle (new ticket-move / round-promote logic loads on restart)")
 fi
 if [ "${#NEEDS_RESTART[@]}" -gt 0 ]; then
   echo ""

@@ -2,7 +2,7 @@
 
 You are the Vice President of a department. Your only job is to **shape the
 ticket queue**: file tickets, refine them, reject ones that aren't worth
-doing. The round-runner spawns ICs and verification ICs. The script handles
+doing. The sprint-lifecycle spawns ICs and verification ICs. The script handles
 sprint-fill, ticket lifecycle moves, and PR ops. You don't.
 
 You are spawned in three modes per sprint:
@@ -216,7 +216,7 @@ configuration).
 IT is the steward of the project-local hive scaffold at
 `$PROJECT_ROOT/.hive/`. That includes:
 - `.hive/lib/agents/*.md`         agent prompts (CEO, VPs, ICs, verifier, release-IC, ...)
-- `.hive/lib/tools/*.sh`          ~100 operational scripts (sprint-fill, gh-pr-merge, orphan-recovery, release-publish-runner, scaffold-extract, ...)
+- `.hive/lib/tools/*.sh`          ~100 operational scripts (sprint-fill, gh-pr-merge, crash-recovery, release-publish-runner, scaffold-extract, ...)
 - `.hive/lib/templates/`          PR template, GitHub workflows, publisher scripts
 - `.hive/lib/core/`               claude-spawn.sh, init.sh, orchestrator.sh
 - `.hive/config.toml`             per-project config defaults
@@ -271,7 +271,7 @@ What to read first (in addition to canonical inputs):
 - Do NOT call `gh-pr-merge.sh` / `gh-pr-close.sh` / `gh-pr-reject.sh`
   (gated; exit 4). Rejection's PR-close happens as a side-effect of
   `ticket-move.sh ... done <reason> <author> rejected`.
-- Do NOT call `claude-spawn.sh` or use the `Agent` tool. The round-runner
+- Do NOT call `claude-spawn.sh` or use the `Agent` tool. The sprint-lifecycle
   spawns ICs in stages 3-5 automatically.
 - Do NOT call `sprint-fill.sh` directly. The script runs it between stages.
 - Do NOT move tickets to sprint-current / in-progress / in-review / done

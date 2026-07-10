@@ -204,10 +204,10 @@ json.dump(procs,sys.stdout)")
   echo "  Started $role ($dept) PID=$pid"
 }
 
-# --- Round-runner is the SOLE consumer of claude-spawn.sh -------------------
+# --- Sprint-lifecycle is the SOLE consumer of claude-spawn.sh ---------------
 # Under this architecture there are no per-VP loops, no CEO continuous loop,
 # no per-dept verification loops, no standup/sprint-review pollers. Every
-# claude turn runs serially through the round-runner's FIFO queue, drained
+# claude turn runs serially through the sprint-lifecycle's FIFO queue, drained
 # one entry at a time. When a round drains, the runner fires standup
 # automatically and the CEO drafts the next round's queue.
 
@@ -323,14 +323,14 @@ if [ -f "$DASHBOARD_GENERATOR" ]; then
   add_proc $! "dashboard-generator" "infrastructure" "120s"
 fi
 
-# --- Round-runner: the only main-LLM consumer ---
+# --- Sprint-lifecycle: the only main-LLM consumer ---
 # Singleton-locked. Drains current-round.json one entry at a time, fires
 # standup at end-of-round, runs round-promote.sh between rounds (which
 # invokes ic-spawner / verification-runner / sprint-lifecycle in
 # --enqueue-only mode to discover new IC + verification + sprint work).
-(HIVE_ROOT="$SKILL_DIR" bash "$SCRIPT_DIR/round-runner.sh" "$PROJECT_ROOT" \
-  >> "$COMPANY_DIR/logs/round-runner.log" 2>&1) &
-add_proc $! "round-runner" "infrastructure" "fifo-serial"
+(HIVE_ROOT="$SKILL_DIR" bash "$SCRIPT_DIR/sprint-lifecycle.sh" "$PROJECT_ROOT" \
+  >> "$COMPANY_DIR/logs/sprint-lifecycle.log" 2>&1) &
+add_proc $! "sprint-lifecycle" "infrastructure" "fifo-serial"
 
 # --- Infrastructure processes (pure bash, no LLM) ---
 

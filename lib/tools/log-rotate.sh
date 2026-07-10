@@ -80,7 +80,7 @@ compress_and_truncate() {
 
 # ── Daemon log compression ───────────────────────────────────────────────────
 #
-# Daemon logs: round-runner.log, roster-rebuild.log, status-rebuild.log, etc.
+# Daemon logs: sprint-lifecycle.log, roster-rebuild.log, status-rebuild.log, etc.
 # These are the background service logs written by company-start.sh daemon loops.
 
 for log_file in "$LOG_DIR"/*.log; do

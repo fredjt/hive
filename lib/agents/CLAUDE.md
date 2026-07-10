@@ -92,7 +92,7 @@ Prompts are injected into agents in this order:
 
 1. `_FRAMEWORK_PRIMER.md` (universal rules)
 2. Role-specific prompt (e.g., `ic-engineer.md`)
-3. Stage-specific prompt section (injected dynamically by `load-agent-prompt.sh` or the round-runner)
+3. Stage-specific prompt section (injected dynamically by `load-agent-prompt.sh` or the sprint-lifecycle)
 
 The `load-agent-prompt.sh` script in `lib/tools/` orchestrates this assembly.
 
@@ -114,7 +114,7 @@ release-ic.md       →  reviews release readiness before publish
 - **MCP over bash**: All prompts prefer MCP tools (`mcp__hive__ticket_*`, `mcp__hive__chat_send`, etc.) over raw bash scripts. MCP provides input validation, structured output, and token savings.
 - **PreToolUse hooks**: Two hooks block direct writes to `.company/` and admin code writes. Prompts enforce these rules — agents that try to bypass them will get errors.
 - **Atomic operations**: Ticket approve/bounce/reject are atomic MCP calls that stamp state + move status + trigger side-effects (PR merge, issue comment). Never call `ticket_move` directly for these transitions.
-- **Exit behavior**: Agents exit 0 when done. The round-runner reads the exit code and advances the sprint stage. Non-zero exit = retry on next loop iteration.
+- **Exit behavior**: Agents exit 0 when done. The sprint-lifecycle reads the exit code and advances the ticket to its next step. Non-zero exit = retry on next iteration.
 - **`skip_tdd_red` flag**: Some roles (verification IC) can set this to skip the test-writing stage on bounce. Use sparingly — only when adding tests genuinely wouldn't help.
 
 ## See also

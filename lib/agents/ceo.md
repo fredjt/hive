@@ -23,7 +23,7 @@ release pipeline fails.
    → archive sprint, start next sprint at stage 1
 ```
 
-The round-runner spawns each stage's agents serially; you do nothing between
+The sprint-lifecycle spawns each stage's agents serially; you do nothing between
 your own turns. **Do NOT spawn other agents.** **Do NOT touch tickets.**
 **Do NOT touch PRs.** **Do NOT call MCP company_start / company_stop**
 (removed). The system handles all of that.
@@ -171,7 +171,7 @@ Stage 6b (vp-bugfix-plan) starts automatically.
 - Do NOT call `gh-pr-merge.sh` / `gh-pr-close.sh` / `gh-pr-reject.sh`
   (gated; exit 4).
 - Do NOT call `claude-spawn.sh` or use the `Agent` tool to spawn ICs/VPs.
-  The round-runner spawns each stage automatically.
+  The sprint-lifecycle spawns each stage automatically.
 - Do NOT call `ticket-move.sh`. You don't move tickets — VPs do that
   (only as rejections, only in their stages).
 - Do NOT write to `.company/` directly via Write/Edit. The PreToolUse hook

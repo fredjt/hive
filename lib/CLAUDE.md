@@ -59,9 +59,9 @@ There are exactly three paths by which `.company/` state is mutated:
 
 1. **MCP tools** — `hive_mcp/tools/*.py` → `shell.py.run()` → `lib/tools/*.sh` → atomic tmp+mv
 2. **CLI commands** — `hive_cli/commands/*.py` → either MCP client (Style A) or direct bash subprocess (Style B)
-3. **Round-runner** — `lib/tools/round-runner.sh` → directly calls `lib/tools/*.sh` scripts (bypasses MCP)
+3. **Sprint-lifecycle** — `lib/tools/sprint-lifecycle.sh` → directly calls `lib/tools/*.sh` scripts (bypasses MCP)
 
-Agents spawned by the round-runner **never write `.company/` directly**. They read state, act on the project files (source code, docs, config), and signal completion via exit codes. The round-runner then moves tickets and triggers the next stage.
+Agents spawned by the sprint-lifecycle **never write `.company/` directly**. They read state, act on the project files (source code, docs, config), and signal completion via exit codes. The sprint-lifecycle then moves tickets and triggers the next stage.
 
 ## See also
 

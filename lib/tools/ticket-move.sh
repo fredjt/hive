@@ -54,8 +54,8 @@ if [ "$NEW_STATUS" = "done" ]; then
 fi
 
 # ── ROLE + SCRIPTED-MOVE ENFORCEMENT ──
-# Almost every ticket move is scripted by round-runner / stage-advance /
-# sprint-fill / orphan-recovery (which set HIVE_SCRIPTED_MOVE=1). The two
+# Almost every ticket move is scripted by sprint-lifecycle /
+# sprint-fill (which set HIVE_SCRIPTED_MOVE=1). The two
 # agent-driven moves are: Verification-IC moving in-review→done (verified)
 # or in-review→in-progress (bounce); and VP moving anywhere→done with
 # reason=rejected (only during their own sprint stages).
@@ -104,7 +104,7 @@ if [ -n "$HIVE_ROLE_ENV" ]; then
       # stands) but the sprint can advance. Scripted only — agents must use
       # the normal forward path or VP rejection.
       [ "$HIVE_SCRIPTED_MOVE_ENV" = "1" ] || \
-        deny_role "Demotion to backlog is scripted (stage-advance defer-on-loop-cap)."
+        deny_role "Demotion to backlog is scripted (sprint-lifecycle defer-on-bounce-limit)."
       ;;
     sprint-current:*)
       [ "$HIVE_SCRIPTED_MOVE_ENV" = "1" ] || \
@@ -112,18 +112,18 @@ if [ -n "$HIVE_ROLE_ENV" ]; then
       ;;
     in-progress:*)
       # Allowed callers:
-      #   - SCRIPTED (round-runner pre-spawn for tdd-red, orphan-recovery)
+      #   - SCRIPTED (sprint-lifecycle pre-spawn for tdd-red, bounce-back)
       #   - Verification-IC (bounce)
       if [ "$HIVE_SCRIPTED_MOVE_ENV" != "1" ] && [ "$HIVE_ROLE_ENV" != "Verification-IC" ]; then
-        deny_role "Only the round-runner / orphan-recovery scripts or Verification-IC can move to in-progress."
+        deny_role "Only the sprint-lifecycle script or Verification-IC can move to in-progress."
       fi
       ;;
     in-review:*)
       # Allowed callers:
-      #   - SCRIPTED (round-runner post-spawn for tdd-green exit-0)
+      #   - SCRIPTED (sprint-lifecycle post-spawn for tdd-green exit-0)
       #   - IC (engineering, not tester) — though normally the script does it
       if [ "$HIVE_SCRIPTED_MOVE_ENV" != "1" ] && [ "$HIVE_ROLE_ENV" != "IC" ]; then
-        deny_role "Only the round-runner or engineering IC can move to in-review."
+        deny_role "Only the sprint-lifecycle or engineering IC can move to in-review."
       fi
       ;;
     done:rejected)
@@ -223,7 +223,7 @@ fi
 
 # Block moving to in-progress via ticket-move - use ticket-claim.sh instead.
 # EXCEPTIONS:
-#   - HIVE_SCRIPTED_MOVE=1 (round-runner pre-spawn, orphan-recovery, verification-gates bounce)
+#   - HIVE_SCRIPTED_MOVE=1 (sprint-lifecycle pre-spawn, bounce-back, verification-gates bounce)
 #   - HIVE_ROLE=Verification-IC (bounce path; ticket-bounce.sh wraps this)
 if [ "$NEW_STATUS" = "in-progress" ] \
    && [ "$HIVE_SCRIPTED_MOVE_ENV" != "1" ] \
@@ -236,8 +236,8 @@ if [ "$NEW_STATUS" = "in-progress" ] \
   echo "                             rationale=\"<≥80 chars: numbered list of issues + file:line refs>\")" >&2
   echo "  That call is atomic (writes rationale + moves to in-progress + comments the GH issue)." >&2
   echo "" >&2
-  echo "  Otherwise: in-progress moves are scripted (round-runner pre-spawn for tdd-red," >&2
-  echo "  orphan-recovery after verify, verification-gates on gate-failure). Don't move it yourself." >&2
+  echo "  Otherwise: in-progress moves are scripted (sprint-lifecycle pre-spawn for tdd-red," >&2
+  echo "  sprint-lifecycle bounce-back after verify, verification-gates on gate-failure). Don't move it yourself." >&2
   exit 1
 fi
 
@@ -283,7 +283,7 @@ else:
   if [ "$HAS_ASSIGNEE" != "yes" ] && [ "$HIVE_SCRIPTED_MOVE_ENV" != "1" ]; then
     echo "ERROR: $TICKET_ID — agents do not move tickets to in-review directly." >&2
     echo "" >&2
-    echo "  Under the sprint-staged lifecycle, the round-runner moves your ticket" >&2
+    echo "  Under the sprint-staged lifecycle, the sprint-lifecycle moves your ticket" >&2
     echo "  to in-review automatically when your turn exits 0. Just complete your" >&2
     echo "  work (commit + push) and exit cleanly — do NOT call ticket_move yourself." >&2
     echo "" >&2
@@ -400,7 +400,7 @@ if NEW_STATUS == 'done':
 
 elif NEW_STATUS == 'in-progress':
     # Link the feature branch + worktree paths onto the ticket as soon as
-    # TDD-RED starts. The worktree may not physically exist YET (round-runner
+    # TDD-RED starts. The worktree may not physically exist YET (sprint-lifecycle
     # creates it right after this move), but the paths are deterministic and
     # the dashboard can already render the link.
     if not ticket.get('resolution') or ticket['resolution'] is None:
@@ -515,7 +515,7 @@ elif [ "$NEW_STATUS" = "in-progress" ] && [ "$FOUND_STATUS" = "sprint-current" ]
 
 elif [ "$NEW_STATUS" = "in-progress" ] && [ "$FOUND_STATUS" = "in-review" ]; then
   echo "Moved $TICKET_ID: $FOUND_STATUS -> in-progress"
-  # Bounce-back from verification (or orphan-recovery). Mirror the rationale
+  # Bounce-back from verification (or crash recovery). Mirror the rationale
   # if present so the GH issue sees what's blocking.
   RATIONALE_LINE=""
   [ -n "$COMMENT" ] && RATIONALE_LINE="
@@ -609,7 +609,7 @@ t['comments'].append({
     'author': 'ticket-move',
     'timestamp': ts,
     # Prefix "REJECTED by verification" matches what ticket-bounce.sh
-    # writes — stage-enqueue-tdd-green's reconciliation uses this prefix
+    # writes — sprint-lifecycle's reconciliation uses this prefix
     # to tell "stuck-from-crash" tickets (no rejection comment) apart
     # from "needs rework after bounce" tickets (rejection comment exists).
     'body': 'REJECTED by verification: PR merge conflict on approve. Bounced to in-progress with skip_tdd_red=true. Engineering IC: rebase feature branch on main, resolve conflicts, force-push, then proceed normally. PR remains open.'

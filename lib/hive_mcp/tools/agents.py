@@ -156,5 +156,5 @@ def register(server: FastMCP) -> None:
         }
 
     # agent_verify removed under sprint-staged lifecycle: verification ICs are
-    # spawned by stage-enqueue-verify.sh during stage 5, not via MCP. Agents
+    # spawned by sprint-lifecycle during the verify stage, not via MCP. Agents
     # asking for ad-hoc verification should not bypass the stage cycle.

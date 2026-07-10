@@ -25,7 +25,7 @@ This directory contains the packaging artifacts: installers, the build script, a
 - **Two modes**: installs in-place by default; pass `--copy-to <dir>` to copy the tree first (the typical production flow).
 - **Venv creation**: prefers `uv venv --seed`, falls back to `python3 -m venv`.
 - **Hook registration**: uses `jq` to patch `~/.claude/settings.json` with two PreToolUse hooks (`block-company-writes.sh`, `block-admin-code-writes.sh`) under matcher `Write|Edit|NotebookEdit|Bash`. Includes migration logic to replace old narrow-match registrations.
-- **Daemon detection**: after install, prints a warning if the MCP server or round-runner are still running with old code, suggesting `hive stop && hive start`.
+- **Daemon detection**: after install, prints a warning if the MCP server or sprint-lifecycle are still running with old code, suggesting `hive stop && hive start`.
 
 ### build-package.sh
 

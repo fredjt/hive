@@ -1,4 +1,4 @@
-"""Round-runner queue management tools.
+"""Round queue management tools.
 
 Each tool shells to the corresponding script under lib/tools/round-*.sh.
 Mirrors the pattern in lib/hive_mcp/tools/sprint.py.
@@ -83,6 +83,6 @@ def register(server: FastMCP) -> None:
         """Manually trigger round-promote: archive current round, run discovery,
         promote next-plan.json (or fall back to failsafe).
 
-        Normally invoked automatically by round-runner after standup drains.
+        Normally invoked automatically by sprint-lifecycle at sprint boundaries.
         """
         return run("round-promote", company_dir=company_dir).to_dict()

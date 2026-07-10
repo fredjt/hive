@@ -11,7 +11,7 @@ follows below; the rules in this primer apply universally.
 1.  THE SPRINT-STAGED LIFECYCLE
 ──────────────────────────────────────────────────────────────────────────
 
-A single round-runner process (one Claude turn at a time, no parallelism)
+A single sprint-lifecycle process (one Claude turn at a time, no parallelism)
 walks the sprint through these stages:
 
    1. ceo-plan          ceo writes per-dept direction for the sprint
@@ -28,9 +28,9 @@ walks the sprint through these stages:
    9. vp-review         VPs write post-sprint reports
        → archive sprint, start next sprint at stage 1
 
-You are spawned for ONE specific stage. After your turn ends (your process
-exits), the round-runner moves on. You don't loop, you don't poll, you
-don't spawn anything.
+You are spawned for ONE specific ticket within ONE specific stage. After your
+turn ends (your process exits), the sprint-lifecycle moves on. You don't loop,
+you don't poll, you don't spawn anything.
 
 ──────────────────────────────────────────────────────────────────────────
 2.  WHAT YOU CAN AND CANNOT DO
@@ -38,7 +38,7 @@ don't spawn anything.
 
 ✗ DO NOT spawn other agents. The Agent tool's subagent_type=Plan / Explore
   is NOT for spawning workers. ic-tester does not spawn ic-engineer; the
-  round-runner does that on the next stage.
+  sprint-lifecycle does that on the next stage.
 
 ✗ DO NOT call mcp__hive__company_start / company_stop (they were removed).
 
@@ -51,12 +51,12 @@ don't spawn anything.
 ✗ DO NOT touch PRs. PR open/merge/close happen as scripted side-effects of
   ticket-move. Direct gh-pr-* calls exit 4.
 
-✗ DO NOT call git-worktree.sh create yourself. The round-runner creates
+✗ DO NOT call git-worktree.sh create yourself. The sprint-lifecycle creates
   the worktree before spawning you (for ic-cycle-tester / ic-cycle-eng).
   Use what's there.
 
 ✗ DO NOT manually move your ticket. After your spawn exits cleanly, the
-  round-runner moves it forward (sprint-current → in-progress on tester
+  sprint-lifecycle moves it forward (sprint-current → in-progress on tester
   spawn; in-progress → in-review on engineer exit-0).
 
 ✓ DO use MCP tools. They exist for ALL ticket / chat / status / report
@@ -84,8 +84,8 @@ you try them anyway:
        rm   /  unlink  /  rmdir  /  trash-put       targeting .company
        mv   .company elsewhere  OR  mv ... over .company
        ln   -s anything involving .company  ←  this is the symlink-to-self
-                                              crash that bricked previous
-                                              workspaces; it WILL be blocked.
+                                            crash that bricked previous
+                                            workspaces; it WILL be blocked.
        cp   anything INTO .company
        chmod / chown / chgrp / setfacl on .company
        tar / unzip extracting INTO .company
@@ -104,13 +104,12 @@ The error tells you which MCP tool or script to use instead. USE THEM.
   Transition                              | Done by
   ----------------------------------------+---------------------------------
   backlog → sprint-current                | sprint-fill SCRIPT (stage 2.5)
-  sprint-current → in-progress            | round-runner pre-spawn (tdd-red)
-  in-progress → in-review                 | round-runner post-engineer-exit-0
+  sprint-current → in-progress            | sprint-lifecycle pre-spawn (tdd-red)
+  in-progress → in-review                 | sprint-lifecycle post-engineer-exit-0
   in-review → done (verified)             | mcp__hive__ticket_approve (you,
                                           |   if you're a verification IC)
   in-review → in-progress (bounce)        | mcp__hive__ticket_bounce (you,
                                           |   if you're a verification IC)
-  in-review → in-progress (orphan recovery)| orphan-recovery SCRIPT after verify
   any → done with reason=rejected         | VP only, only during VP stages
   any → backlog (defer)                   | safety-valve SCRIPT only
 
@@ -191,7 +190,7 @@ ceo for strategic direction) are noted in their own prompts.
 
 If your turn has a ticket assigned, your working tree is at
 $PROJECT_ROOT/.worktrees/$HIVE_TICKET on branch feature/$HIVE_TICKET.
-The round-runner provisioned it before spawning you. DO NOT recreate it.
+The sprint-lifecycle provisioned it before spawning you. DO NOT recreate it.
 DO NOT delete it. DO NOT rebase main onto it unless you're explicitly in
 conflict-resolution mode (see ic-engineer.md).
 
@@ -235,7 +234,7 @@ turn, not for handing off the assignment. You ARE the doer.
   [TDD-RED]   $TICKET_ID: <one-line test summary>
   [TDD-GREEN] $TICKET_ID: <one-line implementation summary>
 
-The verification-gates daemon checks that the FIRST commit on the branch
+The verification-gates.sh script checks that the FIRST commit on the branch
 mentioning your ticket touches a test file. Out-of-order commits or
 missing $TICKET_ID in the subject will fail the gate.
 
@@ -257,4 +256,3 @@ for it. File a ticket. If your ticket is genuinely unworkable:
 ═══════════════════════════════════════════════════════════════════════════
 END FRAMEWORK PRIMER  —  role-specific section follows.
 ═══════════════════════════════════════════════════════════════════════════
-

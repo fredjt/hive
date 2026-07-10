@@ -1,8 +1,8 @@
 #!/bin/bash
-# Meeting trigger. Under the round-runner architecture, this is no longer
+# Meeting trigger. Under the sprint-lifecycle architecture, this is no longer
 # a polling daemon — round-promote.sh invokes us with `sprint-review` to
 # enqueue a sprint-review entry when one is due. The standup case is gone:
-# the round-runner fires standup automatically whenever a round drains.
+# the sprint-lifecycle fires standup automatically whenever a round drains.
 #
 # Usage: meeting-runner.sh sprint-review <project-root> [skill-dir]
 
@@ -74,7 +74,7 @@ Update .company/meetings/schedule.json: set last_sprint_review to $TIMESTAMP"
     ;;
 
   standup)
-    echo "Standup is no longer triggered via meeting-runner.sh. The round-runner fires standup automatically when a round drains." >&2
+    echo "Standup is no longer triggered via meeting-runner.sh. The sprint-lifecycle fires standup automatically when a round drains." >&2
     exit 1
     ;;
 

@@ -163,5 +163,5 @@ stage and can refile under the correct scope if appropriate.
 ## Default outcome
 
 If you do nothing — neither approve nor bounce nor reject —
-orphan-recovery will bounce the ticket back to in-progress. Always make
+orphan recovery will bounce the ticket back to in-progress. Always make
 an explicit call.

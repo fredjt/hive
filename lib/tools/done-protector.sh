@@ -11,8 +11,8 @@ set -uo pipefail
 # snapshot of those files — which is from BEFORE the ticket was moved to
 # done. The result: the same ticket ends up in done/ (the live truth)
 # AND in in-progress/ or backlog/ (stale, restored by git), confusing
-# every downstream consumer (sprint-fill picks it as backlog, stage-enqueue-
-# tdd-green tries to spawn an engineer, worktree-merger trips over the
+# every downstream consumer (sprint-fill picks it as backlog, sprint-lifecycle
+# tries to spawn an engineer, worktree-merger trips over the
 # done-vs-active state, etc.).
 #
 # This sweeper enforces the invariant unconditionally: if a ticket exists

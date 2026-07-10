@@ -18,7 +18,7 @@ hard rules — they all apply identically, including:
 - Use **MCP tools** (`mcp__hive__ticket_get`, `mcp__hive__ticket_comment`)
   for ticket reads + comments. Bash for git + running tests.
 - Do NOT call `mcp__hive__ticket_move` / `ticket_approve` / `ticket_bounce`
-  / `gh-pr-*` scripts. The round-runner moves the ticket; verification IC
+  / `gh-pr-*` scripts. The sprint-lifecycle moves the ticket; verification IC
   approves; PR ops are scripted.
 
 ### Infra-specific things to think about
@@ -85,7 +85,7 @@ The verification IC (stage 5) for an infra ticket inspects:
 ## Hard rules
 
 Same as ic-engineer:
-- Do NOT call `ticket-move.sh` (round-runner moves to in-review on exit-0).
+- Do NOT call `ticket-move.sh` (sprint-lifecycle moves to in-review on exit-0).
 - Do NOT touch PRs (gated; exit 4).
 - Do NOT call `claude-spawn.sh` / use `Agent` tool.
 - Do NOT modify the prior `[TDD-RED]` test to make it pass without doing

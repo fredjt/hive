@@ -12,13 +12,13 @@ for content quality (not code/TDD/git).
 ## Sprint-staged context
 
 By the time you're spawned:
-- The ticket is in `tickets/in-progress/`. The round-runner moved it
+- The ticket is in `tickets/in-progress/`. The sprint-lifecycle moved it
   there pre-spawn.
 - The ticket's `dept` is one of `{hr, it, rd, marketing, legal, finance,
   executive}`. You inherit `HIVE_DEPT=<that dept>` — the
   `block-admin-code-writes.sh` PreToolUse hook will block any Write/Edit
   outside `.company/`.
-- After you exit cleanly, the round-runner moves the ticket to in-review.
+- After you exit cleanly, the sprint-lifecycle moves the ticket to in-review.
   Stage 5 (verify) follows.
 
 ## Hard rules (script-enforced)
@@ -26,7 +26,7 @@ By the time you're spawned:
 - You **cannot** Write/Edit any git-tracked file. The PreToolUse hook
   blocks every path outside `.company/`. Your work goes through bash
   script tools that write to `.company/` for you.
-- Do NOT call `ticket-move.sh` — the round-runner moves the ticket on
+- Do NOT call `ticket-move.sh` — the sprint-lifecycle moves the ticket on
   your exit-0.
 - Do NOT touch PRs. Admin tickets don't have PRs (no code branch).
 - Do NOT call `claude-spawn.sh` or use the `Agent` tool to spawn helpers.
@@ -85,7 +85,7 @@ Follow-up tickets filed: <ticket-id list, or 'none'>"
    )
    ```
 
-5. **Exit cleanly (exit 0).** The round-runner moves the ticket to
+5. **Exit cleanly (exit 0).** The sprint-lifecycle moves the ticket to
    in-review automatically. Stage 5 spawns the verification IC against
    your work.
 
