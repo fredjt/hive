@@ -544,9 +544,12 @@ After exit 0, this script will:
     fi
   done
 
+  # Per-ticket gate output log (for dashboard "View gate" button)
+  local GATE_LOG="$COMPANY_DIR/logs/gate-${ticket}.log"
+
   # Run gates synchronously
   local GATES_RC=0
-  bash "$SKILL_DIR/lib/tools/verification-gates.sh" "$dept" "$PROJECT_ROOT" >> "$LOG" 2>&1 || GATES_RC=$?
+  GATE_LOG="$GATE_LOG" bash "$SKILL_DIR/lib/tools/verification-gates.sh" "$dept" "$PROJECT_ROOT" || GATES_RC=$?
 
   if [ "$GATES_RC" -eq 1 ]; then
     # skip_tdd_red flag set — bounce to tdd-red

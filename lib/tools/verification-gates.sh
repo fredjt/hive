@@ -66,6 +66,17 @@ GATE_REQUIRE_COMMITS="${GATE_REQUIRE_COMMITS_OVERRIDE:-$GATE_REQUIRE_COMMITS}"
 source "$SCRIPT_DIR/ticket-paths.sh"
 TICKET_DIR="$(ticket_dir "$DEPT")"
 
+# ── Per-ticket gate output log ──────────────────────────────────────
+# When GATE_LOG is set (by sprint-lifecycle.sh), redirect all output
+# (stdout + stderr) to a per-ticket file so the dashboard can show
+# gate run stdout/stderr via the "View" button.
+if [ -n "${GATE_LOG:-}" ]; then
+  mkdir -p "$(dirname "$GATE_LOG")"
+  : > "$GATE_LOG"        # truncate: each gate run gets a fresh log
+  exec 1>>"$GATE_LOG"
+  exec 2>&1
+fi
+
 log() { echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] gates dept=$DEPT $*" >&2; }
 
 log "starting gate run (strict=$GATE_REQUIRE_TESTS,$GATE_REQUIRE_LINT,$GATE_REQUIRE_SECURITY,$GATE_REQUIRE_COMMITS)"
