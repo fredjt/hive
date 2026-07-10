@@ -55,29 +55,9 @@ hive stop
 
 ## Architecture (one-line tour)
 
-```
-┌─────────────┐  ┌─────────────────────────┐  ┌──────────────────┐
-│  Dashboard  │  │   hive (CLI - Python)   │  │ Spawned agents   │
-│  (Node.js)  │  │                         │  │ (Claude Code)    │
-└──────┬──────┘  └────────────┬────────────┘  └────────┬─────────┘
-       │ HTTP                  │ HTTP / stdio          │ HTTP (MCP)
-       └────────────┬──────────┴───────────────────────┘
-                    ▼
-        ┌────────────────────────┐
-        │  Hive MCP server       │  (Python, FastMCP)
-        │  ~50 tools             │
-        └───────────┬────────────┘
-                    │ subprocess
-                    ▼
-        ┌────────────────────────┐
-        │  Bash tool scripts     │   tickets, chat, gates,
-        │  lib/tools/*.sh        │   roster-rebuild, etc.
-        └───────────┬────────────┘
-                    ▼
-        ┌────────────────────────┐
-        │  .company/ workspace   │   the canonical state
-        └────────────────────────┘
-```
+![Hive architecture](docs/hive-architecture.png)
+
+Clients (Dashboard, CLI, Spawned agents) connect to the MCP server (~50 tools), which executes Bash scripts in `lib/tools/*.sh` that mutate the canonical state at `.company/`.
 
 See `ARCHITECTURE.md` for details. See `CLI.md` for command reference.
 See `MCP-TOOLS.md` for the MCP tool catalog.
