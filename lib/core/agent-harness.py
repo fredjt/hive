@@ -365,7 +365,12 @@ def build_headers(api_base: str, api_key: str | None = None) -> dict[str, str]:
 
     headers = {}
     for key, value in config["headers_template"].items():
-        headers[key] = value.format(api_key=api_key or "") if "{api_key}" in value else value
+        if "{api_key}" in value:
+            # Only add auth header if we have a key
+            if api_key:
+                headers[key] = value.format(api_key=api_key)
+        else:
+            headers[key] = value
 
     return headers
 
@@ -685,6 +690,7 @@ def run_agent(
 
     num_turns = 0
     total_cost_usd = 0.0
+    assistant_text = ""
     start_time = datetime.now(timezone.utc)
 
     while num_turns < max_turns:
