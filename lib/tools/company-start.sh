@@ -76,7 +76,7 @@ for i,a in enumerate(agents):
 if os.path.exists(org_file):
     org=json.load(open(org_file))
     depts=list(org.get('departments',{}).keys())
-    existing={a.get('department') for a in agents if isinstance(a,dict) and 'erif' in a.get('role','').lower() and a.get('status')=='active'}
+    existing={a.get('department') for a in agents if isinstance(a,dict) and 'verif' in a.get('role','').lower() and a.get('status')=='active'}
     for d in depts:
         if d not in existing:
             agents.append({'id':'verification-mgr-'+d,'role':'Manager-Verification','department':d,'status':'active'})
