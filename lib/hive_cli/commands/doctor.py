@@ -66,7 +66,7 @@ def handle(args) -> int:
 
     # External tools
     # Agent harness: Python-based, no external binary needed
-    harness_path = _hive_root / "lib" / "core" / "agent-harness.py"
+    harness_path = HIVE_ROOT / "lib" / "core" / "agent-harness.py"
     all_ok &= _check("agent harness", harness_path.is_file(),
                      f"{harness_path} (Python-based, no CLI required)")
     all_ok &= _check("git", shutil.which("git") is not None)
