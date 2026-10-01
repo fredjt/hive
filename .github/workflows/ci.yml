@@ -45,7 +45,6 @@ jobs:
 
       - name: Run test suite
         run: |
-          cd hive
           PYTHONPATH=lib pytest tests/ -v --tb=short
 
   # ──────────────────────────────────────────────
@@ -115,7 +114,7 @@ jobs:
       - name: Check dashboard server.js syntax
         run: |
           # Validate the dashboard server has no syntax errors
-          node --check hive/lib/dashboard/server.js
+          node --check lib/dashboard/server.js
 
   # ──────────────────────────────────────────────
   # 4. Python linting (ruff)
@@ -136,7 +135,6 @@ jobs:
 
       - name: Run ruff check (real issues only)
         run: |
-          cd hive
           # Only flag actual bugs, not style nitpicks (line length,
           # single-line ifs, etc.) that the codebase already has.
           ruff check --select F401,E722 lib/hive_cli/ lib/hive_mcp/
