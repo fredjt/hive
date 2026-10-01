@@ -19,8 +19,11 @@ set -uo pipefail
 #
 # Usage: check-company-dir.sh <project-root>
 
-PROJECT_ROOT="${1:-${PROJECT_ROOT:-$PWD}}"
-PROJECT_ROOT="$(cd "$PROJECT_ROOT" 2>/dev/null && pwd)" || {
+if [ $# -eq 0 ]; then
+  echo "Usage: check-company-dir.sh <project-root>" >&2
+  exit 1
+fi
+PROJECT_ROOT="$(cd "$1" 2>/dev/null && pwd)" || {
   echo "check-company-dir: bad project root: $1" >&2
   exit 2
 }

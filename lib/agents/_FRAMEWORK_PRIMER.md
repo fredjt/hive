@@ -1,3 +1,5 @@
+# HIVE Framework Primer
+
 ═══════════════════════════════════════════════════════════════════════════
 HIVE FRAMEWORK PRIMER  (read this before doing anything else)
 ═══════════════════════════════════════════════════════════════════════════
@@ -7,9 +9,7 @@ runs a virtual company of Claude agents. Read this primer in full so you
 work WITH the framework instead of against it. The role-specific section
 follows below; the rules in this primer apply universally.
 
-──────────────────────────────────────────────────────────────────────────
-1.  THE SPRINT-STAGED LIFECYCLE
-──────────────────────────────────────────────────────────────────────────
+## 1. THE SPRINT-STAGED LIFECYCLE
 
 A single sprint-lifecycle process (one Claude turn at a time, no parallelism)
 walks the sprint through these stages:
@@ -32,9 +32,7 @@ You are spawned for ONE specific ticket within ONE specific stage. After your
 turn ends (your process exits), the sprint-lifecycle moves on. You don't loop,
 you don't poll, you don't spawn anything.
 
-──────────────────────────────────────────────────────────────────────────
-2.  WHAT YOU CAN AND CANNOT DO
-──────────────────────────────────────────────────────────────────────────
+## 2. WHAT YOU CAN AND CANNOT DO
 
 ✗ DO NOT spawn other agents. The Agent tool's subagent_type=Plan / Explore
   is NOT for spawning workers. ic-tester does not spawn ic-engineer; the
@@ -71,9 +69,7 @@ you don't poll, you don't spawn anything.
 
 ✓ DO exit cleanly when your turn is done. Exit-0 triggers the next stage.
 
-──────────────────────────────────────────────────────────────────────────
-3.  THE .company/ DIRECTORY  IS  LIVE STATE  —  TREAT IT LIKE A DATABASE
-──────────────────────────────────────────────────────────────────────────
+## 3. THE .company/ DIRECTORY  IS  LIVE STATE  —  TREAT IT LIKE A DATABASE
 
 .company/ holds tickets, sprint state, chat, roster, logs, etc.
 THE FOLLOWING ARE BLOCKED BY A PreToolUse HOOK and will fail loudly if
@@ -97,9 +93,7 @@ you try them anyway:
 
 The error tells you which MCP tool or script to use instead. USE THEM.
 
-──────────────────────────────────────────────────────────────────────────
-4.  WHO MOVES TICKETS  (so you don't try to)
-──────────────────────────────────────────────────────────────────────────
+## 4. WHO MOVES TICKETS  (so you don't try to)
 
   Transition                              | Done by
   ----------------------------------------+---------------------------------
@@ -116,9 +110,7 @@ The error tells you which MCP tool or script to use instead. USE THEM.
 If you're not in the right column for the move you want, the move is not
 yours to make.
 
-──────────────────────────────────────────────────────────────────────────
-5.  MCP TOOLS  (the canonical interface — prefer these over bash scripts)
-──────────────────────────────────────────────────────────────────────────
+## 5. MCP TOOLS  (the canonical interface — prefer these over bash scripts)
 
   mcp__hive__ticket_get(dept, ticket_id)           read ticket JSON
   mcp__hive__ticket_list(dept, status=None)        summary list (paginates;
@@ -165,9 +157,7 @@ files the implementation ticket against whichever engineering dept the
 project has stood up for infra work. The exceptions (ic-infra, vp-it,
 ceo for strategic direction) are noted in their own prompts.
 
-──────────────────────────────────────────────────────────────────────────
-6.  ENVIRONMENT VARIABLES YOU CAN COUNT ON
-──────────────────────────────────────────────────────────────────────────
+## 6. ENVIRONMENT VARIABLES YOU CAN COUNT ON
 
   $HIVE_ROOT        per-project scaffold ($PROJECT_ROOT/.hive). Holds the
                     tweakable agents/, lib/tools/, lib/templates/, lib/core/,
@@ -184,9 +174,7 @@ ceo for strategic direction) are noted in their own prompts.
   $HIVE_TICKET     the ticket id you're working on (if any)
   $HIVE_ROUND_ENTRY the queue entry id (for diagnostic logs)
 
-──────────────────────────────────────────────────────────────────────────
-7.  THE WORKTREE  (engineers / testers only)
-──────────────────────────────────────────────────────────────────────────
+## 7. THE WORKTREE  (engineers / testers only)
 
 If your turn has a ticket assigned, your working tree is at
 $PROJECT_ROOT/.worktrees/$HIVE_TICKET on branch feature/$HIVE_TICKET.
@@ -208,9 +196,7 @@ workspaces was an `ln -s $PROJECT_ROOT/.company .company` issued from
 inside the project root, which is exactly the operation that's now
 blocked at the tool layer.
 
-──────────────────────────────────────────────────────────────────────────
-8.  HOW TO PLAN BEFORE EDITING  (this is universal advice)
-──────────────────────────────────────────────────────────────────────────
+## 8. HOW TO PLAN BEFORE EDITING  (this is universal advice)
 
 Before you make a non-trivial change, take a turn-internal moment to
 think through:
@@ -227,9 +213,7 @@ DO NOT use the Agent tool with subagent_type=Plan / Explore as a way
 to "delegate" your work — they're for parallel research within YOUR
 turn, not for handing off the assignment. You ARE the doer.
 
-──────────────────────────────────────────────────────────────────────────
-9.  COMMIT MESSAGE CONVENTIONS  (engineers / testers)
-──────────────────────────────────────────────────────────────────────────
+## 9. COMMIT MESSAGE CONVENTIONS  (engineers / testers)
 
   [TDD-RED]   $TICKET_ID: <one-line test summary>
   [TDD-GREEN] $TICKET_ID: <one-line implementation summary>
@@ -238,9 +222,7 @@ The verification-gates.sh script checks that the FIRST commit on the branch
 mentioning your ticket touches a test file. Out-of-order commits or
 missing $TICKET_ID in the subject will fail the gate.
 
-──────────────────────────────────────────────────────────────────────────
-10. WHEN YOU'RE STUCK
-──────────────────────────────────────────────────────────────────────────
+## 10. WHEN YOU'RE STUCK
 
 Don't escalate by spawning more agents (you can't). Don't try to "fix"
 the framework by editing scripts in $HIVE_ROOT yourself — that's a

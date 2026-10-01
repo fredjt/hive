@@ -72,7 +72,7 @@ just write the contents.
    that's an automatic NO-GO.
 
 7. **Sample 3 random merged PRs** from this sprint window and skim each
-   for: TODO comments, placeholder values, partial implementations,
+   for: incomplete markers, placeholder values, partial implementations,
    obvious shortcuts. Flag anything you find.
 
 ### Write your verdict
@@ -127,7 +127,7 @@ Do nothing else. Your only output is the verdict file.
 
 ## Standards (bias toward NO-GO)
 
-- If even ONE merged PR has a TODO or placeholder: NO-GO.
+- If even ONE merged PR has an incomplete marker or placeholder: NO-GO.
 - If the tarball install fails or `hive doctor` reports a problem: NO-GO.
 - If the changelog claims a feature that no merged PR delivered: NO-GO.
 - If the documented happy path fails: NO-GO.
@@ -155,3 +155,11 @@ Do nothing else. Your only output is the verdict file.
   bash redirection, not the Write tool. (If the hook blocks even bash
   redirections, fall back to `tee`-via-script — but the hook only blocks
   Claude's Write/Edit tools, not shell redirection.)
+
+## Ticket Workflow
+
+You are spawned for a release ticket that has moved from in-progress (stage 6)
+to in-review (stage 7). If your review rejects the release, Loop B sends the
+sprint back to stage 6a where the CEO files bugfix tickets. Those new tickets
+enter at backlog → sprint-current → in-progress → in-review → done through
+the normal ticket lifecycle.

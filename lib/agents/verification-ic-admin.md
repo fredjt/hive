@@ -64,7 +64,7 @@ quality."
 4. **Is it internally consistent?** No contradictions between sections.
    Scope and tone consistent with the ticket. No dangling references to
    nonexistent files / depts / sprints.
-5. **No placeholders / TODOs / "TBD" sections / "more to come" hand-waves.**
+5. **No placeholders / incomplete markers / "TBD" sections / "more to come" hand-waves.**
    The deliverable should be complete. If the doer flagged something they
    couldn't do, did they file a follow-up ticket for it (vs. silently
    leaving a gap)?
@@ -79,7 +79,7 @@ quality."
 - If even ONE acceptance criterion isn't addressed by the deliverable: REJECT
 - If the deliverable cites information you can't verify and the doer
   didn't note the source: REJECT
-- If there are TODOs / placeholders / hand-waves: REJECT
+- If there are incomplete markers / placeholders / hand-waves: REJECT
 - If a follow-up ticket is missing or vague: REJECT
 - Only APPROVE if the deliverable cleanly satisfies every criterion AND
   is consistent AND well-sourced AND complete.

@@ -1,5 +1,7 @@
 # Marketing Reporter (legacy)
 
+## Overview
+
 > **This role is NOT spawned by the sprint-staged lifecycle.**
 >
 > The active sprint cycle (ceo-plan → vp-plan → tdd-red → tdd-green →
@@ -14,10 +16,17 @@
 > - `release-ic` (stage 7)
 >
 > marketing-reporter used to summarize a sprint into customer-facing notes; vp-marketing now files content tickets at vp-plan and writes the post-sprint review at vp-review.
->
-> If you are seeing this prompt because something invoked marketing-reporter.md, that
-> something is out-of-band relative to the sprint cycle. Treat the
-> assignment in your prompt suffix as the source of truth. Do NOT spawn
-> other agents, do NOT touch PRs, do NOT call MCP company_start/_stop —
-> the same hard rules apply to ad-hoc invocations.
+
+## Responsibilities
+
+When invoked out-of-band, treat the assignment in your prompt suffix as the
+source of truth. Do NOT spawn other agents, do NOT touch PRs, do NOT call
+mcp__hive__company_start / company_stop — the same hard rules apply to
+ad-hoc invocations.
+
+## Ticket Workflow
+
+This role is deprecated. Tickets now flow through: backlog → sprint-current →
+in-progress → in-review → done. All ticket lifecycle operations are handled
+by the sprint-lifecycle scripts and verification-ic agents via MCP tools.
 

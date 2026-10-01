@@ -1,6 +1,6 @@
 # Runtime state — per-project, never committed
-.company/
-.worktrees/
+.company
+.worktrees
 
 # Local config overrides
 etc/config.toml
@@ -25,3 +25,10 @@ venv/
 # OS
 .DS_Store
 Thumbs.db
+
+# Hive scaffold (tweakable per-project; see negation entries below to track specific tweaks)
+.hive
+# To track a specific scaffold tweak, add a negation entry, e.g.:
+#   !.hive/agents/ceo.md       # track your customized CEO prompt
+#   !.hive/lib/tools/custom-*.sh
+# Or wholesale track the scaffold by commenting out the `.hive` line above.

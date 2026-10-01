@@ -45,3 +45,27 @@ ALL .company/ writes MUST go through these scripts:
 - All `sprint-*.sh` scripts
 
 See `tools/company-api.md` for complete reference.
+
+## Ticket Workflow
+
+Tickets flow through these statuses: backlog → sprint-current → in-progress →
+in-review → done. Agents interact with tickets via MCP tools (listed above)
+and bash scripts. The sprint-lifecycle script manages transitions between
+backlog, sprint-current, and in-progress states automatically.
+
+## MCP Tools Reference
+
+For ticket and status operations, prefer MCP tools over bash scripts:
+- `mcp__hive__ticket_get(dept, ticket_id)` — read ticket JSON
+- `mcp__hive__ticket_list(dept, status=None)` — summary list (paginates)
+- `mcp__hive__ticket_create(dept, type, priority, title, description, ...)`
+- `mcp__hive__ticket_comment(dept, ticket_id, author, comment)`
+- `mcp__hive__ticket_approve(dept, ticket_id, verifier, rationale)` — verification IC only
+- `mcp__hive__ticket_bounce(dept, ticket_id, verifier, rationale)` — verification IC only
+- `mcp__hive__ticket_claim(dept, ticket_id, role, agent_id, agent_name)`
+- `mcp__hive__chat_send(channel, author, department, message)`
+- `mcp__hive__status_update(dept, key, value)`
+- `mcp__hive__report_write(type, filename, content)`
+- `mcp__hive__gates_check(dept, ticket_id)` — read gate report
+- `mcp__hive__gates_run(dept, ticket_id)` — run gates synchronously
+- `mcp__hive__inbox_write(type, dept, content)` — send to user inbox

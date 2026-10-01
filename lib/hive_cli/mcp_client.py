@@ -16,7 +16,7 @@ from typing import Any
 import httpx
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
-from mcp.client.streamable_http import streamablehttp_client
+from mcp.client.streamable_http import streamable_http_client
 
 
 # HIVE_INSTALL_DIR — where the venv + MCP server source live (global).
@@ -47,7 +47,7 @@ def _is_http_server_up() -> bool:
 @asynccontextmanager
 async def _http_session():
     """Open an MCP ClientSession over Streamable HTTP."""
-    async with streamablehttp_client(_http_endpoint()) as (read_stream, write_stream, _):
+    async with streamable_http_client(_http_endpoint()) as (read_stream, write_stream, _):
         async with ClientSession(read_stream, write_stream) as session:
             await session.initialize()
             yield session

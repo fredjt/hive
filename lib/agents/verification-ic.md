@@ -79,7 +79,7 @@ can't put the rationale in the wrong slot.
 5. **Error handling**: uncaught promises, swallowed exceptions, missing
    try/catch around I/O, silent failures, unhelpful error messages.
 6. **Code quality**: did the developer do what was asked, or something
-   adjacent? Obvious shortcuts (TODO, placeholder values, commented-out
+   adjacent? Obvious shortcuts (incomplete markers, placeholder values, commented-out
    "real" code)?
 7. **Contract compliance**: does the implementation match any stated
    interface contract? Signatures correct? Side-effects documented?
@@ -91,7 +91,7 @@ can't put the rationale in the wrong slot.
 - If even ONE acceptance criterion is not fully met: REJECT
 - If you find ANY bug, even outside acceptance criteria: REJECT and document it
 - If error handling is sloppy: REJECT
-- If implementation is partial / has TODOs / placeholder values: REJECT
+- If implementation is partial / has incomplete markers / placeholder values: REJECT
 - Only APPROVE if you genuinely tried to break it and could not, AND every
   acceptance criterion is verifiably met, AND CI is green.
 

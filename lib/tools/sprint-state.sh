@@ -140,6 +140,16 @@ ss_set_tickets_in_sprint() {
   ss__atomic_jq '.tickets_in_sprint = $a' --argjson a "$1"
 }
 
+ss_mark_enqueued() {
+  ss__atomic_jq '.stage_enqueued = true'
+}
+
+ss_is_enqueued() {
+  local val
+  val=$(jq -r .stage_enqueued "$(ss_state_file)" 2>/dev/null || echo false)
+  [ "$val" = "true" ]
+}
+
 ss_active_ticket_count() {
   local depts_dir="${COMPANY_DIR:?COMPANY_DIR not set}/departments"
   [ -d "$depts_dir" ] || { echo 0; return 0; }

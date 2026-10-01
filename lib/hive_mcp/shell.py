@@ -42,7 +42,7 @@ def _resolve_scaffold(company_dir: str | None) -> Path:
     if company_dir:
         project_root = Path(company_dir).resolve().parent
         candidate = project_root / ".hive"
-        if candidate.is_dir():
+        if candidate.is_dir() and (candidate / "lib" / "tools").is_dir():
             return candidate
     return HIVE_ROOT
 

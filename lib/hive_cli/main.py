@@ -275,6 +275,7 @@ def _add_tool(sub) -> None:
     p.add_argument("name", help="Tool name (e.g. ticket_create)")
     p.add_argument("--arg", action="append", default=[],
                    help="Argument as key=value (repeatable). Values parsed as JSON if possible.")
+    p.add_argument("--json", action="store_true")
     p.set_defaults(_handler=tool.handle_invoke)
 
     p2 = sub.add_parser("tools", help="List MCP tools")
@@ -350,7 +351,10 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     argv = argv if argv is not None else sys.argv[1:]
     parser = build_parser()
-    args = parser.parse_args(argv)
+    try:
+        args = parser.parse_args(argv)
+    except SystemExit:
+        return 1
 
     # Bare `hive` opens dashboard
     if not args.cmd:

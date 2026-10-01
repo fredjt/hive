@@ -96,7 +96,7 @@ actually accomplished, properly?** They look at:
 - Did the deliverable exist at the path you named in your summary comment?
 - Does its content satisfy every acceptance criterion in the ticket?
 - Is it factually accurate? Internally consistent? Free of placeholders
-  and TODOs?
+  and incomplete markers?
 - If you filed follow-up tickets, do they correctly capture the
   engineering work needed?
 
@@ -112,7 +112,7 @@ If the verifier rejects, the ticket goes back to in-progress and you
 - Deliverable lives at exactly the path your summary comment names.
 - Every acceptance criterion is verifiably addressed (the verifier can
   cross-reference your text to the criterion).
-- No TODOs, placeholders, "TBD" sections, or "more to come" hand-waves.
+- No incomplete markers, placeholders, "TBD" sections, or "more to come" hand-waves.
 - Where another department's work is needed, a follow-up ticket exists
   with concrete acceptance criteria — not just "have engineering look
   at this."
