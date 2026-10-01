@@ -34,7 +34,15 @@ done
 if [ "$INSTALL_DIR" != "$SOURCE_DIR" ]; then
   echo "Copying $SOURCE_DIR → $INSTALL_DIR ..."
   mkdir -p "$INSTALL_DIR"
-  cp -r "$SOURCE_DIR"/. "$INSTALL_DIR"/
+  # Use rsync if available (preserves permissions, excludes .git), otherwise cp
+  if command -v rsync >/dev/null 2>&1; then
+    rsync -a --exclude='.git' --exclude='__pycache__' --exclude='*.pyc' "$SOURCE_DIR/" "$INSTALL_DIR/"
+  else
+    cp -r --no-dereference "$SOURCE_DIR"/. "$INSTALL_DIR/" 2>/dev/null || \
+      cp -r "$SOURCE_DIR"/. "$INSTALL_DIR/" 2>/dev/null || true
+    # Remove .git if it was copied (not needed for installation)
+    rm -rf "$INSTALL_DIR/.git"
+  fi
 fi
 
 echo "Installing Hive at $INSTALL_DIR"
