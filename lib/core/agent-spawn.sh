@@ -33,9 +33,19 @@ set -uo pipefail
 #   HIVE_VERIFICATION_MODEL - model name for verification agents only.
 #      When HIVE_ROLE contains "verification" and this is set, the harness
 #      uses a stronger model than the default.
+#
+# LLM API configuration (for OpenAI-compatible endpoints):
 #   HIVE_API_BASE           base URL for the LLM API
-#   HIVE_API_KEY            API key for the LLM API
-#   HIVE_MODEL              model name (e.g. "claude-sonnet-4-20250514")
+#                           Examples:
+#                             https://api.openai.com/v1        (OpenAI)
+#                             https://api.anthropic.com/v1    (Anthropic)
+#                             http://localhost:11434/v1       (Ollama)
+#                             https://openrouter.ai/api/v1    (OpenRouter)
+#                             https://api.groq.com/openai/v1  (Groq)
+#   HIVE_API_KEY            API key for authentication
+#   HIVE_MODEL              model name (e.g. "gpt-4o", "claude-sonnet-4-20250514")
+#   HIVE_TEMPERATURE        sampling temperature 0.0-2.0 (default: 0.7)
+#   HIVE_MAX_TOKENS         max response tokens (default: 8192)
 
 # Source the user's hive env file (if present) so daemons spawned via nohup,
 # systemd, etc. — which don't see ~/.zshrc or ~/.bashrc — still get
@@ -230,6 +240,8 @@ fi
 export HIVE_API_BASE="${HIVE_API_BASE:-}"
 export HIVE_API_KEY="${HIVE_API_KEY:-}"
 export HIVE_MODEL="${HIVE_MODEL:-}"
+export HIVE_TEMPERATURE="${HIVE_TEMPERATURE:-0.7}"
+export HIVE_MAX_TOKENS="${HIVE_MAX_TOKENS:-8192}"
 
 python3 "$AGENT_HARNESS" "${HARNESS_ARGS[@]}" -- "$PROMPT" 2>/dev/null | tee "$STREAM_FILE"
 exit ${PIPESTATUS[0]:-0}

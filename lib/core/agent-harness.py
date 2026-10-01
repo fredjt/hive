@@ -256,7 +256,7 @@ def run_shell_command(cmd_line: str, cwd: str | None = None,
 
 
 # ---------------------------------------------------------------------------
-# LLM API integration
+# LLM API integration — OpenAI-compatible endpoints
 # ---------------------------------------------------------------------------
 
 try:
@@ -265,24 +265,218 @@ except ImportError:
     _httpx = None  # type: ignore
 
 
+# Supported providers and their endpoint patterns
+PROVIDER_CONFIGS = {
+    "openai": {
+        "base_url": "https://api.openai.com/v1",
+        "headers_template": {"Authorization": "Bearer {api_key}", "Content-Type": "application/json"},
+    },
+    "anthropic": {
+        "base_url": "https://api.anthropic.com/v1",
+        "headers_template": {"x-api-key": "{api_key}", "Content-Type": "application/json", "anthropic-version": "2023-06-01"},
+    },
+    "ollama": {
+        "base_url": "http://localhost:11434/v1",
+        "headers_template": {"Content-Type": "application/json"},  # Ollama doesn't need auth by default
+    },
+    "openrouter": {
+        "base_url": "https://openrouter.ai/api/v1",
+        "headers_template": {"Authorization": "Bearer {api_key}", "Content-Type": "application/json", "HTTP-Referer": "https://github.com/fredjt/hive", "X-Title": "Hive Agent Harness"},
+    },
+    "groq": {
+        "base_url": "https://api.groq.com/openai/v1",
+        "headers_template": {"Authorization": "Bearer {api_key}", "Content-Type": "application/json"},
+    },
+}
+
+
+def detect_provider(api_base: str) -> str:
+    """Detect the provider from the API base URL.
+
+    Returns a provider key that can be used to look up configuration.
+    """
+    if not api_base:
+        return "custom"
+
+    lower = api_base.lower()
+    for name, config in PROVIDER_CONFIGS.items():
+        if name in lower or config["base_url"] in lower:
+            return name
+
+    # Check for common patterns
+    if "openai" in lower:
+        return "openai"
+    if "anthropic" in lower:
+        return "anthropic"
+    if "ollama" in lower or "11434" in lower:
+        return "ollama"
+    if "openrouter" in lower:
+        return "openrouter"
+    if "groq" in lower:
+        return "groq"
+
+    return "custom"
+
+
+def build_request_payload(
+    messages: list[dict],
+    model: str,
+    temperature: float = 0.7,
+    max_tokens: int = 8192,
+) -> dict:
+    """Build the request payload for an OpenAI-compatible API.
+
+    Handles provider-specific adjustments (e.g., Anthropic's message format).
+    """
+    payload = {
+        "model": model,
+        "messages": messages,
+        "temperature": temperature,
+        "max_tokens": max_tokens,
+    }
+
+    # Anthropic uses a different message format
+    provider = detect_provider(os.environ.get("HIVE_API_BASE", ""))
+    if provider == "anthropic":
+        # Convert OpenAI-style messages to Anthropic format
+        anthropic_messages = []
+        system_content = None
+        for msg in messages:
+            if msg["role"] == "system":
+                system_content = msg["content"]
+            else:
+                anthropic_messages.append({"role": msg["role"], "content": msg["content"]})
+
+        payload = {
+            "model": model,
+            "messages": anthropic_messages,
+            "system": system_content or "You are a helpful assistant.",
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+        }
+
+    return payload
+
+
+def build_headers(api_base: str, api_key: str | None = None) -> dict[str, str]:
+    """Build headers for the API request based on provider detection."""
+    provider = detect_provider(api_base)
+    config = PROVIDER_CONFIGS.get(provider, PROVIDER_CONFIGS["openai"])
+
+    headers = {}
+    for key, value in config["headers_template"].items():
+        headers[key] = value.format(api_key=api_key or "") if "{api_key}" in value else value
+
+    return headers
+
+
+def parse_response(resp: httpx.Response) -> dict[str, Any]:
+    """Parse the API response into a standardized format.
+
+    Handles both OpenAI and Anthropic response formats.
+    Returns a dict with ok/content/model/usage/error keys.
+    """
+    try:
+        data = resp.json()
+    except json.JSONDecodeError:
+        return {
+            "ok": False,
+            "error": f"Invalid JSON response: {resp.text[:200]}",
+        }
+
+    provider = detect_provider(os.environ.get("HIVE_API_BASE", ""))
+
+    # Anthropic format
+    if provider == "anthropic":
+        content_blocks = data.get("content", [])
+        content_parts = []
+        for block in content_blocks:
+            if isinstance(block, dict) and block.get("type") == "text":
+                content_parts.append(block.get("text", ""))
+
+        return {
+            "ok": True,
+            "content": "\n".join(content_parts),
+            "model": data.get("model", "anthropic"),
+            "usage": {
+                "prompt_tokens": data.get("usage", {}).get("input_tokens", 0),
+                "completion_tokens": data.get("usage", {}).get("output_tokens", 0),
+                "total_tokens": (data.get("usage", {}).get("input_tokens", 0) +
+                                data.get("usage", {}).get("output_tokens", 0)),
+            },
+        }
+
+    # OpenAI format (default)
+    choices = data.get("choices", [])
+    if not choices:
+        return {
+            "ok": False,
+            "error": "No choices in response",
+        }
+
+    message = choices[0].get("message", {})
+    content = message.get("content", "")
+
+    # Extract token usage
+    usage = data.get("usage", {})
+    total_cost_usd = 0.0
+    if usage:
+        prompt_tokens = usage.get("prompt_tokens", 0)
+        completion_tokens = usage.get("completion_tokens", 0)
+        # Rough cost estimation (varies by model)
+        if "gpt-4" in data.get("model", "").lower():
+            total_cost_usd = (prompt_tokens * 0.00003 + completion_tokens * 0.00006) / 1000
+        elif "gpt-3.5" in data.get("model", "").lower():
+            total_cost_usd = (prompt_tokens * 0.0000015 + completion_tokens * 0.000002) / 1000
+        elif "claude" in data.get("model", "").lower():
+            total_cost_usd = (prompt_tokens * 0.000003 + completion_tokens * 0.000015) / 1000
+
+    return {
+        "ok": True,
+        "content": content or "",
+        "model": data.get("model", "unknown"),
+        "usage": {
+            "prompt_tokens": usage.get("prompt_tokens", 0),
+            "completion_tokens": usage.get("completion_tokens", 0),
+            "total_tokens": usage.get("total_tokens", 0),
+            "total_cost_usd": total_cost_usd,
+        },
+    }
+
+
 def call_llm_api(
     messages: list[dict],
     api_base: str | None = None,
     model: str | None = None,
     api_key: str | None = None,
+    temperature: float | None = None,
+    max_tokens: int | None = None,
+    retries: int = 3,
 ) -> dict[str, Any]:
-    """Call a generic OpenAI-compatible LLM API.
+    """Call an OpenAI-compatible LLM API with retry logic.
 
+    Supports multiple providers (OpenAI, Anthropic, Ollama, OpenRouter, Groq).
     Falls back to local inference if no API config is provided.
-    Returns the assistant's response text.
+
+    Args:
+        messages: Conversation history as list of {role, content} dicts.
+        api_base: Base URL for the LLM API (e.g., https://api.openai.com/v1).
+        model: Model name to use (e.g., gpt-4, claude-sonnet-4-20250514).
+        api_key: API key for authentication.
+        temperature: Sampling temperature (0.0-2.0). Default 0.7.
+        max_tokens: Maximum tokens in response. Default 8192.
+        retries: Number of retry attempts for transient failures. Default 3.
+
+    Returns:
+        Dict with ok/content/model/usage/error keys.
     """
     base = api_base or os.environ.get("HIVE_API_BASE")
-    mdl = model or os.environ.get("HIVE_MODEL", "claude-sonnet-4-20250514")
+    mdl = model or os.environ.get("HIVE_MODEL", "gpt-4o")
     key = api_key or os.environ.get("HIVE_API_KEY")
+    temp = temperature if temperature is not None else float(os.environ.get("HIVE_TEMPERATURE", "0.7"))
+    max_tok = max_tokens if max_tokens is not None else int(os.environ.get("HIVE_MAX_TOKENS", "8192"))
 
     if not base:
-        # No API configured — return a placeholder response indicating the
-        # agent needs an LLM backend. This allows testing without breaking.
         return {
             "ok": False,
             "error": "No LLM API configured (set HIVE_API_BASE and optionally HIVE_API_KEY)",
@@ -296,44 +490,115 @@ def call_llm_api(
             "model": mdl,
         }
 
+    headers = build_headers(base, key)
+    payload = build_request_payload(messages, mdl, temp, max_tok)
+
+    last_error = None
+    for attempt in range(retries):
+        try:
+            with _httpx.Client(timeout=120.0) as client:
+                resp = client.post(f"{base}/chat/completions", json=payload, headers=headers)
+
+                if resp.status_code == 429:  # Rate limit
+                    retry_after = int(resp.headers.get("Retry-After", 2 ** attempt))
+                    import time as _time
+                    _time.sleep(retry_after)
+                    continue
+
+                if resp.status_code not in (200, 201):
+                    last_error = f"HTTP {resp.status_code}: {resp.text[:300]}"
+                    if resp.status_code >= 500:
+                        # Server error — retry
+                        continue
+                    break  # Client error — don't retry
+
+                return parse_response(resp)
+
+        except _httpx.TimeoutException:
+            last_error = "Request timed out"
+            continue
+        except _httpx.ConnectError as e:
+            last_error = f"Connection error: {e}"
+            if attempt < retries - 1:
+                import time as _time
+                _time.sleep(2 ** attempt)  # Exponential backoff
+            continue
+        except Exception as e:
+            last_error = f"{type(e).__name__}: {e}"
+            break  # Non-retryable error
+
+    return {
+        "ok": False,
+        "error": f"LLM API failed after {retries} attempts: {last_error}",
+        "model": mdl,
+    }
+
+
+def stream_llm_api(
+    messages: list[dict],
+    api_base: str | None = None,
+    model: str | None = None,
+    api_key: str | None = None,
+    temperature: float | None = None,
+    max_tokens: int | None = None,
+) -> tuple[str, dict[str, Any]]:
+    """Call the LLM API with streaming support.
+
+    Yields chunks of text as they arrive and returns the full response
+    when complete. Useful for real-time output display.
+
+    Returns:
+        Tuple of (full_response_text, usage_dict).
+    """
+    base = api_base or os.environ.get("HIVE_API_BASE")
+    mdl = model or os.environ.get("HIVE_MODEL", "gpt-4o")
+    key = api_key or os.environ.get("HIVE_API_KEY")
+
+    if not base:
+        return "", {"error": "No LLM API configured"}
+
+    if _httpx is None:
+        return "", {"error": "httpx not installed"}
+
+    headers = build_headers(base, key)
+    payload = build_request_payload(messages, mdl,
+                                     temperature or float(os.environ.get("HIVE_TEMPERATURE", "0.7")),
+                                     max_tokens or int(os.environ.get("HIVE_MAX_TOKENS", "8192")))
+    payload["stream"] = True
+
+    full_content = ""
+    usage = {}
+
     try:
-        with _httpx.Client(timeout=120.0) as client:
-            resp = client.post(
-                f"{base}/chat/completions",
-                json={
-                    "model": mdl,
-                    "messages": messages,
-                    "temperature": 0.7,
-                    "max_tokens": 8192,
-                },
-                headers={
-                    "Content-Type": "application/json",
-                    **({"Authorization": f"Bearer {key}"} if key else {}),
-                },
-            )
+        with _httpx.Client(timeout=300.0) as client:
+            with client.stream("POST", f"{base}/chat/completions", json=payload, headers=headers) as resp:
+                if resp.status_code != 200:
+                    return "", {"error": f"HTTP {resp.status_code}: {resp.text[:200]}"}
 
-            if resp.status_code != 200:
-                return {
-                    "ok": False,
-                    "error": f"LLM API error: {resp.status_code} {resp.text[:200]}",
-                    "model": mdl,
-                }
+                for line in resp.iter_lines():
+                    if not line or not line.startswith("data: "):
+                        continue
+                    data_str = line[6:]  # Remove "data: " prefix
+                    if data_str.strip() == "[DONE]":
+                        break
 
-            data = resp.json()
-            content = data.get("choices", [{}])[0].get("message", {}).get("content", "")
-            return {
-                "ok": True,
-                "content": content,
-                "model": mdl,
-                "usage": data.get("usage"),
-            }
+                    try:
+                        chunk = json.loads(data_str)
+                        delta = chunk.get("choices", [{}])[0].get("delta", {})
+                        content = delta.get("content")
+                        if content:
+                            full_content += content
+                    except json.JSONDecodeError:
+                        continue
+
+                # Get usage from last chunk
+                if chunk and "usage" in chunk:
+                    usage = chunk["usage"]
 
     except Exception as e:
-        return {
-            "ok": False,
-            "error": f"LLM API error: {type(e).__name__}: {e}",
-            "model": mdl,
-        }
+        return full_content, {"error": f"Streaming error: {e}"}
+
+    return full_content, usage
 
 
 # ---------------------------------------------------------------------------
@@ -385,6 +650,11 @@ def run_agent(
     no_mcp: bool = False,
     max_turns: int = 50,
     cwd: str | None = None,
+    api_base: str | None = None,
+    model: str | None = None,
+    api_key: str | None = None,
+    temperature: float | None = None,
+    max_tokens: int | None = None,
 ) -> dict[str, Any]:
     """Run the agent conversation loop.
 
@@ -394,6 +664,11 @@ def run_agent(
         no_mcp: If True, disable MCP tool calls.
         max_turns: Maximum number of agent turns (prompt + response pairs).
         cwd: Working directory for shell commands.
+        api_base: LLM API base URL (overrides HIVE_API_BASE env var).
+        model: Model name (overrides HIVE_MODEL env var).
+        api_key: API key for authentication (overrides HIVE_API_KEY env var).
+        temperature: Sampling temperature 0.0-2.0 (overrides HIVE_TEMPERATURE).
+        max_tokens: Max response tokens (overrides HIVE_MAX_TOKENS).
 
     Returns:
         Dict with ok/exit_code/stdout/stderr/result compatible with existing
@@ -416,9 +691,11 @@ def run_agent(
         # Call the LLM
         llm_result = call_llm_api(
             messages,
-            api_base=os.environ.get("HIVE_API_BASE"),
-            model=os.environ.get("HIVE_MODEL"),
-            api_key=os.environ.get("HIVE_API_KEY"),
+            api_base=api_base or os.environ.get("HIVE_API_BASE"),
+            model=model or os.environ.get("HIVE_MODEL"),
+            api_key=api_key or os.environ.get("HIVE_API_KEY"),
+            temperature=temperature,
+            max_tokens=max_tokens,
         )
 
         if not llm_result.get("ok"):
@@ -539,6 +816,11 @@ def main() -> int:
     parser.add_argument("--mcp-url", default=None, help="MCP server URL")
     parser.add_argument("--max-turns", type=int, default=50, help="Max conversation turns")
     parser.add_argument("--cwd", default=None, help="Working directory")
+    parser.add_argument("--api-base", default=None, help="LLM API base URL (overrides HIVE_API_BASE)")
+    parser.add_argument("--model", default=None, help="Model name (overrides HIVE_MODEL)")
+    parser.add_argument("--api-key", default=None, help="API key (overrides HIVE_API_KEY)")
+    parser.add_argument("--temperature", type=float, default=None, help="Sampling temperature 0.0-2.0")
+    parser.add_argument("--max-tokens", type=int, default=None, help="Max response tokens")
     args = parser.parse_args()
 
     # Read prompt from arg or stdin
@@ -566,6 +848,11 @@ def main() -> int:
         no_mcp=args.no_mcp,
         max_turns=args.max_turns,
         cwd=args.cwd,
+        api_base=args.api_base,
+        model=args.model,
+        api_key=args.api_key,
+        temperature=args.temperature,
+        max_tokens=args.max_tokens,
     )
 
     # Output as JSON (compatible with claude-spawn.sh's stream-json format)
