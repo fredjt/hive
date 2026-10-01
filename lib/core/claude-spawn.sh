@@ -43,7 +43,7 @@ set -uo pipefail
 
 # Source the user's hive env file (if present) so daemons spawned via nohup,
 # systemd, etc. — which don't see ~/.zshrc or ~/.bashrc — still get
-# ANTHROPIC_BASE_URL, ANTHROPIC_API_KEY, LLM_TINY_URL, CLAUDE_BIN, etc.
+# LLM endpoint config, CLAUDE_BIN, etc.
 HIVE_ENV_FILE="${HIVE_ENV_FILE:-$HOME/.config/hive/env.sh}"
 [ -f "$HIVE_ENV_FILE" ] && . "$HIVE_ENV_FILE"
 

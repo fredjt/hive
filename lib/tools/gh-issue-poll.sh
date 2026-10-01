@@ -63,11 +63,10 @@ echo "$RAW" | jq -c '.[]' | while IFS= read -r issue; do
   type=$(echo "$labels" | tr ',' '\n' | grep -i "^${TYPE_PREFIX}" | head -1 | sed "s/^${TYPE_PREFIX}//I")
   pri=$( echo "$labels" | tr ',' '\n' | grep -i "^${PRI_PREFIX}"  | head -1 | sed "s/^${PRI_PREFIX}//I")
 
-  # Tiny-LLM fallback for missing fields
+  # Local keyword-based classification for missing fields
   if [ -z "$dept" ] || [ -z "$type" ]; then
     if [ -x "$SKILL_DIR/lib/tools/classify-ticket.sh" ]; then
-      LLM_TINY_CALLER="gh-issue-poll" \
-        cls=$(COMPANY_DIR="$COMPANY_DIR" bash "$SKILL_DIR/lib/tools/classify-ticket.sh" "$title
+      cls=$(COMPANY_DIR="$COMPANY_DIR" bash "$SKILL_DIR/lib/tools/classify-ticket.sh" "$title
 
 $body" 2>/dev/null) || cls=""
       if [ -n "$cls" ]; then

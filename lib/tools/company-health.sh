@@ -148,65 +148,9 @@ check_heartbeat() {
   done
 }
 
-# --- Check tiny model availability ---
-check_tiny_model() {
-  # Probe the tiny model endpoint. If reachable, write ok status.
-  # If unreachable, write error status and log a one-time alert.
-  local tiny_url="${LLM_TINY_URL:-http://localhost:8081/v1/chat/completions}"
-  local tiny_status_file="$COMPANY_DIR/status/llm-tiny-status.json"
-
-  mkdir -p "$COMPANY_DIR/status" 2>/dev/null || true
-
-  local probe_rc=0
-  curl -s --max-time 5 --connect-timeout 3 \
-    -X POST -H 'Content-Type: application/json' \
-    -d '{"model":"placeholder","messages":[{"role":"user","content":"ping"}],"max_tokens":2}' \
-    "$tiny_url" >/dev/null 2>&1 || probe_rc=$?
-
-  local now
-  now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-
-  if [ "$probe_rc" -eq 0 ]; then
-    # Write ok status (overwrite previous error if any)
-    jq -nc \
-      --arg url "$tiny_url" \
-      --arg ts "$now" \
-      '{status:"ok",url:$url,last_checked:$ts}' \
-      > "$tiny_status_file" 2>/dev/null || true
-
-    # If previous status was error, log recovery
-    if [ -f "$tiny_status_file" ]; then
-      local prev_status
-      prev_status=$(jq -r '.status' "$tiny_status_file" 2>/dev/null || echo "")
-      # prev_status is now "ok" since we just wrote it — check health.log for prior error
-      if grep -q "health: tiny model unreachable" "$COMPANY_DIR/logs/health.log" 2>/dev/null; then
-        echo "[$now] health: tiny model recovered at $tiny_url" >> "$COMPANY_DIR/logs/health.log"
-      fi
-    fi
-  else
-    # Endpoint unreachable — write error status
-    jq -nc \
-      --arg url "$tiny_url" \
-      --arg ts "$now" \
-      '{status:"unreachable",url:$url,last_checked:$ts}' \
-      > "$tiny_status_file" 2>/dev/null || true
-
-    # One-time alert: only log if we haven't logged it in the last 5 minutes
-    local last_alert
-    last_alert=$(grep -c "health: tiny model unreachable" "$COMPANY_DIR/logs/health.log" 2>/dev/null || echo "0")
-    # Count recent alerts (last 5 minutes worth of lines)
-    local recent_alerts=0
-    if [ -f "$COMPANY_DIR/logs/health.log" ]; then
-      local five_min_ago
-      five_min_ago=$(date -u -d '5 minutes ago' +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u +%Y-%m-%dT%H:%M:%SZ)
-      recent_alerts=$(grep -c "health: tiny model unreachable.*$five_min_ago\|health: tiny model unreachable" "$COMPANY_DIR/logs/health.log" 2>/dev/null || echo "0")
-    fi
-    # Log on first detection (0 alerts) to avoid noise on every health cycle
-    if [ "$last_alert" -eq 0 ]; then
-      echo "[$now] health: tiny model unreachable at $tiny_url (probe failed, exit=$probe_rc)" >> "$COMPANY_DIR/logs/health.log"
-    fi
-  fi
-}
+# --- Tiny model check REMOVED ---
+# The llm-tiny.sh small-model provider was replaced with local keyword heuristics.
+# No external model endpoint to monitor — all classification is done locally.
 
 # --- Check disk usage and alert on thresholds ---
 #
@@ -525,8 +469,7 @@ for p in data.get('processes', []):
     echo "$_wt_now" > "$_wt_last_file"
   fi
 
-  # 6. Check tiny model availability
-  check_tiny_model
+  # 6. (removed — llm-tiny.sh was replaced with local keyword heuristics)
 
   # 7. Monitor disk usage and alert on threshold breaches (dedup'd per threshold)
   check_disk_usage

@@ -33,16 +33,6 @@ port = 3456
 # `hive` (no args) opens this in a browser. Set false to start the server only.
 auto_open = true
 
-[llm_tiny]
-# Small model for classification. See lib/tools/llm-tiny-README.md.
-url = "http://tanchin.org:8081/v1/chat/completions"
-model = "qwen"
-timeout = 30
-retries = 2
-max_tokens = 64
-temperature = 0.0
-thinking = false
-
 [logs]
 # All daemon and spawn logs go under .company/logs/<name>.log.
 # Set to true to also tee to systemd journal (requires hive run via systemd unit).
