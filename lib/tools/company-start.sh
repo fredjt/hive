@@ -272,13 +272,25 @@ else
 fi
 
 # --- Management Dashboard ---
+# Only start a dashboard if one isn't already running (e.g., started by
+# `hive` with no args). When the user clicks "Start Company" from an
+# existing dashboard, we must NOT kill and restart it — that would break
+# the live WebSocket connection. We only start a new dashboard when
+# company-start is run standalone (no prior `hive`).
 
 DASHBOARD_PORT=3456
-# Free the dashboard port. lsof is the cleanest tool but isn't always on PATH
-# (especially when company-start runs from a non-interactive shell context
-# that doesn't pick up /usr/bin). Fall back to fuser, then ss+grep, then a
-# no-op — better to log a stale port and let the dashboard fail loudly than
-# to silently restart-loop because lsof wasn't found.
+DASHBOARD_ALREADY_RUNNING=false
+if nc -z 127.0.0.1 "$DASHBOARD_PORT" 2>/dev/null; then
+  echo "Dashboard already running on port $DASHBOARD_PORT — reusing it."
+  DASHBOARD_ALREADY_RUNNING=true
+fi
+
+# Free the dashboard port only when we actually need to start a new one.
+# lsof is the cleanest tool but isn't always on PATH (especially when
+# company-start runs from a non-interactive shell context that doesn't
+# pick up /usr/bin). Fall back to fuser, then ss+grep, then a no-op —
+# better to log a stale port and let the dashboard fail loudly than to
+# silently restart-loop because lsof wasn't found.
 free_port() {
   local port="$1"
   if command -v lsof >/dev/null 2>&1; then
@@ -293,7 +305,9 @@ free_port() {
     echo "WARNING: no lsof/fuser/ss available — cannot free port $port if stale" >&2
   fi
 }
-free_port "$DASHBOARD_PORT"
+if [ "$DASHBOARD_ALREADY_RUNNING" = false ]; then
+  free_port "$DASHBOARD_PORT"
+fi
 
 # Generate the sprint dashboard HTML initially
 DASHBOARD_GENERATOR="$PROJECT_ROOT/tools/dashboard/generate-dashboard.cjs"
@@ -303,11 +317,16 @@ if [ -f "$DASHBOARD_GENERATOR" ]; then
 fi
 
 # Start the company-board dashboard (live ticket board + chat + meetings + reports)
-# dashboard/server.js lives in the global install, not the per-project scaffold.
-(HIVE_MCP_URL="$MCP_URL" HIVE_ROOT="$SKILL_DIR" HIVE_INSTALL_DIR="$INSTALL_DIR" \
-  node "$INSTALL_DIR/lib/dashboard/server.js" --dir "$COMPANY_DIR" --port $DASHBOARD_PORT \
-  >> "$COMPANY_DIR/logs/company-board.log" 2>&1) &
-add_proc $! "company-board" "infrastructure" "continuous"
+# Only start a new dashboard if one isn't already running (e.g., started by
+# `hive` with no args). Reusing avoids breaking the live connection.
+if [ "$DASHBOARD_ALREADY_RUNNING" = false ]; then
+  (HIVE_MCP_URL="$MCP_URL" HIVE_ROOT="$SKILL_DIR" HIVE_INSTALL_DIR="$INSTALL_DIR" \
+    node "$INSTALL_DIR/lib/dashboard/server.js" --dir "$COMPANY_DIR" --port $DASHBOARD_PORT \
+    >> "$COMPANY_DIR/logs/company-board.log" 2>&1) &
+  add_proc $! "company-board" "infrastructure" "continuous"
+else
+  echo "Dashboard already running on port $DASHBOARD_PORT — reusing it."
+fi
 
 # Periodically regenerate the full sprint dashboard (every 2 minutes)
 if [ -f "$DASHBOARD_GENERATOR" ]; then
