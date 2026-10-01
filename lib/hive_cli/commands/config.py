@@ -5,7 +5,10 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
-import tomllib
+try:
+    import tomllib  # Python 3.11+
+except ImportError:
+    import tomli as tomllib  # Python 3.10 backport
 from pathlib import Path
 
 
