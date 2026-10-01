@@ -123,17 +123,10 @@ PYEOF
   log "started shell round $NEW_RID (sprint=$SPRINT_ID)"
 fi
 
-# Drop the lock while gh-issue-poll runs (it takes its own lock if needed)
+# Drop the lock for any other operation that needs it.
 flock -u 8
 
-# 3. GitHub Issues poller — mirror new external issues into hive tickets
-#    (no-op if no remote). The sprint-lifecycle script handles all
-#    ticket lifecycle discovery.
-if [ -x "$SKILL_DIR/lib/tools/gh-issue-poll.sh" ]; then
-  COMPANY_DIR="$COMPANY_DIR" SKILL_DIR="$SKILL_DIR" PROJECT_ROOT="$PROJECT_ROOT" \
-    bash "$SKILL_DIR/lib/tools/gh-issue-poll.sh" "$PROJECT_ROOT" \
-    >> "$COMPANY_DIR/logs/gh-issue-poll.log" 2>&1 || log "gh-issue-poll exited nonzero"
-fi
+# (GitHub Issues poller removed — no longer mirrors GH issues into hive tickets)
 
 flock -u 8
 log "promote complete (round-shell ready; sprint-lifecycle.sh handles ticket lifecycle)"

@@ -179,8 +179,7 @@ def register(server: FastMCP) -> None:
         Side-effects of the done move:
           - Triggers `gh-pr-merge.sh` if a PR is open for feature/<ticket>
           - Closes the linked GitHub issue (if the ticket has
-            external_id=gh-issue-N — the PR's `Closes #N` line drives this
-            natively, and `gh-issue-close.sh` runs as a safety net)
+            (external_id field preserved for legacy tickets but no longer used)
           - Posts a "verified" comment on the GH issue
           - On PR merge conflict: rolls the ticket back to in-progress with
             skip_tdd_red=true so the engineer rebases next loop. The verifier's
@@ -250,7 +249,7 @@ def register(server: FastMCP) -> None:
         without further loop iterations. Atomically:
           1. Writes the rationale as a comment on the ticket
           2. Moves the ticket from in-review to done with reason=rejected
-             (auto-closes the linked PR and notifies the GH issue if mirrored)
+             (auto-closes the linked PR)
 
         Use reject when MORE LOOPS CANNOT FIX THIS TICKET — the premise is
         wrong, it belongs to a different department, it duplicates already-

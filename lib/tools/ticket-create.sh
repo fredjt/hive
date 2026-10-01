@@ -28,8 +28,7 @@ shift 7 2>/dev/null || true
 [ "${1:-}" != "" ] && [ "${1:0:2}" != "--" ] && shift   # consume the optional estimate positional
 
 # Optional --external-id <id>: links the ticket to a foreign id (e.g.
-# `gh-issue-42`). On `done`, ticket-move.sh checks this field and may close
-# the linked GitHub issue via gh-issue-close.sh.
+# (empty for native hive tickets).
 EXTERNAL_ID=""
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -43,7 +42,7 @@ if [ -z "$DEPT" ] || [ -z "$TYPE" ] || [ -z "$TITLE" ]; then
   echo "Usage: ticket-create.sh <department> <type> <priority> <title> <description> <created_by> <source> [estimate] [--external-id <id>]" >&2
   echo "Types: feature, bug, improvement, chore, infrastructure, research" >&2
   echo "Priorities: critical, high, medium, low" >&2
-  echo "Sources: sprint-planning, rd-discovery, qa-finding, user-request, bug-report, improvement, verification, github-issue" >&2
+  echo "Sources: sprint-planning, rd-discovery, qa-finding, user-request, bug-report, improvement, verification" >&2
   exit 1
 fi
 

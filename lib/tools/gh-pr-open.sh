@@ -50,37 +50,25 @@ if [ -n "$existing" ]; then
   exit 0
 fi
 
-# Default title/body. Also pick up external_id (gh-issue-N) so the PR body
-# can use GitHub's `Closes #N` syntax — that's what makes GitHub auto-close
-# the linked issue when the PR merges, without any extra script call.
+# Default title/body.
 COMPANY_DIR="${COMPANY_DIR:-$PROJECT_ROOT/.company}"
 ticket_title=""
 ticket_desc=""
-ticket_external=""
 for st in in-review in-progress sprint-current backlog; do
   for dept_dir in "$COMPANY_DIR"/departments/*/; do
     f="$dept_dir/tickets/$st/${TICKET_ID}.json"
     [ -f "$f" ] || continue
     ticket_title=$(jq -r '.title // ""' "$f" 2>/dev/null)
     ticket_desc=$(jq -r  '.description // ""' "$f" 2>/dev/null)
-    ticket_external=$(jq -r '.external_id // ""' "$f" 2>/dev/null)
     break 2
   done
 done
 
-# Build the "closes" line if external_id matches gh-issue-N. Multiple
-# closes-keyword keywords work; "Closes" is GitHub's canonical.
-CLOSES_LINE=""
-if [ -n "$ticket_external" ] && [ "${ticket_external#gh-issue-}" != "$ticket_external" ]; then
-  ISSUE_NUM_FOR_CLOSE="${ticket_external#gh-issue-}"
-  CLOSES_LINE="Closes #${ISSUE_NUM_FOR_CLOSE}
-
-"
-fi
+# No external issue linking — GitHub issues integration removed.
 
 [ -z "$TITLE" ] && TITLE="${TICKET_ID}: ${ticket_title:-implementation}"
 if [ -z "$BODY" ]; then
-  BODY="${CLOSES_LINE}Hive ticket: ${TICKET_ID}
+  BODY="Hive ticket: ${TICKET_ID}
 
 ${ticket_desc:-}
 
@@ -143,22 +131,4 @@ pr_num=$(echo "$out" | grep -oE '/pull/[0-9]+' | head -1 | cut -d/ -f3)
 echo "gh-pr-open: opened PR #${pr_num:-?} ($out)"
 [ -n "$pr_num" ] && echo "$pr_num"
 
-# Record in the integrations sidecar
-MIRROR="$COMPANY_DIR/integrations/github-mirror.json"
-mkdir -p "$(dirname "$MIRROR")"
-[ -f "$MIRROR" ] || echo '{"issues":{},"prs":{}}' > "$MIRROR"
-NOW=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-TMP="$MIRROR.tmp.$$"
-PR_NUM="$pr_num" TICKET_ID="$TICKET_ID" BRANCH="$BRANCH" NOW="$NOW" MIRROR="$MIRROR" TMP="$TMP" python3 - <<'PYEOF'
-import json, os
-m = json.load(open(os.environ["MIRROR"]))
-m.setdefault("prs", {})[os.environ["PR_NUM"]] = {
-  "ticket_id":  os.environ["TICKET_ID"],
-  "branch":     os.environ["BRANCH"],
-  "opened_at":  os.environ["NOW"],
-  "merged_at":  None,
-  "merged_into": None,
-}
-json.dump(m, open(os.environ["TMP"], "w"), indent=2)
-os.replace(os.environ["TMP"], os.environ["MIRROR"])
-PYEOF
+# (Mirror sidecar removed — GitHub issues integration removed)

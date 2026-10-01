@@ -478,22 +478,7 @@ PROJ_ROOT="${PROJECT_ROOT:-$(dirname "$COMPANY_DIR")}"
 PR_LOG_DIR="$COMPANY_DIR/logs"
 mkdir -p "$PR_LOG_DIR"
 
-# Resolve the linked GitHub issue (if any) once, so every side-effect can
-# mirror status to it. Tickets created via gh-issue-poll.sh have
-# external_id="gh-issue-N"; native hive tickets have empty external_id and
-# all the issue-comment hooks no-op.
-EXTERNAL_ID=$(jq -r '.external_id // empty' "$DEST" 2>/dev/null)
-ISSUE_NUM=""
-if [ -n "$EXTERNAL_ID" ] && [ "${EXTERNAL_ID#gh-issue-}" != "$EXTERNAL_ID" ]; then
-  ISSUE_NUM="${EXTERNAL_ID#gh-issue-}"
-fi
-gh_issue_say() {
-  # gh_issue_say "<comment body>" — post to linked GH issue, no-op if none.
-  [ -z "$ISSUE_NUM" ] && return 0
-  [ -x "$SKILL_DIR/lib/tools/gh-issue-comment.sh" ] || return 0
-  bash "$SKILL_DIR/lib/tools/gh-issue-comment.sh" "$ISSUE_NUM" "$TICKET_ID" "$1" "$PROJ_ROOT" \
-    >/dev/null 2>&1 || true
-}
+# GitHub issue integration removed — no longer mirrors ticket status to GH issues.
 
 # ── PR + GH-issue side-effects (scripted; agents never touch either) ──
 if [ "$NEW_STATUS" = "backlog" ]; then
@@ -501,27 +486,15 @@ if [ "$NEW_STATUS" = "backlog" ]; then
   # Deferred-to-backlog: the ticket couldn't finish this sprint but is NOT
   # rejected. Verification IC's last rationale stands. PR (if any) is left
   # open — the same branch + PR get reused next sprint when sprint-fill
-  # picks the ticket back up. Just notify the GH issue.
-  RATIONALE_LINE=""
-  [ -n "$COMMENT" ] && RATIONALE_LINE="
-
-Note: $COMMENT"
-  gh_issue_say "⏸️ Hive ticket \`$TICKET_ID\` was **deferred to backlog** — verification IC was still rejecting it after many loop iterations, and the sprint needs to advance. The work is preserved (PR + branch left open) and a future sprint will pick it back up.${RATIONALE_LINE}"
+  # picks the ticket back up.
 
 elif [ "$NEW_STATUS" = "in-progress" ] && [ "$FOUND_STATUS" = "sprint-current" ]; then
   echo "Moved $TICKET_ID: $FOUND_STATUS -> in-progress"
-  # First time work starts on this ticket — let the GH issue know.
-  gh_issue_say "🛠️ Hive ticket \`$TICKET_ID\` is now **in progress**. An IC has begun implementation; the PR will open when work moves to in-review."
+  # First time work starts on this ticket.
 
 elif [ "$NEW_STATUS" = "in-progress" ] && [ "$FOUND_STATUS" = "in-review" ]; then
   echo "Moved $TICKET_ID: $FOUND_STATUS -> in-progress"
-  # Bounce-back from verification (or crash recovery). Mirror the rationale
-  # if present so the GH issue sees what's blocking.
-  RATIONALE_LINE=""
-  [ -n "$COMMENT" ] && RATIONALE_LINE="
-
-Reason: $COMMENT"
-  gh_issue_say "↩️ Hive ticket \`$TICKET_ID\` was **bounced** from verification back to in-progress.${RATIONALE_LINE}"
+  # Bounce-back from verification (or crash recovery).
 
 elif [ "$NEW_STATUS" = "in-review" ]; then
   echo "Moved $TICKET_ID: $FOUND_STATUS -> in-review"
@@ -534,9 +507,9 @@ elif [ "$NEW_STATUS" = "in-review" ]; then
   PR_NUM=$(echo "$PR_OPEN_OUT" | grep -oE 'pr_num=[0-9]+|opened PR #[0-9]+|already open for [^ ]+' \
             | grep -oE '[0-9]+' | tail -1)
   if [ -n "$PR_NUM" ]; then
-    gh_issue_say "🔁 Hive ticket \`$TICKET_ID\` is **ready for review**. PR opened: #${PR_NUM} (will close this issue on merge)."
+    echo "PR opened: #$PR_NUM"
   else
-    gh_issue_say "🔁 Hive ticket \`$TICKET_ID\` is **ready for review**."
+    echo "PR ready for review (no number)";
   fi
 
 elif [ "$NEW_STATUS" = "done" ]; then
@@ -544,23 +517,13 @@ elif [ "$NEW_STATUS" = "done" ]; then
 
   # PR side-effect: merge (verified) or close (rejected).
   if [ "$REASON" = "rejected" ]; then
-    # Notify GH issue of rejection BEFORE closing (so the comment lands while
-    # the issue is still OPEN — gh-issue-comment skips closed issues to avoid
-    # post-mortem noise).
+    # Ticket rejected — close the PR.
     RATIONALE="${COMMENT:-Ticket rejected.}"
-    gh_issue_say "🚫 Hive ticket \`$TICKET_ID\` was **rejected** (won't-do).
-
-Reason: $RATIONALE
-
-Closing the linked PR without merging. The GitHub issue remains open — re-triage if you disagree."
     if [ -x "$SKILL_DIR/lib/tools/gh-pr-close.sh" ]; then
       HIVE_PR_OP_AUTHORIZED=1 bash "$SKILL_DIR/lib/tools/gh-pr-close.sh" \
         "feature/$TICKET_ID" "$TICKET_ID" "$PROJ_ROOT" --reason "$RATIONALE" \
         >> "$PR_LOG_DIR/gh-pr-close.log" 2>&1 || true
     fi
-    # Note: we do NOT call gh-issue-close.sh on rejection. The GH issue
-    # stays open so the human can re-triage. If they want it closed,
-    # they close it manually on GitHub.
   else
     # reason=implemented or reason=done → attempt merge. exit 5 == conflict.
     if [ -x "$SKILL_DIR/lib/tools/gh-pr-merge.sh" ]; then
@@ -569,21 +532,13 @@ Closing the linked PR without merging. The GitHub issue remains open — re-tria
         >> "$PR_LOG_DIR/gh-pr-merge.log" 2>&1
       MERGE_RC=$?
       if [ "$MERGE_RC" = "0" ]; then
-        # Verified merge succeeded. The PR's `Closes #N` line normally
-        # auto-closes the linked GH issue on merge — but call gh-issue-close.sh
-        # as a safety net in case the PR was opened before that hint existed
-        # (e.g., a long-lived ticket from before this change). Idempotent.
-        if [ -n "$ISSUE_NUM" ] && [ -x "$SKILL_DIR/lib/tools/gh-issue-close.sh" ]; then
-          bash "$SKILL_DIR/lib/tools/gh-issue-close.sh" "$ISSUE_NUM" "$TICKET_ID" \
-            "$PROJ_ROOT" >/dev/null 2>&1 || true
-        fi
+        # Verified merge succeeded.
         # Visible "PR merged" comment on the ticket so the dashboard shows
         # outcome without operators having to dig in gh-pr-merge.log.
         bash "$SKILL_DIR/lib/tools/ticket-comment.sh" "$DEPT" "$TICKET_ID" "ticket-move" \
           "✅ PR merged on done — feature/${TICKET_ID} → main." 2>/dev/null || true
       elif [ "$MERGE_RC" = "5" ]; then
         # Notify the GH issue first (while still OPEN) before rolling back.
-        gh_issue_say "⚠️ Hive ticket \`$TICKET_ID\` was approved by verification but the PR has **merge conflicts**. Bounced back to in-progress; the engineer will rebase. PR remains open."
         # ── PR merge conflict rollback ──
         # Roll the ticket back so the engineering IC can rebase next loop.
         # This keeps the ticket in this sprint and the PR open.

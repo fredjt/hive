@@ -39,11 +39,10 @@ auto_open = true
 journal = false
 
 [github]
-# Used by gh-init.sh and gh-issue-poll.sh. All gh-*.sh scripts no-op cleanly
+# Used by gh-init.sh. All gh-*.sh scripts no-op cleanly
 # when no remote is configured, so leaving this section default is safe.
 remote          = "origin"
 default_branch  = "main"
-mirror_issues   = true   # round-promote runs gh-issue-poll between rounds
 post_status_comments = true
 issue_label_prefix_dept     = "dept:"
 issue_label_prefix_type     = "type:"

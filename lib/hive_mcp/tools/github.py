@@ -3,11 +3,12 @@
 Each tool shells to the matching gh-*.sh under lib/tools/. They no-op
 gracefully when no remote is configured (so MCP callers always get a
 structured response, never an exception).
+
+Note: GitHub Issues mirroring has been removed. PR operations still work.
 """
 
 from __future__ import annotations
 
-import json
 import os
 from pathlib import Path
 
@@ -44,23 +45,6 @@ def register(server: FastMCP) -> None:
         except Exception:
             pass
         return out
-
-    @server.tool()
-    def gh_issue_mirror_now(project_root: str, company_dir: str | None = None) -> dict:
-        """Run a single pass of gh-issue-poll.sh — mirror new GitHub issues into hive tickets."""
-        return run("gh-issue-poll", project_root, company_dir=company_dir).to_dict()
-
-    @server.tool()
-    def gh_issues(company_dir: str | None = None) -> dict:
-        """Read .company/integrations/github-mirror.json — what issues we've mirrored."""
-        cd = company_dir or os.environ.get("COMPANY_DIR") or str(Path.cwd() / ".company")
-        f = Path(cd) / "integrations" / "github-mirror.json"
-        if not f.is_file():
-            return {"issues": {}, "prs": {}}
-        try:
-            return json.loads(f.read_text())
-        except Exception as e:
-            return {"error": str(e)}
 
     @server.tool()
     def gh_pr_open(branch: str, ticket_id: str, project_root: str,

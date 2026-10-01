@@ -217,8 +217,6 @@ def _add_gh(sub) -> None:
     p = sub.add_parser("gh", help="GitHub integration (status / issues / PR ops)")
     sp = p.add_subparsers(dest="action", required=True)
     sp.add_parser("status", help="gh CLI / auth / remote / default branch")
-    sp.add_parser("issues", help="Mirrored GH issues + PRs (.company/integrations/github-mirror.json)")
-    sp.add_parser("mirror", help="Run a single gh-issue-poll pass now")
     pr = sp.add_parser("pr", help="PR operations")
     pr_sp = pr.add_subparsers(dest="pr_action", required=True)
     po = pr_sp.add_parser("open",   help="Open a PR for a branch")

@@ -96,7 +96,6 @@ def handle(args) -> int:
 
     print("Wires currently configured:")
     print("  classify-ticket    → inbox-write.sh (when --type=auto or --dept=auto)")
-    print("                         gh-issue-poll.sh (local keyword classification)")
     print("  narrate-status     → company-start.sh pulse loop (every 5 min, per dept)")
     print("                       meeting-runner.sh standup (per dept pre-summary)")
     print("  summarize-thread   → company-start.sh pulse loop (every 5 min, leadership digest)")

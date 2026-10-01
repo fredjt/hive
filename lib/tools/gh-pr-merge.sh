@@ -92,23 +92,7 @@ if [ $MERGE_RC -ne 0 ]; then
   exit 1
 fi
 
-# Update mirror sidecar
-COMPANY_DIR="${COMPANY_DIR:-$PROJECT_ROOT/.company}"
-MIRROR="$COMPANY_DIR/integrations/github-mirror.json"
-if [ -f "$MIRROR" ]; then
-  NOW=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-  TMP="$MIRROR.tmp.$$"
-  PR_NUM="$PR_NUM" NOW="$NOW" MIRROR="$MIRROR" TMP="$TMP" python3 - <<'PYEOF' || true
-import json, os
-m = json.load(open(os.environ["MIRROR"]))
-prs = m.setdefault("prs", {})
-if os.environ["PR_NUM"] in prs:
-  prs[os.environ["PR_NUM"]]["merged_at"]   = os.environ["NOW"]
-  prs[os.environ["PR_NUM"]]["merged_into"] = "main"
-json.dump(m, open(os.environ["TMP"], "w"), indent=2)
-os.replace(os.environ["TMP"], os.environ["MIRROR"])
-PYEOF
-fi
+# (Mirror sidecar removed — GitHub issues integration removed)
 
 # Pull main locally so subsequent worktree creates fork off the new tip.
 git fetch origin main >/dev/null 2>&1 || true
