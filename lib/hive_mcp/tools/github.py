@@ -9,12 +9,10 @@ Note: GitHub Issues mirroring has been removed. PR operations still work.
 
 from __future__ import annotations
 
-import os
-from pathlib import Path
 
 from mcp.server.fastmcp import FastMCP
 
-from hive_mcp.shell import run, HIVE_ROOT
+from hive_mcp.shell import run
 
 
 def register(server: FastMCP) -> None:

@@ -1,0 +1,144 @@
+# GitHub Actions CI pipeline for Hive.
+# Runs on every push to main and on every pull request.
+#
+# Jobs:
+#   1. **Python tests** — full pytest suite with verbose output
+#   2. **Bash syntax check** — `bash -n` on every .sh file in lib/tools/ and lib/core/
+#   3. **Python linting** — ruff check (warn-only for existing style issues)
+#   4. **Node.js dashboard** — basic syntax validation of server.js
+#
+# Usage: push to main or open a PR; the workflow runs automatically.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  # ──────────────────────────────────────────────
+  # 1. Python test suite
+  # ──────────────────────────────────────────────
+  tests:
+    name: Tests (Python ${{ matrix.python }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ['3.10', '3.12']
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          # Core runtime deps (needed for imports in hive_cli/hive_mcp)
+          pip install mcp fastapi 'uvicorn[standard]' httpx tomli
+          # Test deps
+          pip install pytest anyio
+
+      - name: Run test suite
+        run: |
+          cd hive
+          PYTHONPATH=lib pytest tests/ -v --tb=short
+
+  # ──────────────────────────────────────────────
+  # 2. Bash syntax validation
+  # ──────────────────────────────────────────────
+  bash-check:
+    name: Bash Syntax Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check all bash scripts for syntax errors
+        run: |
+          failed=0
+          for script in $(find hive/lib/tools hive/lib/core -name '*.sh' | sort); do
+            if ! bash -n "$script" 2>&1; then
+              echo "FAIL: $script has syntax errors"
+              failed=1
+            fi
+          done
+          # Also check the main entry point and other top-level scripts
+          for script in hive/bin/hive hive/entrypoint.sh hive/packaging/*.sh; do
+            [ -f "$script" ] || continue
+            if ! bash -n "$script" 2>&1; then
+              echo "FAIL: $script has syntax errors"
+              failed=1
+            fi
+          done
+          if [ $failed -ne 0 ]; then
+            exit 1
+          fi
+
+      - name: Check shell scripts use proper shebangs
+        run: |
+          issues=0
+          for script in $(find hive/lib/tools hive/lib/core -name '*.sh' | sort); do
+            first_line=$(head -n1 "$script")
+            if [[ ! "$first_line" =~ ^#!.*bash ]]; then
+              echo "WARN: $script missing bash shebang (got: $first_line)"
+              issues=1
+            fi
+          done
+          for script in hive/bin/hive hive/entrypoint.sh; do
+            [ -f "$script" ] || continue
+            first_line=$(head -n1 "$script")
+            if [[ ! "$first_line" =~ ^#!.*bash ]]; then
+              echo "WARN: $script missing bash shebang (got: $first_line)"
+              issues=1
+            fi
+          done
+          [ $issues -eq 0 ] || exit 1
+
+  # ──────────────────────────────────────────────
+  # 3. Node.js dashboard syntax check
+  # ──────────────────────────────────────────────
+  node-check:
+    name: Node.js Dashboard
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Check dashboard server.js syntax
+        run: |
+          # Validate the dashboard server has no syntax errors
+          node --check hive/lib/dashboard/server.js
+
+  # ──────────────────────────────────────────────
+  # 4. Python linting (ruff)
+  # ──────────────────────────────────────────────
+  lint:
+    name: Lint (Python)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install ruff
+        run: pip install ruff
+
+      - name: Run ruff check (real issues only)
+        run: |
+          cd hive
+          # Only flag actual bugs, not style nitpicks (line length,
+          # single-line ifs, etc.) that the codebase already has.
+          ruff check --select F401,E722 lib/hive_cli/ lib/hive_mcp/
+          # F401 = unused import (real bug)
+          # E722 = do not use bare 'except' (security risk)

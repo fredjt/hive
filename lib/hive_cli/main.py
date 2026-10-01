@@ -10,18 +10,15 @@ Bare `hive` (no args) launches the dashboard for the project in CWD.
 from __future__ import annotations
 
 import argparse
-import json
 import os
 import sys
 from pathlib import Path
-from typing import Any
 
 # Ensure lib/ is importable
 _LIB = Path(__file__).resolve().parents[1]
 if str(_LIB) not in sys.path:
     sys.path.insert(0, str(_LIB))
 
-from hive_cli import mcp_client  # noqa: E402
 from hive_cli.commands import (  # noqa: E402
     company, dashboard, init, ticket, chat, agent, gates, backlog,
     inbox, config, doctor, tool, killall, llm, round as round_cmd,

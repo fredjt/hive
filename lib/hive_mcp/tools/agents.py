@@ -7,11 +7,10 @@ injects an MCP config so spawned agents can call this same hive MCP server.
 from __future__ import annotations
 
 import os
-from pathlib import Path
 
 from mcp.server.fastmcp import FastMCP
 
-from hive_mcp.shell import run, HIVE_ROOT
+from hive_mcp.shell import HIVE_ROOT
 
 
 def _claude_spawn_path() -> str:
