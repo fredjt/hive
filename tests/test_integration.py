@@ -74,9 +74,16 @@ class TestSprintState:
         assert len(missing) == 0, f"Missing functions: {missing}"
 
 class TestICSpawnDiagnostics:
-    def test_ic_spawn_diagnostics_runs(self):
-        result = subprocess.run(["bash", "lib/tools/ic-spawn-diagnostics.sh"], capture_output=True, text=True, timeout=10,
-            env={**os.environ, "HIVE_INSTALL_DIR": str(Path(__file__).resolve().parent.parent)})
+    def test_ic_spawn_diagnostics_runs(self, tmp_project_dir):
+        install_dir = Path(__file__).resolve().parent.parent
+        company_dir = tmp_project_dir / ".company"
+        company_dir.mkdir()
+        result = subprocess.run(
+            ["bash", str(install_dir / "lib" / "tools" / "ic-spawn-diagnostics.sh")],
+            capture_output=True, text=True, timeout=10,
+            cwd=str(tmp_project_dir),
+            env={**os.environ, "HIVE_INSTALL_DIR": str(install_dir)},
+        )
         assert result.returncode == 0
 
 class TestTicketBounceRationale:

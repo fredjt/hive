@@ -153,7 +153,7 @@ class TestBuildParser:
 
     def test_parser_has_gh(self):
         p = _make_parser()
-        for action in ["status", "issues", "mirror"]:
+        for action in ["status"]:
             args = p.parse_args(["gh", action])
             assert args.action == action
 

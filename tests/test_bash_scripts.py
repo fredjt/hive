@@ -180,8 +180,11 @@ class TestInitChatChannelsScript:
 class TestInitMeetingScheduleScript:
     """Test init-meeting-schedule.sh."""
 
-    def test_init_meeting_schedule_no_args_works(self):
-        result = run_script(f"{SCRIPTS_DIR}/init-meeting-schedule.sh")
+    def test_init_meeting_schedule_no_args_works(self, tmp_company_dir):
+        # Create the meetings subdirectory that the script expects
+        (tmp_company_dir / "meetings").mkdir()
+        env = {"COMPANY_DIR": str(tmp_company_dir)}
+        result = run_script(f"{SCRIPTS_DIR}/init-meeting-schedule.sh", env=env)
         assert result.returncode == 0
 
 
