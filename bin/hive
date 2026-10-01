@@ -29,20 +29,16 @@ if [ ! -x "$VENV_PY" ]; then
   exit 1
 fi
 
-# Walk up from CWD looking for a .company/ sentinel. If found, that's the
-# project root and HIVE_ROOT is its sibling .hive/. If not found, this is
-# probably `hive init` — leave HIVE_ROOT pointing at the install so init's
-# scripts can find their sources.
+# Check CWD for a .company/ sentinel. If found, that's the project root and
+# HIVE_ROOT is its sibling .hive/. If not found, this is probably `hive init`
+# — leave HIVE_ROOT pointing at the install so init's scripts can find their sources.
+# Note: we only check CWD, NOT parent directories, to avoid finding stale
+# .company/ directories from old projects in parent folders.
 PROJECT_ROOT=""
 HIVE_ROOT=""
-SEARCH_DIR="$PWD"
-while [ "$SEARCH_DIR" != "/" ]; do
-  if [ -d "$SEARCH_DIR/.company" ]; then
-    PROJECT_ROOT="$SEARCH_DIR"
-    break
-  fi
-  SEARCH_DIR="$(dirname "$SEARCH_DIR")"
-done
+if [ -d "$PWD/.company" ]; then
+  PROJECT_ROOT="$PWD"
+fi
 
 if [ -n "$PROJECT_ROOT" ]; then
   export PROJECT_ROOT
