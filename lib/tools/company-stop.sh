@@ -57,16 +57,15 @@ except Exception:
 fi
 
 # 2. Aggressive pattern-kill for stragglers. Patterns are scoped to either
-#    $COMPANY_DIR or $PROJECT_ROOT so we don't touch other projects' processes
-#    or the MCP server / dashboard that the CLI is currently using to call us.
+#    $COMPANY_DIR or $PROJECT_ROOT so we don't touch other projects' processes.
+#
+# IMPORTANT: We intentionally do NOT kill the dashboard (dashboard/server.js)
+# or the MCP server (hive_mcp/server.py). These are shared resources managed
+# by `hive` (foreground Ctrl-C) or company-start.sh as daemons. Stopping the
+# company should only stop background work, not the UI or tool infrastructure.
 #
 # Includes legacy paths so upgrades from older hive versions clean up properly.
 PATTERNS=(
-  # Current dashboard launch path (scoped to this project)
-  "lib/dashboard/server.js.*$COMPANY_DIR"
-  # Legacy dashboard launch paths (pre-0.1.3 hive)
-  "company-board/server.js.*$COMPANY_DIR"
-  "tools/company-board/server.js.*$COMPANY_DIR"
   # company-start.sh itself (the supervisor process)
   "company-start.sh.*$PROJECT_ROOT"
   # The sprint-lifecycle runner: SOLE consumer of claude-spawn under
@@ -97,16 +96,11 @@ PATTERNS=(
   # Orphaned `claude -p` for this project
   "claude.*$PROJECT_ROOT.*output-format"
 )
-# MCP server: kill it too. Since 0.3.6 the CLI and dashboard shell out to
-# company-start/stop directly (not via MCP), so the "killing the MCP
-# deadlocks hive stop" rationale no longer applies. AND keeping the MCP
-# server alive across upgrades meant new tools (e.g., ticket_bounce added
-# in 0.4.8) never appeared until the operator manually killed it. Now an
-# upgrade-then-restart picks up new tool definitions automatically.
-PATTERNS+=(
-  "hive_mcp/server.py.*--transport http"
-  "hive_mcp.server.*--transport http"
-)
+# MCP server: NOT killed by stop — it's a shared resource that the
+# dashboard uses for tool calls (ticket create/move, gates, etc.).
+# Killing it would break the dashboard after stop. The MCP is managed
+# by `hive` (foreground Ctrl-C) or company-start.sh as a daemon.
+# PATTERNS+=( ... )  # intentionally empty — no MCP kill patterns
 for pat in "${PATTERNS[@]}"; do
   for pid in $(pgrep -f "$pat" 2>/dev/null); do
     is_ancestor "$pid" && continue
