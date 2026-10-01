@@ -94,7 +94,7 @@ done
 # 2. ICs - one entry per in-progress ticket across all departments.
 # Build the set of ticket ids that have a live spawn record. An assignee
 # in a ticket file is just a paper claim — the IC is only "active" if
-# claude-spawn.sh has registered it (file in logs/active/) AND the recorded
+# agent-spawn.sh has registered it (file in logs/active/) AND the recorded
 # pid is still alive.
 ACTIVE_TICKETS_DELIM="|"
 if [ -d "$COMPANY_DIR/logs/active" ]; then
@@ -129,7 +129,7 @@ if [ -d "$COMPANY_DIR/departments" ]; then
       [ -n "$worktree_path" ] && wt_json="\"$worktree_path\""
 
       # Distinguish "claimed" (paper assignment, no live process) from
-      # "active" (claude process for this ticket is running).
+      # "active" (agent harness process for this ticket is running).
       ic_status="claimed"
       case "$ACTIVE_TICKETS_DELIM" in
         *"|${ticket_id}|"*) ic_status="active" ;;

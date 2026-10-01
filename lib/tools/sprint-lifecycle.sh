@@ -199,7 +199,7 @@ runs next automatically."
   mkdir -p "$(dirname "$LOG_TO")"
 
   HIVE_AGENT="ceo" HIVE_DEPT="executive" HIVE_ROLE="CEO" HIVE_TICKET="" \
-  bash "$SKILL_DIR/lib/core/claude-spawn.sh" -- "$PROMPT" \
+  bash "$SKILL_DIR/lib/core/agent-spawn.sh" -- "$PROMPT" \
     9<&- >> "$LOG_TO" 2>&1
   local EC=$?
   if [ $EC -eq 0 ]; then
@@ -263,7 +263,7 @@ After filing/refining, EXIT. Sprint-fill and ticket processing run next."
     mkdir -p "$(dirname "$LOG_TO")"
 
     HIVE_AGENT="$agent" HIVE_DEPT="$dept" HIVE_ROLE="VP" HIVE_TICKET="" \
-    bash "$SKILL_DIR/lib/core/claude-spawn.sh" -- "$PROMPT" \
+    bash "$SKILL_DIR/lib/core/agent-spawn.sh" -- "$PROMPT" \
       9<&- >> "$LOG_TO" 2>&1 || log "  VP $dept planning failed"
   done
 
@@ -380,7 +380,7 @@ After committing the failing test, EXIT. The engineer will run next.$FRESH_HINT"
     mkdir -p "$(dirname "$LOG_TO")"
 
     HIVE_AGENT="ic-tester" HIVE_DEPT="$dept" HIVE_ROLE="IC-Tester" HIVE_TICKET="$ticket" \
-    bash "$SKILL_DIR/lib/core/claude-spawn.sh" -- "$PROMPT" \
+    bash "$SKILL_DIR/lib/core/agent-spawn.sh" -- "$PROMPT" \
       9<&- >> "$LOG_TO" 2>&1
     EC=$?
 
@@ -518,7 +518,7 @@ After exit 0, this script will:
   mkdir -p "$(dirname "$LOG_TO")"
 
   HIVE_AGENT="$AGENT" HIVE_DEPT="$dept" HIVE_ROLE="IC" HIVE_TICKET="$ticket" \
-  bash "$SKILL_DIR/lib/core/claude-spawn.sh" -- "$PROMPT" \
+  bash "$SKILL_DIR/lib/core/agent-spawn.sh" -- "$PROMPT" \
     9<&- >> "$LOG_TO" 2>&1
   EC=$?
 
@@ -621,7 +621,7 @@ After approve or bounce, EXIT. This script handles the status move."
   mkdir -p "$(dirname "$LOG_TO")"
 
   HIVE_AGENT="$VERIF_AGENT" HIVE_DEPT="$dept" HIVE_ROLE="Verification-IC" HIVE_TICKET="$ticket" \
-  bash "$SKILL_DIR/lib/core/claude-spawn.sh" -- "$PROMPT" \
+  bash "$SKILL_DIR/lib/core/agent-spawn.sh" -- "$PROMPT" \
     9<&- >> "$LOG_TO" 2>&1
   EC=$?
 
@@ -795,7 +795,7 @@ ss_set_release_field verify_log "$VERIFY_LOG_PATH"
 mkdir -p "$(dirname "$VERIFY_LOG_PATH")"
 
 HIVE_AGENT="release-ic" HIVE_DEPT="executive" HIVE_ROLE="Release-IC" HIVE_TICKET="" \
-bash "$SKILL_DIR/lib/core/claude-spawn.sh" -- "$PROMPT" \
+bash "$SKILL_DIR/lib/core/agent-spawn.sh" -- "$PROMPT" \
   9<&- >> "$VERIFY_LOG_PATH" 2>&1
 
 VERDICT=$(grep -m1 -E '^VERDICT:' "$VERIFY_LOG_PATH" 2>/dev/null | awk -F: '{gsub(/^[ ]+/,"",$2); print $2}')
@@ -882,7 +882,7 @@ After writing, EXIT."
   mkdir -p "$(dirname "$LOG_TO")"
 
   HIVE_AGENT="$agent" HIVE_DEPT="$dept" HIVE_ROLE="VP" HIVE_TICKET="" \
-  bash "$SKILL_DIR/lib/core/claude-spawn.sh" -- "$PROMPT" \
+  bash "$SKILL_DIR/lib/core/agent-spawn.sh" -- "$PROMPT" \
     9<&- >> "$LOG_TO" 2>&1 || log "  VP $dept review failed"
 done
 

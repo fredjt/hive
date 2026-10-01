@@ -49,7 +49,7 @@ def build_server() -> FastMCP:
     server = FastMCP(
         "hive",
         instructions=(
-            "Hive orchestrates a virtual company of Claude agents. "
+            "Hive orchestrates a virtual company of AI agents. "
             "Tools manage tickets, chat, sprint state, verification gates, "
             "and agent spawning. All persistent state lives in .company/ in "
             "the current project root (passed via the company_dir argument "

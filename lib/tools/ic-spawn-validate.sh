@@ -1,13 +1,13 @@
 #!/bin/bash
 # Helper script to validate IC spawn commands before execution
-# Usage: ic-spawn-validate.sh <claude-command>
+# Usage: ic-spawn-validate.sh '<agent-harness command>'
 # Returns 0 if valid, 1 if invalid with error message
 
 COMMAND="$1"
 
 if [ -z "$COMMAND" ]; then
   echo "ERROR: No command provided" >&2
-  echo "Usage: ic-spawn-validate.sh '<claude command>'" >&2
+  echo "Usage: ic-spawn-validate.sh '<agent harness command>'" >&2
   exit 1
 fi
 
@@ -30,8 +30,8 @@ for placeholder in "${PLACEHOLDERS[@]}"; do
 done
 
 # Check for required components
-if ! echo "$COMMAND" | grep -q "claude -p"; then
-  ERRORS+=("Missing 'claude -p' command prefix")
+if ! echo "$COMMAND" | grep -q "agent-harness.py\|agent-spawn.sh"; then
+  ERRORS+=("Missing agent harness command (agent-harness.py or agent-spawn.sh)")
 fi
 
 if ! echo "$COMMAND" | grep -q "Your ticket is at"; then

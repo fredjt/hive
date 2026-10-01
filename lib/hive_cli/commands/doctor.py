@@ -65,9 +65,10 @@ def handle(args) -> int:
     all_ok &= _check("hive on PATH", shutil.which("hive") is not None)
 
     # External tools
-    all_ok &= _check("claude CLI", shutil.which("claude") is not None,
-                     subprocess.run(["claude", "--version"], capture_output=True, text=True).stdout.strip()
-                     if shutil.which("claude") else "")
+    # Agent harness: Python-based, no external binary needed
+    harness_path = _hive_root / "lib" / "core" / "agent-harness.py"
+    all_ok &= _check("agent harness", harness_path.is_file(),
+                     f"{harness_path} (Python-based, no CLI required)")
     all_ok &= _check("git", shutil.which("git") is not None)
     all_ok &= _check("jq", shutil.which("jq") is not None)
     all_ok &= _check("node (for dashboard)", shutil.which("node") is not None)
@@ -84,7 +85,7 @@ def handle(args) -> int:
 
     # Core scripts present
     print("\nCore scripts:")
-    for s in ("claude-spawn.sh", "init.sh", "orchestrator.sh"):
+    for s in ("agent-spawn.sh", "agent-harness.py", "init.sh", "orchestrator.sh"):
         p = HIVE_ROOT / "lib" / "core" / s
         all_ok &= _check(f"  {s}", p.is_file())
 

@@ -6,7 +6,7 @@ set -euo pipefail
 # When `hive stop` can't find/reach orphaned processes (e.g. processes.json
 # missing or stale, or company-start crashed before recording PIDs), this
 # script kills anything that looks like hive: bash loops running our daemons,
-# any spawned `claude -p` calls, and the Node dashboard.
+# any spawned agent-harness processes, and the Node dashboard.
 #
 # Use sparingly — this is a sledgehammer.
 #

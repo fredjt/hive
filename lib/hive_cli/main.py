@@ -311,7 +311,7 @@ def _add_version(sub) -> None:
 def build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(
         prog="hive",
-        description="Hive — orchestrate a virtual company of Claude agents on a project.",
+        description="Hive — orchestrate a virtual company of AI agents on a project.",
     )
     ap.add_argument("--mcp-host", default=os.environ.get("HIVE_MCP_HOST", "127.0.0.1"))
     ap.add_argument("--mcp-port", type=int, default=int(os.environ.get("HIVE_MCP_PORT", "7891")))

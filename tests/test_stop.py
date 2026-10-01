@@ -104,8 +104,8 @@ class TestCompanyStopDoesNotKillDashboard:
         assert 'status-rebuild' in all_patterns_str, "Must kill status-rebuild"
         assert 'worktree-merger' in all_patterns_str, "Must kill worktree-merger"
 
-    def test_company_stop_still_kills_claude_spawns(self):
-        """company-stop.sh must still kill running claude agent spawns."""
+    def test_company_stop_still_kills_agent_spawns(self):
+        """company-stop.sh must still kill running agent harness spawns."""
         cs = get_install_dir() / "lib" / "tools" / "company-stop.sh"
         content = cs.read_text()
         lines = content.split('\n')
@@ -126,7 +126,8 @@ class TestCompanyStopDoesNotKillDashboard:
                         patterns.append(part)
 
         all_patterns_str = ' '.join(patterns)
-        assert 'claude-spawn' in all_patterns_str, "Must kill claude-spawn processes"
+        assert 'agent-spawn' in all_patterns_str, "Must kill agent-spawn processes"
+        assert 'agent-harness' in all_patterns_str, "Must kill agent-harness processes"
 
 
 class TestCompanyStopAncestorProtection:

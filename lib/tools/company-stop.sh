@@ -68,7 +68,7 @@ fi
 PATTERNS=(
   # company-start.sh itself (the supervisor process)
   "company-start.sh.*$PROJECT_ROOT"
-  # The sprint-lifecycle runner: SOLE consumer of claude-spawn under
+  # The sprint-lifecycle runner: SOLE consumer of agent-spawn under
   # the ticket-driven lifecycle. Without this pattern, a stale
   # sprint-lifecycle survives hive stop.
   "sprint-lifecycle.sh.*$PROJECT_ROOT"
@@ -77,7 +77,7 @@ PATTERNS=(
   # Background daemon loops, all scoped to this project
   "while true.*$COMPANY_DIR"
   "while true.*$PROJECT_ROOT"
-  "claude-spawn.sh.*$PROJECT_ROOT"
+  "agent-spawn.sh.*$PROJECT_ROOT"
   "sprint-fill.*$COMPANY_DIR"
   "sprint-progress.*$COMPANY_DIR"
   "sprint-lifecycle.*$PROJECT_ROOT"
@@ -93,8 +93,8 @@ PATTERNS=(
   "company-health.sh.*$PROJECT_ROOT"
   "status-rebuild.sh.*$COMPANY_DIR"
   "org-chart-rebuild.sh.*$COMPANY_DIR"
-  # Orphaned `claude -p` for this project
-  "claude.*$PROJECT_ROOT.*output-format"
+  # Orphaned agent-harness processes for this project
+  "agent-harness\.py.*$PROJECT_ROOT"
 )
 # MCP server: NOT killed by stop — it's a shared resource that the
 # dashboard uses for tool calls (ticket create/move, gates, etc.).

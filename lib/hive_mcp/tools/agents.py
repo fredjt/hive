@@ -1,6 +1,6 @@
 """Agent spawning tools.
 
-These spawn Claude Code instances via lib/core/claude-spawn.sh. The wrapper
+These spawn agents via lib/core/agent-spawn.sh (built-in harness). The wrapper
 injects an MCP config so spawned agents can call this same hive MCP server.
 """
 
@@ -13,8 +13,8 @@ from mcp.server.fastmcp import FastMCP
 from hive_mcp.shell import HIVE_ROOT
 
 
-def _claude_spawn_path() -> str:
-    return str(HIVE_ROOT / "lib" / "core" / "claude-spawn.sh")
+def _agent_spawn_path() -> str:
+    return str(HIVE_ROOT / "lib" / "core" / "agent-spawn.sh")
 
 
 def register(server: FastMCP) -> None:
@@ -29,7 +29,7 @@ def register(server: FastMCP) -> None:
         prompt = ceo_md.read_text() + f"\n\n--- Assignment ---\nProject root: {project_root}\nMode: {mode}\n"
         from subprocess import run as srun
         result = srun(
-            ["bash", _claude_spawn_path()],
+            ["bash", _agent_spawn_path()],
             input=prompt,
             capture_output=True,
             text=True,
@@ -66,7 +66,7 @@ def register(server: FastMCP) -> None:
         )
         from subprocess import run as srun
         result = srun(
-            ["bash", _claude_spawn_path()],
+            ["bash", _agent_spawn_path()],
             input=prompt,
             capture_output=True,
             text=True,
@@ -101,7 +101,7 @@ def register(server: FastMCP) -> None:
           - Tags the spawn with HIVE_AGENT/DEPT/ROLE/TICKET so it shows up
             correctly in the dashboard's Activity panel (instead of inheriting
             the parent's identity)
-          - Invokes claude-spawn.sh which injects the hive MCP config so the
+          - Invokes agent-spawn.sh which injects the hive MCP config so the
             IC sees all 50+ MCP tools
 
         Args:
@@ -131,7 +131,7 @@ def register(server: FastMCP) -> None:
             prompt += f"\n{prompt_extra}\n"
 
         result = srun(
-            ["bash", _claude_spawn_path()],
+            ["bash", _agent_spawn_path()],
             input=prompt,
             capture_output=True,
             text=True,

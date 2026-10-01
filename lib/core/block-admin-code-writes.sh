@@ -29,8 +29,8 @@
 #   - Anything under .company/ (the block-company-writes hook handles that)
 #   - Anything outside the project working tree (/tmp/, /var/tmp/)
 #
-# Reads $HIVE_DEPT from the spawn's environment (set by claude-spawn.sh).
-# If empty (manual claude session), the hook is a no-op so humans aren't
+# Reads $HIVE_DEPT from the spawn's environment (set by agent-spawn.sh).
+# If empty (manual agent session), the hook is a no-op so humans aren't
 # restricted.
 #
 # Exit codes:

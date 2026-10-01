@@ -9,7 +9,7 @@ set -euo pipefail
 # Flow:
 #   1. Read CEO prompt from lib/agents/ceo.md
 #   2. Append the assignment block (project root, mode FRESH/RESUME, auto flag)
-#   3. Invoke claude-spawn.sh with the prompt - CEO does Phases 0-5 (build the
+#   3. Invoke agent-spawn.sh with the prompt - CEO does Phases 0-5 (build the
 #      initial system, spawn VPs, run waves, integration, final report)
 #   4. When CEO returns INITIAL_BUILD_COMPLETE, exec company-start.sh to launch
 #      all perpetual daemons
@@ -58,7 +58,7 @@ When initial build is complete, return the literal string INITIAL_BUILD_COMPLETE
 on its own line."
 
 echo "Spawning CEO ($SPAWN_MODE mode)..." >&2
-CEO_OUTPUT="$(echo "$CEO_PROMPT" | bash "$HIVE_ROOT/lib/core/claude-spawn.sh")"
+CEO_OUTPUT="$(echo "$CEO_PROMPT" | bash "$HIVE_ROOT/lib/core/agent-spawn.sh")"
 
 # Save CEO output for debugging
 echo "$CEO_OUTPUT" > "$COMPANY_DIR/logs/ceo-initial-build.json"

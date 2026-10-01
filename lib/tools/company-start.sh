@@ -204,10 +204,10 @@ json.dump(procs,sys.stdout)")
   echo "  Started $role ($dept) PID=$pid"
 }
 
-# --- Sprint-lifecycle is the SOLE consumer of claude-spawn.sh ---------------
+# --- Sprint-lifecycle is the SOLE consumer of agent-spawn.sh ---------------
 # Under this architecture there are no per-VP loops, no CEO continuous loop,
 # no per-dept verification loops, no standup/sprint-review pollers. Every
-# claude turn runs serially through the sprint-lifecycle's FIFO queue, drained
+# agent turn runs serially through the sprint-lifecycle's FIFO queue, drained
 # one entry at a time. When a round drains, the runner fires standup
 # automatically and the CEO drafts the next round's queue.
 

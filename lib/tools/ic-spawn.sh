@@ -14,7 +14,7 @@ SKILL_DIR="$4"
 if [ -z "$DEPT" ] || [ -z "$TICKET_ID" ] || [ -z "$PROJECT_ROOT" ] || [ -z "$SKILL_DIR" ]; then
   echo "ERROR: Missing required arguments" >&2
   echo "Usage: ic-spawn.sh <department> <ticket-id> <project-root> <skill-dir>" >&2
-  echo "Example: ic-spawn.sh backend-api-services TICK-API-0097 /home/user/project /home/user/.claude/skills/company" >&2
+  echo "Example: ic-spawn.sh backend-api-services TICK-API-0097 /home/user/project /home/user/.hive" >&2
   exit 1
 fi
 
@@ -89,7 +89,7 @@ fi
 
 # Validate command before execution
 echo "Validating spawn command..."
-VALIDATION_OUTPUT=$(bash "$SKILL_DIR/lib/tools/ic-spawn-validate.sh" "claude -p \"$SPAWN_CMD\" --output-format json" 2>&1)
+VALIDATION_OUTPUT=$(bash "$SKILL_DIR/lib/tools/ic-spawn-validate.sh" "agent-harness.py \"$SPAWN_CMD\" --output-format json" 2>&1)
 VALIDATION_EXIT=$?
 
 if [ $VALIDATION_EXIT -ne 0 ]; then
@@ -111,14 +111,14 @@ fi
 echo "$VALIDATION_OUTPUT"
 echo ""
 echo "Spawning IC for $TICKET_ID..."
-echo "Command: claude -p \"$SPAWN_CMD\" --output-format json"
+echo "Command: agent-harness.py \"$SPAWN_CMD\" --output-format json"
 echo ""
 
 # Execute spawn — tag identity for the dashboard's Activity view
 HIVE_AGENT_NAME="ic-engineer"
 [ "$ROLE" = "IC-Infra" ] && HIVE_AGENT_NAME="ic-infra"
 HIVE_AGENT="$HIVE_AGENT_NAME" HIVE_DEPT="$DEPT" HIVE_ROLE="IC" HIVE_TICKET="$TICKET_ID" \
-bash "$SKILL_DIR/lib/core/claude-spawn.sh" -- "$SPAWN_CMD"
+bash "$SKILL_DIR/lib/core/agent-spawn.sh" -- "$SPAWN_CMD"
 
 SPAWN_EXIT=$?
 
