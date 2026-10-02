@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# scaffold-extract.sh — copy the tweakable scaffold (agents, tools, templates,
-# core, config defaults) from the global hive install into <project>/.hive/.
-# Writes VERSION + .manifest so `hive scaffold update` can later detect tweaks.
+# scaffold-extract.sh — copy the scaffold (agents, tools, templates, core,
+# config defaults) from the global hive install into <project>/.hive/.
+# All files are set read-only after extraction to prevent agents from
+# accidentally corrupting them during runtime. Use --force + re-run if you
+# need to update the scaffold (requires owner write permission first).
 #
 # Layout produced (matches the global install's lib/ structure verbatim so
 # scripts find each other via the existing walk-up convention — no script
@@ -119,4 +121,8 @@ MANIFEST="$SCAFFOLD/.manifest"
       ' > "$MANIFEST"
 )
 
-echo "scaffold-extract: wrote $SCAFFOLD (manifest: $(jq 'length' "$MANIFEST") files)"
+# Lock down the scaffold — prevent agents from accidentally corrupting
+# these files during runtime. Owner retains read-only access; no writes.
+chmod -R a-w "$SCAFFOLD"
+
+echo "scaffold-extract: wrote $SCAFFOLD (manifest: $(jq 'length' "$MANIFEST") files, all read-only)"

@@ -125,9 +125,9 @@ class TestHiveDoctorCommand:
         assert "NameError" not in result.stderr, f"NameError in doctor: {result.stderr}"
         assert "Traceback" not in result.stderr or "All checks passed" in result.stdout
 
-    def test_hive_doctor_shows_checks(self):
+    def test_hive_doctor_shows_checks(self, tmp_project_dir):
         """hive doctor should show all expected checks."""
-        result = run_command(["hive", "doctor"])
+        result = run_command(["hive", "doctor"], cwd=str(tmp_project_dir))
         
         # Check that key checks are present
         assert "HIVE_INSTALL_DIR exists" in result.stdout
@@ -137,9 +137,9 @@ class TestHiveDoctorCommand:
         assert "git" in result.stdout.lower()
         assert "jq" in result.stdout.lower()
 
-    def test_hive_doctor_checks_agent_harness(self):
+    def test_hive_doctor_checks_agent_harness(self, tmp_project_dir):
         """hive doctor should check for agent-harness.py."""
-        result = run_command(["hive", "doctor"])
+        result = run_command(["hive", "doctor"], cwd=str(tmp_project_dir))
         
         # Should mention the agent harness
         assert "agent harness" in result.stdout.lower()
@@ -179,9 +179,9 @@ class TestHiveDoctorCommand:
 class TestHiveVersionCommand:
     """Tests for hive version command."""
 
-    def test_hive_version_shows_version(self):
+    def test_hive_version_shows_version(self, tmp_project_dir):
         """hive version should show the version string."""
-        result = run_command(["hive", "version"])
+        result = run_command(["hive", "version"], cwd=str(tmp_project_dir))
         
         assert result.returncode == 0
         # Should have a version number
