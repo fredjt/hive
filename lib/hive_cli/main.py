@@ -21,6 +21,7 @@ if str(_LIB) not in sys.path:
 
 from hive_cli.commands import (  # noqa: E402
     company, dashboard, init, ticket, chat, agent, gates, backlog,
+    config, doctor, tool, killall, llm, round as round_cmd,
     gh as gh_cmd, release as release_cmd,
     restart,
 )
