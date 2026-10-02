@@ -14,19 +14,21 @@ _hive_lib = str(Path(__file__).resolve().parent.parent / "lib")
 if _hive_lib not in sys.path:
     sys.path.insert(0, _hive_lib)
 
-# Mock mcp module if not available (for CI environments where it can't be installed)
+# Mock mcp module if not available (for environments where it can't be installed)
 try:
     import mcp  # noqa: F401
 except ImportError:
-    import sys
     from unittest.mock import MagicMock
     
-    # Create a mock mcp module
+    # Create a mock mcp module covering both client and server APIs
     mock_mcp = MagicMock()
     mock_mcp.ClientSession = MagicMock
     mock_mcp.StdioServerParameters = MagicMock
     mock_mcp.client.stdio = MagicMock()
     mock_mcp.client.streamable_http = MagicMock()
+    # Server-side mocks (v1 FastMCP / v2 MCPServer)
+    mock_mcp.server.fastmcp.FastMCP = MagicMock
+    mock_mcp.server.mcpserver.MCPServer = MagicMock
     sys.modules['mcp'] = mock_mcp
     sys.modules['mcp.client'] = mock_mcp.client
     sys.modules['mcp.client.stdio'] = mock_mcp.client.stdio

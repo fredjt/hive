@@ -17,12 +17,12 @@ import json
 import os
 from pathlib import Path
 
-from mcp.server.fastmcp import FastMCP
+from hive_mcp.server_compat import Server
 
 from hive_mcp.shell import HIVE_ROOT  # noqa: F401  (kept for re-import compat)
 
 
-def register(server: FastMCP) -> None:
+def register(server: Server) -> None:
     @server.tool()
     def company_status(project_root: str) -> dict:
         """Read processes.json for daemon status."""

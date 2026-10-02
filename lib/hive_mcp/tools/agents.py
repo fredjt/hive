@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import os
 
-from mcp.server.fastmcp import FastMCP
+from hive_mcp.server_compat import Server
 
 from hive_mcp.shell import HIVE_ROOT
 
@@ -17,7 +17,7 @@ def _agent_spawn_path() -> str:
     return str(HIVE_ROOT / "lib" / "core" / "agent-spawn.sh")
 
 
-def register(server: FastMCP) -> None:
+def register(server: Server) -> None:
     @server.tool()
     def agent_spawn_ceo(project_root: str, mode: str = "FRESH") -> dict:
         """Spawn the CEO agent.

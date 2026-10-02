@@ -10,12 +10,12 @@ Note: GitHub Issues mirroring has been removed. PR operations still work.
 from __future__ import annotations
 
 
-from mcp.server.fastmcp import FastMCP
+from hive_mcp.server_compat import Server
 
 from hive_mcp.shell import run
 
 
-def register(server: FastMCP) -> None:
+def register(server: Server) -> None:
     @server.tool()
     def gh_status(company_dir: str | None = None) -> dict:
         """Report current GitHub integration health: gh installed?, authed?, remote URL, default branch."""

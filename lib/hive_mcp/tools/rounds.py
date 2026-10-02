@@ -6,12 +6,12 @@ Mirrors the pattern in lib/hive_mcp/tools/sprint.py.
 
 from __future__ import annotations
 
-from mcp.server.fastmcp import FastMCP
+from hive_mcp.server_compat import Server
 
 from hive_mcp.shell import run
 
 
-def register(server: FastMCP) -> None:
+def register(server: Server) -> None:
     @server.tool()
     def round_get_current(company_dir: str | None = None) -> dict:
         """Read .company/rounds/current-round.json.

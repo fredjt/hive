@@ -18,7 +18,7 @@ import os
 import sys
 from pathlib import Path
 
-from mcp.server.fastmcp import FastMCP
+from hive_mcp.server_compat import Server
 
 
 HIVE_ROOT = Path(os.environ.get("HIVE_ROOT", Path(__file__).resolve().parents[2]))
@@ -44,9 +44,9 @@ TOOL_MODULES = [
 ]
 
 
-def build_server() -> FastMCP:
+def build_server() -> Server:
     """Construct the FastMCP app with all tool modules registered."""
-    server = FastMCP(
+    server = Server(
         "hive",
         instructions=(
             "Hive orchestrates a virtual company of AI agents. "
