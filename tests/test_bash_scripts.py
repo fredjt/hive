@@ -27,9 +27,7 @@ def run_script(script_path, args=None, env=None, timeout=30):
     if env:
         full_env.update(env)
     # Set HIVE_INSTALL_DIR for all script runs
-    full_env["HIVE_INSTALL_DIR"] = str(Path(__file__).resolve().parent.parent / "hive")
-    if full_env:
-        full_env.update(env or {})
+    full_env["HIVE_INSTALL_DIR"] = str(Path(__file__).resolve().parent.parent)
 
     result = subprocess.run(
         cmd, capture_output=True, text=True, timeout=timeout, env=full_env
@@ -219,7 +217,7 @@ echo "STAGES=${{SS_VALID_STAGES[@]}}"
         result = subprocess.run(
             ["bash", "-c", code],
             capture_output=True, text=True, timeout=10,
-            env={**os.environ, "HIVE_INSTALL_DIR": str(Path(__file__).resolve().parent.parent / "hive")},
+            env={**os.environ, "HIVE_INSTALL_DIR": str(Path(__file__).resolve().parent.parent)},
         )
         assert result.returncode == 0
         # Should contain stage names
@@ -238,7 +236,7 @@ type is_admin_dept >/dev/null 2>&1 && echo "FOUND" || echo "NOT_FOUND"
         result = subprocess.run(
             ["bash", "-c", code],
             capture_output=True, text=True, timeout=10,
-            env={**os.environ, "HIVE_INSTALL_DIR": str(Path(__file__).resolve().parent.parent / "hive")},
+            env={**os.environ, "HIVE_INSTALL_DIR": str(Path(__file__).resolve().parent.parent)},
         )
         assert result.returncode == 0
 
@@ -255,7 +253,7 @@ type ticket_dir >/dev/null 2>&1 && echo "FOUND" || echo "NOT_FOUND"
         result = subprocess.run(
             ["bash", "-c", code],
             capture_output=True, text=True, timeout=10,
-            env={**os.environ, "HIVE_INSTALL_DIR": str(Path(__file__).resolve().parent.parent / "hive")},
+            env={**os.environ, "HIVE_INSTALL_DIR": str(Path(__file__).resolve().parent.parent)},
         )
         assert result.returncode == 0
 
@@ -273,7 +271,7 @@ echo "REMOTE_OK=$(type gh_remote_ok >/dev/null 2>&1 && echo FOUND || echo NOT_FO
         result = subprocess.run(
             ["bash", "-c", code],
             capture_output=True, text=True, timeout=10,
-            env={**os.environ, "HIVE_INSTALL_DIR": str(Path(__file__).resolve().parent.parent / "hive")},
+            env={**os.environ, "HIVE_INSTALL_DIR": str(Path(__file__).resolve().parent.parent)},
         )
         assert result.returncode == 0
 

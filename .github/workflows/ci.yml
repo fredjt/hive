@@ -64,14 +64,14 @@ jobs:
       - name: Check all bash scripts for syntax errors
         run: |
           failed=0
-          for script in $(find hive/lib/tools hive/lib/core -name '*.sh' | sort); do
+          for script in $(find lib/tools lib/core -name '*.sh' | sort); do
             if ! bash -n "$script" 2>&1; then
               echo "FAIL: $script has syntax errors"
               failed=1
             fi
           done
           # Also check the main entry point and other top-level scripts
-          for script in hive/bin/hive hive/entrypoint.sh hive/packaging/*.sh; do
+          for script in bin/hive entrypoint.sh packaging/*.sh; do
             [ -f "$script" ] || continue
             if ! bash -n "$script" 2>&1; then
               echo "FAIL: $script has syntax errors"
@@ -85,14 +85,14 @@ jobs:
       - name: Check shell scripts use proper shebangs
         run: |
           issues=0
-          for script in $(find hive/lib/tools hive/lib/core -name '*.sh' | sort); do
+          for script in $(find lib/tools lib/core -name '*.sh' | sort); do
             first_line=$(head -n1 "$script")
             if [[ ! "$first_line" =~ ^#!.*bash ]]; then
               echo "WARN: $script missing bash shebang (got: $first_line)"
               issues=1
             fi
           done
-          for script in hive/bin/hive hive/entrypoint.sh; do
+          for script in bin/hive entrypoint.sh; do
             [ -f "$script" ] || continue
             first_line=$(head -n1 "$script")
             if [[ ! "$first_line" =~ ^#!.*bash ]]; then
