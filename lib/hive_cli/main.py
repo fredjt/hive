@@ -22,7 +22,7 @@ if str(_LIB) not in sys.path:
 from hive_cli.commands import (  # noqa: E402
     company, dashboard, init, ticket, chat, agent, gates, backlog,
     inbox, config, doctor, tool, killall, llm, round as round_cmd,
-    gh as gh_cmd, release as release_cmd, scaffold as scaffold_cmd,
+    gh as gh_cmd, release as release_cmd,
     restart,
 )
 
@@ -278,24 +278,6 @@ def _add_tool(sub) -> None:
     p2.set_defaults(_handler=tool.handle_list)
 
 
-def _add_scaffold(sub) -> None:
-    p = sub.add_parser("scaffold", help="(deprecated) No-op; .hive/ scaffolds removed")
-    sp = p.add_subparsers(dest="scaffold_action", required=True)
-
-    e = sp.add_parser("extract", help="(deprecated) No-op; .hive/ scaffolds removed")
-    e.add_argument("project_dir", nargs="?", default=".")
-    e.add_argument("--force", action="store_true", help="(deprecated) ignored")
-
-    u = sp.add_parser("update", help="Re-sync from current global install; .new sibling for tweaks")
-    u.add_argument("project_dir", nargs="?", default=".")
-    u.add_argument("--dry-run", action="store_true")
-
-    d = sp.add_parser("diff", help="Show which scaffold files differ from the manifest")
-    d.add_argument("project_dir", nargs="?", default=".")
-
-    p.set_defaults(_handler=scaffold_cmd.handle)
-
-
 def _add_restart(sub) -> None:
     p = sub.add_parser("restart", help="Restart the web dashboard (agents/MCP untouched)")
     p.add_argument("project_dir", nargs="?", default=".")
@@ -335,7 +317,6 @@ def build_parser() -> argparse.ArgumentParser:
     _add_round(sub)
     _add_gh(sub)
     _add_release(sub)
-    _add_scaffold(sub)
     _add_restart(sub)
     _add_tool(sub)
     _add_version(sub)

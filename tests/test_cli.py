@@ -183,17 +183,6 @@ class TestBuildParser:
                 args = p.parse_args(["release", action])
             assert args.action == action
 
-    def test_parser_has_scaffold(self):
-        p = _make_parser()
-        for action in ["extract", "update", "diff"]:
-            if action == "extract":
-                args = p.parse_args(["scaffold", action])
-            elif action == "update":
-                args = p.parse_args(["scaffold", action, "--dry-run"])
-            else:
-                args = p.parse_args(["scaffold", action])
-            assert args.scaffold_action == action
-
     def test_parser_has_tool(self):
         p = _make_parser()
         for sub in ["tool", "tools"]:

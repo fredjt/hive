@@ -22,7 +22,7 @@ class TestCommandModulesExist:
     EXPECTED_COMMANDS = [
         "agent", "backlog", "chat", "company", "config", "dashboard",
         "doctor", "gates", "gh", "inbox", "init", "killall", "llm",
-        "release", "restart", "round", "scaffold", "ticket", "tool",
+        "release", "restart", "round", "ticket", "tool",
     ]
 
     @pytest.mark.parametrize("cmd", EXPECTED_COMMANDS)
@@ -153,14 +153,6 @@ class TestRoundCommand:
         assert callable(handle)
 
 
-class TestScaffoldCommand:
-    """Test the scaffold command handler."""
-
-    def test_scaffold_handle_exists(self):
-        from hive_cli.commands.scaffold import handle
-        assert callable(handle)
-
-
 class TestToolCommand:
     """Test the tool command handler."""
 
@@ -241,31 +233,4 @@ class TestConfigCommand:
         pass  # Hard to test without actual config file
 
 
-class TestScaffoldExtractCommand:
-    """Test scaffold extract command."""
 
-    def test_scaffold_extract_help(self):
-        from hive_cli.main import build_parser
-        p = build_parser()
-        args = p.parse_args(["scaffold", "extract"])
-        assert args.scaffold_action == "extract"
-
-
-class TestScaffoldUpdateCommand:
-    """Test scaffold update command."""
-
-    def test_scaffold_update_help(self):
-        from hive_cli.main import build_parser
-        p = build_parser()
-        args = p.parse_args(["scaffold", "update"])
-        assert args.scaffold_action == "update"
-
-
-class TestScaffoldDiffCommand:
-    """Test scaffold diff command."""
-
-    def test_scaffold_diff_help(self):
-        from hive_cli.main import build_parser
-        p = build_parser()
-        args = p.parse_args(["scaffold", "diff"])
-        assert args.scaffold_action == "diff"

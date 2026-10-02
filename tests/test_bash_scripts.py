@@ -330,21 +330,3 @@ class TestAllCoreScriptsParse:
         assert result.returncode == 0, f"{script} has syntax errors: {result.stderr}"
 
 
-class TestScaffoldExtractScript:
-    """Test scaffold-extract.sh (deprecated no-op)."""
-
-    def test_scaffold_extract_is_noop(self):
-        result = run_script(f"{SCRIPTS_DIR}/scaffold-extract.sh")
-        # Now a no-op that prints deprecation notice and exits 0
-        assert result.returncode == 0
-        assert "no longer used" in result.stderr.lower() or "deprecated" in result.stderr.lower()
-
-
-class TestScaffoldUpdateScript:
-    """Test scaffold-update.sh (deprecated no-op)."""
-
-    def test_scaffold_update_is_noop(self):
-        result = run_script(f"{SCRIPTS_DIR}/scaffold-update.sh")
-        # Now a no-op that prints deprecation notice and exits 0
-        assert result.returncode == 0
-        assert "no longer used" in result.stderr.lower() or "deprecated" in result.stderr.lower()
