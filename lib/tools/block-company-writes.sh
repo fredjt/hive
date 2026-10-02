@@ -7,7 +7,7 @@
 #
 # Exit codes:
 #   0 = allow tool call
-#   2 = block tool call (Claude sees stderr as the reason)
+#   2 = block tool call (agent sees stderr as the reason)
 
 set -euo pipefail
 
@@ -37,7 +37,7 @@ BLOCKED: Direct Write/Edit on .company/ is forbidden.
 File: $FILE_PATH
 
 The .company/ directory must only be written via scripts in:
-  ~/.claude/skills/company/tools/
+  $HIVE_ROOT/lib/tools/
 
 Common replacements:
   .company/departments/<dept>/status.json    -> bash SKILL_DIR/lib/tools/status-update.sh <dept> --key value
@@ -50,7 +50,7 @@ Common replacements:
   .company/chat/*.md                         -> bash SKILL_DIR/lib/tools/chat-send.sh <channel> <author> <message>
   .company/manifest.json                     -> bash SKILL_DIR/lib/tools/init-manifest.sh ...
 
-See ~/.claude/skills/company/tools/company-api.md for the full script API.
+See $HIVE_ROOT/lib/tools/company-api.md for the full script API.
 EOF
     exit 2
     ;;

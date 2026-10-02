@@ -43,7 +43,7 @@ set -uo pipefail
 #                             https://openrouter.ai/api/v1    (OpenRouter)
 #                             https://api.groq.com/openai/v1  (Groq)
 #   HIVE_API_KEY            API key for authentication
-#   HIVE_MODEL              model name (e.g. "gpt-4o", "claude-sonnet-4-20250514")
+#   HIVE_MODEL              model name (e.g. "gpt-4o", "gpt-4o")
 #   HIVE_TEMPERATURE        sampling temperature 0.0-2.0 (default: 0.7)
 #   HIVE_MAX_TOKENS         max response tokens (default: 8192)
 

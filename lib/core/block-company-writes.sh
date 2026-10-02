@@ -18,7 +18,7 @@
 #
 # Exit codes:
 #   0 = allow
-#   2 = block (Claude sees stderr as the reason)
+#   2 = block (agent sees stderr as the reason)
 
 set -euo pipefail
 

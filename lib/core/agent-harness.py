@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Hive agent harness — built-in replacement for Claude Code.
+"""Hive agent harness — built-in AI agent harness.
 
 This is the SOLE place that runs an AI agent inside hive. Every spawned agent
-(going through agent-spawn.sh) uses this harness instead of `claude -p`.
+(going through agent-spawn.sh) uses this harness instead of the external CLI.
 
 The harness supports:
   - Shell command execution (with safety limits)
@@ -67,7 +67,7 @@ def call_mcp_tool(mcp_url: str, tool_name: str, arguments: dict) -> dict[str, An
     """Call an MCP tool over Streamable HTTP.
 
     Returns a dict with ok/exit_code/stdout/stderr compatible with existing
-    log consumers that expect claude's result format.
+    log consumers that expect the harness result format.
     """
     if httpx is None:
         return {
@@ -433,7 +433,7 @@ def parse_response(resp: httpx.Response) -> dict[str, Any]:
             total_cost_usd = (prompt_tokens * 0.00003 + completion_tokens * 0.00006) / 1000
         elif "gpt-3.5" in data.get("model", "").lower():
             total_cost_usd = (prompt_tokens * 0.0000015 + completion_tokens * 0.000002) / 1000
-        elif "claude" in data.get("model", "").lower():
+        elif any(m in data.get("model", "").lower() for m in ["claude", "anthropic"]):
             total_cost_usd = (prompt_tokens * 0.000003 + completion_tokens * 0.000015) / 1000
 
     return {
@@ -466,7 +466,7 @@ def call_llm_api(
     Args:
         messages: Conversation history as list of {role, content} dicts.
         api_base: Base URL for the LLM API (e.g., https://api.openai.com/v1).
-        model: Model name to use (e.g., gpt-4, claude-sonnet-4-20250514).
+        model: Model name to use (e.g., gpt-4o, gemini-pro).
         api_key: API key for authentication.
         temperature: Sampling temperature (0.0-2.0). Default 0.7.
         max_tokens: Maximum tokens in response. Default 8192.
@@ -677,7 +677,7 @@ def run_agent(
 
     Returns:
         Dict with ok/exit_code/stdout/stderr/result compatible with existing
-        log consumers that parse claude's stream-json output.
+        log consumers that parse the harness stream-json output.
     """
     mcp_url = mcp_url or os.environ.get("MCP_URL", "http://127.0.0.1:7891/mcp")
     company_dir = os.environ.get("COMPANY_DIR", os.path.join(cwd or ".", ".company")) if cwd else os.environ.get("COMPANY_DIR", "./.company")
@@ -815,7 +815,7 @@ def parse_actions(text: str, no_mcp: bool = False,
 def main() -> int:
     parser = argparse.ArgumentParser(
         prog="agent-harness",
-        description="Hive built-in agent harness — replaces Claude Code for spawned agents.",
+        description="Hive built-in agent harness for spawned agents.",
     )
     parser.add_argument("prompt", nargs="?", help="Prompt text (or read from stdin)")
     parser.add_argument("--no-mcp", action="store_true", help="Disable MCP tool calls")
@@ -861,7 +861,7 @@ def main() -> int:
         max_tokens=args.max_tokens,
     )
 
-    # Output as JSON (compatible with claude-spawn.sh's stream-json format)
+    # Output as JSON (stream-json format for log consumers)
     print(json.dumps(result))
 
     return 0 if result.get("ok") or not result.get("is_error") else 1

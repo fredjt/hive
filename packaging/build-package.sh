@@ -80,7 +80,7 @@ required packages, and symlinks ~/.local/bin/hive → bin/hive.
 For more docs, see share/docs/README.md, ARCHITECTURE.md, CLI.md, MCP-TOOLS.md.
 EOF
 cat > "$STAGE/$PKG_NAME/LICENSE" <<EOF
-Hive — orchestration framework for Claude Code agents
+Hive — orchestration framework for AI agents
 Copyright (c) 2026
 
 Permission is hereby granted, free of charge, to any person obtaining a copy

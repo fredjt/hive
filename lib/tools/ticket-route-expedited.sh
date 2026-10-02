@@ -15,7 +15,7 @@
 # the CEO inbox bottleneck for clear infrastructure/blocker issues.
 
 COMPANY_DIR="${COMPANY_DIR:-.company}"
-SKILLS_DIR="${SKILLS_DIR:-/home/ttanchin/.claude/skills/company}"
+SKILLS_DIR="${SKILLS_DIR:-$HIVE_ROOT/lib/agents}"
 
 TYPE="$1"
 PRIORITY="$2"

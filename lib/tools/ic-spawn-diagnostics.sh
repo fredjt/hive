@@ -79,7 +79,7 @@ echo ""
 # Check for monitoring/validation tools
 echo "TOOLING STATUS"
 echo "--------------"
-SKILL_DIR=$(find "$HOME" -type d -name "company" -path "*/.claude/skills/company" 2>/dev/null | head -1)
+SKILL_DIR="${HIVE_ROOT:-$HOME/.local/share/hive}"
 
 if [ -n "$SKILL_DIR" ]; then
   echo "✓ Company skill directory found: $SKILL_DIR"
@@ -114,7 +114,7 @@ echo "RECOMMENDATIONS"
 echo "---------------"
 echo ""
 echo "Immediate Actions:"
-echo "  1. Use ic-spawn.sh wrapper instead of manual claude commands"
+echo "  1. Use agent-spawn.sh wrapper for all agent spawns"
 echo "  2. Always validate spawn commands with ic-spawn-validate.sh before execution"
 echo "  3. Ensure VPs substitute ALL placeholder variables before spawning"
 echo ""

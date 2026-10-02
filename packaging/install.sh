@@ -99,7 +99,7 @@ esac
 # Detect (but DO NOT kill) running daemons that may need restart for the
 # new code to take effect. The installer is non-destructive: stopping
 # anything is the operator's job via `hive stop`. Without this rule,
-# upgrading mid-sprint kills the sprint-lifecycle and any in-flight Claude
+# upgrading mid-sprint kills the sprint-lifecycle and any in-flight agents
 # turn, which is surprising and destructive — operators expect the
 # installer to update files on disk only.
 #
@@ -148,7 +148,7 @@ HIVE_ENV_FILE_HINT="${HIVE_ENV_FILE:-$HOME/.config/hive/env.sh}"
 if [ ! -f "$HIVE_ENV_FILE_HINT" ]; then
   echo ""
   echo "  TIP: hive sources $HIVE_ENV_FILE_HINT on every spawn (if it exists)."
-  echo "  Put per-machine claude / model endpoint config there so daemons inherit"
+  echo "  Put per-machine LLM / model endpoint config there so daemons inherit"
   echo "  it without depending on your interactive shell rc files. Example:"
   echo "      mkdir -p \"\$(dirname '$HIVE_ENV_FILE_HINT')\""
   echo "      cat > '$HIVE_ENV_FILE_HINT' <<'ENVEOF'"

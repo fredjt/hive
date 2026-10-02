@@ -9,7 +9,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 # Honor a pre-set HIVE_ROOT or SKILL_DIR if the caller already resolved it.
 SKILL_DIR="${HIVE_ROOT:-${SKILL_DIR:-$(cd "$SCRIPT_DIR/../.." && pwd)}}"
 
-# Load the user's hive env file (LLM endpoint config, CLAUDE_BIN, etc.)
+# Load the user's hive env file (LLM endpoint config, etc.)
 # so every spawned daemon inherits it
 # regardless of whether company-start was launched from an interactive shell.
 HIVE_ENV_FILE="${HIVE_ENV_FILE:-$HOME/.config/hive/env.sh}"

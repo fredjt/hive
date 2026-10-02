@@ -36,7 +36,7 @@
 #
 # Exit codes:
 #   0 = allow tool call
-#   2 = block tool call (Claude sees stderr as the reason)
+#   2 = block tool call (agent sees stderr as the reason)
 
 set -euo pipefail
 

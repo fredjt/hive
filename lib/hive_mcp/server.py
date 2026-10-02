@@ -1,7 +1,7 @@
 """Hive MCP server — exposes ~50 tools that wrap the bash tool scripts.
 
 Two transports are supported:
-  - stdio:  used when a Claude Code agent is spawned with --mcp-config pointing
+  - stdio:  used when an agent is spawned with --mcp-config pointing
             at this file as a stdio MCP server.
   - http:   used by the dashboard (Node.js) and the CLI to invoke tools over
             localhost. Started by `hive start` or `hive dashboard`.
@@ -79,7 +79,7 @@ def main() -> None:
         "--transport",
         choices=["stdio", "http"],
         default="stdio",
-        help="Transport: stdio (for Claude agents) or http (for dashboard/CLI)",
+        help="Transport: stdio (for spawned agents) or http (for dashboard/CLI)",
     )
     parser.add_argument("--host", default="127.0.0.1", help="HTTP bind host")
     parser.add_argument("--port", type=int, default=7891, help="HTTP bind port")
