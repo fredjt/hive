@@ -29,9 +29,6 @@ REQUIRED_DIRS=(
   "departments/rd"
   "departments/marketing"
   "chat"
-  "meetings/history"
-  "inbox"
-  "outbox"
   "logs"
   "tickets"
   "research/ongoing"
@@ -50,7 +47,6 @@ REQUIRED_JSON=(
   "manifest.json"
   "roster.json"
   "tickets/global-counter.json"
-  "meetings/schedule.json"
 )
 
 for json_file in "${REQUIRED_JSON[@]}"; do

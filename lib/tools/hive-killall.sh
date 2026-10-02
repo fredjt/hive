@@ -23,7 +23,6 @@ PATTERNS=(
   "lib/tools/sprint-fill.sh"
   "lib/tools/sprint-progress.sh"
   "lib/tools/sprint-lifecycle.sh"
-  "lib/tools/meeting-runner.sh"
   "lib/tools/verification-runner.sh"
   "lib/tools/verification-gates.sh"
   "lib/tools/worktree-merger.sh"

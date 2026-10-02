@@ -2,7 +2,7 @@
 
 Subcommands:
   init, start, stop, status, dashboard, restart, ticket, chat, agent, gates,
-  backlog, inbox, config, doctor, tool, tools, version
+  backlog, config, doctor, tool, tools, version
 
 Bare `hive` (no args) launches the dashboard for the project in CWD.
 """
@@ -21,7 +21,6 @@ if str(_LIB) not in sys.path:
 
 from hive_cli.commands import (  # noqa: E402
     company, dashboard, init, ticket, chat, agent, gates, backlog,
-    inbox, config, doctor, tool, killall, llm, round as round_cmd,
     gh as gh_cmd, release as release_cmd,
     restart,
 )
@@ -169,16 +168,6 @@ def _add_backlog(sub) -> None:
     p.set_defaults(_handler=backlog.handle)
 
 
-def _add_inbox(sub) -> None:
-    p = sub.add_parser("inbox", help="File / process inbox requests")
-    sp = p.add_subparsers(dest="action", required=True)
-    pf = sp.add_parser("file", help="File a request (auto-classified)")
-    pf.add_argument("content")
-    pf.add_argument("--type", default="auto"); pf.add_argument("--dept", default="auto")
-    pp = sp.add_parser("process", help="Process inbox entries")
-    pp.add_argument("--dry-run", action="store_true")
-    p.set_defaults(_handler=inbox.handle)
-
 
 def _add_config(sub) -> None:
     p = sub.add_parser("config", help="Read / write hive config")
@@ -309,7 +298,7 @@ def build_parser() -> argparse.ArgumentParser:
     _add_agent(sub)
     _add_gates(sub)
     _add_backlog(sub)
-    _add_inbox(sub)
+
     _add_config(sub)
     _add_doctor(sub)
     _add_killall(sub)

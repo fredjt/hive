@@ -58,12 +58,6 @@ def register(server: Server) -> None:
     ) -> dict:
         """Create chat channel files. Defaults to general/engineering/leadership/incidents."""
         return run("init-chat-channels", *(channels or []), company_dir=company_dir).to_dict()
-
-    @server.tool()
-    def init_meeting_schedule(company_dir: str | None = None) -> dict:
-        """Create the empty `meetings/schedule.json`."""
-        return run("init-meeting-schedule", company_dir=company_dir).to_dict()
-
     @server.tool()
     def validate_workspace(project_root: str) -> dict:
         """Validate `.company/` integrity in `project_root`. Returns gate-style report."""

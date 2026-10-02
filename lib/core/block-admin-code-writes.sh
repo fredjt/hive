@@ -166,7 +166,7 @@ What to do for actual source-code work:
   3. Your own work product (reports, plans, sprint direction) goes under
      .company/ via the bash script tools:
         report-write.sh, sprint-direction-write.sh, chat-send.sh,
-        meeting-record.sh, status-update.sh.
+        status-update.sh.
 
 If you genuinely need to bypass this (manual operator override), exit
 your spawn and edit the file by hand outside the agent context.

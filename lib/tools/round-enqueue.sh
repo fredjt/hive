@@ -7,7 +7,6 @@ set -uo pipefail
 #   - ic-spawner.sh        (--queued-by ic-spawner)
 #   - verification-runner.sh (--queued-by verification-runner)
 #   - sprint-lifecycle.sh   (--queued-by sprint-lifecycle)
-#   - meeting-runner.sh    (--queued-by sprint-review-promoter)
 #   - standup-runner.sh    (--queued-by ceo-standup-synth, briefs+synth)
 #   - manual CLI / dashboard / MCP tool
 #
@@ -81,7 +80,7 @@ if [ -z "$LOG_TO" ]; then
   case "$KIND" in
     standup-brief|standup-synth) LOG_TO="$COMPANY_DIR/logs/standup.log" ;;
     sprint-retro|sprint-planning|sprint-review)
-                                 LOG_TO="$COMPANY_DIR/logs/meetings.log" ;;
+
     verification)                LOG_TO="$COMPANY_DIR/logs/verification-${DEPT}.log" ;;
     ic-cycle)                    LOG_TO="$COMPANY_DIR/logs/ic-${TICKET:-$AGENT}.log" ;;
     *)                           LOG_TO="$COMPANY_DIR/logs/${AGENT}.log" ;;

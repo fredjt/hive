@@ -44,9 +44,6 @@ Common replacements:
   .company/marketing/reports/*.md            -> bash SKILL_DIR/lib/tools/report-write.sh marketing <name> --stdin
   .company/research/ongoing/*-findings.md    -> bash SKILL_DIR/lib/tools/research-findings.sh <ticket-id> --stdin
   .company/departments/*/components/*/test-results.md -> bash SKILL_DIR/lib/tools/test-results.sh <dept> <component> --stdin
-  .company/meetings/history/*.md             -> bash SKILL_DIR/lib/tools/meeting-record.sh <type> <timestamp> --stdin
-  .company/inbox/user-requests.md            -> bash SKILL_DIR/lib/tools/inbox-write.sh <type> --content "..."
-  .company/outbox/*.md                       -> bash SKILL_DIR/lib/tools/outbox-write.sh <type> --content "..."
   .company/chat/*.md                         -> bash SKILL_DIR/lib/tools/chat-send.sh <channel> <author> <message>
   .company/manifest.json                     -> bash SKILL_DIR/lib/tools/init-manifest.sh ...
 

@@ -278,7 +278,7 @@ def register(server: Server) -> None:
         priority: str = "HIGH",
         company_dir: str | None = None,
     ) -> dict:
-        """Bypass CEO inbox for HIGH/CRITICAL blockers — routes directly to dept."""
+        """Bypass review queue for HIGH/CRITICAL blockers — routes directly to dept."""
         return run(
             "ticket-route-expedited",
             dept,

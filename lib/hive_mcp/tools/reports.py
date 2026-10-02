@@ -1,4 +1,4 @@
-"""Report-writing tools (research findings, test results, meeting records)."""
+"""Report-writing tools (research findings, test results, sprint reviews)."""
 
 from __future__ import annotations
 
@@ -22,8 +22,7 @@ def register(server: Server) -> None:
         Recognized types (all surfaced in the dashboard's Reports panel):
           marketing                  -> .company/marketing/reports/
           research                   -> .company/research/ongoing/
-          meeting                    -> .company/meetings/history/
-          sprint-review              -> .company/meetings/sprint-reviews/
+
           productivity | hiring      -> .company/departments/hr/reports/
           dept:<dept-name>           -> .company/departments/<dept>/reports/
 
@@ -73,27 +72,6 @@ def register(server: Server) -> None:
             "--stdin",
             "--format",
             format,
-            stdin=content,
-            company_dir=company_dir,
-        ).to_dict()
-
-    @server.tool()
-    def meeting_record(
-        type: str,
-        timestamp: str,
-        content: str,
-        company_dir: str | None = None,
-    ) -> dict:
-        """Record meeting notes.
-
-        type: standup | sprint-review | sprint-planning | sprint-retro | emergency
-        timestamp: e.g. "2026-04-27-15-00"
-        """
-        return run(
-            "meeting-record",
-            type,
-            timestamp,
-            "--stdin",
             stdin=content,
             company_dir=company_dir,
         ).to_dict()

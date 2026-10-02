@@ -837,7 +837,7 @@ fi
 log "vp-review: spawning VPs"
 SPRINT_ID=$(ss_get_field .sprint_id)
 PUBLISH_STATUS=$(ss_get_field .release.publish_status)
-REPORT_DIR="$COMPANY_DIR/meetings/sprint-reviews"
+REPORT_DIR="$COMPANY_DIR/reports/sprint-reviews"
 mkdir -p "$REPORT_DIR"
 
 DEPTS=(hr it rd marketing legal finance)

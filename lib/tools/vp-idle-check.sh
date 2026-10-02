@@ -13,7 +13,6 @@ set -euo pipefail
 #
 # Heuristics:
 #   - Has tickets in sprint-current/in-progress/in-review → run
-#   - Has new inbox messages addressed to this dept since last run → run
 #   - Has new chat messages in dept-<name> since last run → run
 #   - Status health is "critical" → run (something needs attention)
 #   - Otherwise → skip
@@ -62,29 +61,16 @@ if [ "$ACTIVE" -gt 0 ]; then
   exit 0
 fi
 
-# New inbox messages since last run? Compare mtime of inbox files vs last-run timestamp.
 LAST_RUN_TS=0
 [ -f "$LAST_RUN_FILE" ] && LAST_RUN_TS=$(cat "$LAST_RUN_FILE" 2>/dev/null || echo 0)
 
-inbox_changed_since() {
-  local f="$1" since="$2"
-  [ -f "$f" ] || return 1
-  local mt; mt=$(stat -c %Y "$f" 2>/dev/null || echo 0)
-  [ "$mt" -gt "$since" ]
-}
-
-# Inbox + chat freshness checks
-if inbox_changed_since "$COMPANY_DIR/inbox/user-requests.md" "$LAST_RUN_TS"; then
-  echo "run:inbox-updated" > "$LAST_RUN_FILE.reason"
-  date -u +%s > "$LAST_RUN_FILE"
-  exit 0
-fi
-if inbox_changed_since "$COMPANY_DIR/chat/dept-$DEPT.md" "$LAST_RUN_TS"; then
+# Chat freshness checks
+if file_changed_since "$COMPANY_DIR/chat/dept-$DEPT.md" "$LAST_RUN_TS"; then
   echo "run:dept-chat-updated" > "$LAST_RUN_FILE.reason"
   date -u +%s > "$LAST_RUN_FILE"
   exit 0
 fi
-if inbox_changed_since "$COMPANY_DIR/chat/leadership.md" "$LAST_RUN_TS"; then
+if file_changed_since "$COMPANY_DIR/chat/leadership.md" "$LAST_RUN_TS"; then
   echo "run:leadership-chat-updated" > "$LAST_RUN_FILE.reason"
   date -u +%s > "$LAST_RUN_FILE"
   exit 0
@@ -99,5 +85,5 @@ if [ $((NOW - LAST_RUN_TS)) -gt 1800 ]; then
 fi
 
 # Nothing to do
-echo "skip:idle (active=0, no chat/inbox changes, last run $((NOW - LAST_RUN_TS))s ago)" > "$LAST_RUN_FILE.reason"
+echo "skip:idle (active=0, no chat changes, last run $((NOW - LAST_RUN_TS))s ago)" > "$LAST_RUN_FILE.reason"
 exit 1

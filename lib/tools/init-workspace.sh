@@ -37,9 +37,6 @@ mkdir -p "$COMPANY_DIR/tickets"
 
 # Perpetual operations directories
 mkdir -p "$COMPANY_DIR/chat"
-mkdir -p "$COMPANY_DIR/meetings/history"
-mkdir -p "$COMPANY_DIR/inbox/ticket-requests"
-mkdir -p "$COMPANY_DIR/outbox"
 mkdir -p "$COMPANY_DIR/logs"
 mkdir -p "$COMPANY_DIR/marketing/reports"
 mkdir -p "$COMPANY_DIR/marketing/output"

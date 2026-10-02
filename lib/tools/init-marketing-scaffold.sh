@@ -116,7 +116,7 @@ write_if_missing "$MK_DIR/customer-personas.md" "# Customer Personas
 
 write_if_missing "$MK_DIR/customer-feedback.md" "# Customer Feedback Log
 
-> marketing-liaison aggregates inbox themes. Patterns mentioned 3+ times
+> marketing-liaison aggregates user feedback themes. Patterns mentioned 3+ times
 > become a feature ticket on the relevant department.
 
 ## Recurring themes
@@ -125,7 +125,7 @@ write_if_missing "$MK_DIR/customer-feedback.md" "# Customer Feedback Log
 
 write_if_missing "$MK_DIR/testimonials.md" "# Testimonials
 
-> Captured from real positive feedback in the inbox.
+> Captured from real customer interactions, support tickets, and reviews.
 > NEVER fabricate testimonials.
 
 (none yet)

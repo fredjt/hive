@@ -3,7 +3,7 @@
 # Example: ticket-route-expedited.sh bug critical "Database connection pool exhausted" "Production blocker..." "VP-Backend" "database" "medium"
 #
 # Expedited routing for HIGH/CRITICAL blocker tickets.
-# Bypasses CEO inbox review, routes directly to target department board.
+# Bypasses review queue, routes directly to target department board.
 # CEO receives notification for tracking, not approval.
 #
 # CRITERIA FOR EXPEDITED ROUTING:
@@ -12,7 +12,7 @@
 # - Target department is known and valid
 #
 # This reduces critical blocker resolution from hours to minutes by eliminating
-# the CEO inbox bottleneck for clear infrastructure/blocker issues.
+# the review bottleneck for clear infrastructure/blocker issues.
 
 COMPANY_DIR="${COMPANY_DIR:-.company}"
 SKILLS_DIR="${SKILLS_DIR:-$HIVE_ROOT/lib/agents}"
@@ -122,7 +122,7 @@ TICKET_ID=$(echo "$TICKET_ID" | tail -1)
 
 # Notify CEO for tracking (not approval)
 TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
-CEO_NOTIFICATION="$COMPANY_DIR/outbox/ceo-notifications.md"
+CEO_NOTIFICATION="$COMPANY_DIR/logs/expedited-notice.md"
 
 # Ensure file exists
 touch "$CEO_NOTIFICATION"
@@ -143,7 +143,7 @@ cat >> "$CEO_NOTIFICATION" << EOF
 **Title:** $TITLE
 
 **Reason for Expedited Routing:**
-High/critical priority blocker ticket bypassed inbox review and was routed directly to $TARGET_DEPT board for immediate processing.
+High/critical priority blocker ticket bypassed review and was routed directly to $TARGET_DEPT board for immediate processing.
 
 **Status:** Ticket created in backlog, ready for sprint assignment.
 

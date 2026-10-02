@@ -7,7 +7,7 @@ set -euo pipefail
 #                                [--github private|public|skip|<url>]
 #
 # Creates the .company/ workspace, initial manifest, brief, chat channels,
-# meeting schedule, AND a git repo with a GitHub remote. Without the git+
+# AND a git repo with a GitHub remote. Without the git+
 # GitHub setup, verification IC approvals crash on PR merge (gh-pr-merge.sh
 # fails because there's no remote).
 #
@@ -74,8 +74,6 @@ fi
 # 4. Chat channels
 bash "$TOOLS/init-chat-channels.sh"
 
-# 5. Meeting schedule
-bash "$TOOLS/init-meeting-schedule.sh" >/dev/null
 
 # 6. Marketing scaffold (real deliverables, in <project_root>/marketing/)
 bash "$TOOLS/init-marketing-scaffold.sh" "$PROJECT_ROOT"

@@ -316,7 +316,7 @@ if [ -f "$DASHBOARD_GENERATOR" ]; then
   (cd "$PROJECT_ROOT" && node "$DASHBOARD_GENERATOR" --auto "$DASHBOARD_HTML") >> "$COMPANY_DIR/logs/dashboard-generator.log" 2>&1
 fi
 
-# Start the company-board dashboard (live ticket board + chat + meetings + reports)
+# Start the company-board dashboard (live ticket board + chat + reports)
 # Only start a new dashboard if one isn't already running (e.g., started by
 # `hive` with no args). Reusing avoids breaking the live connection.
 if [ "$DASHBOARD_ALREADY_RUNNING" = false ]; then
@@ -405,19 +405,6 @@ add_proc $! "worktree-merger" "infrastructure" "60s"
 # in --enqueue-only mode exactly once between rounds, so newly-arrived
 # tickets land in the next round (not the current one mid-flight).
 
-# Inbox auto-router (every 45s - structured + tiny-LLM classification of
-# free-form requests). Saves a CEO main-LLM turn per inbox entry.
-(while true; do
-  COMPANY_DIR="$COMPANY_DIR" SKILL_DIR="$SKILL_DIR" \
-    bash "$SCRIPT_DIR/inbox-process.sh" >> "$COMPANY_DIR/logs/inbox-process.log" 2>&1
-  rc=$?
-  if [ "$rc" -ne 0 ]; then
-    echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] inbox-process exited code=$rc, restarting in 5s" >> "$COMPANY_DIR/logs/inbox-process.log"
-    sleep 5
-  fi
-  sleep 45
-done) &
-add_proc $! "inbox-router" "infrastructure" "45s"
 
 # Verification gates (every 90s per dept - runs deterministic gates BEFORE
 # spawning a verification IC). Gates are blocking - tickets that fail gates

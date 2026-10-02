@@ -300,10 +300,6 @@ except Exception:
         bash "$SCRIPT_DIR/worktree-merger.sh" "$PROJECT_ROOT" --quiet >> "$log_file" 2>&1 &
         new_pid=$!
         ;;
-      inbox-router)
-        COMPANY_DIR="$COMPANY_DIR" SKILL_DIR="$SKILL_DIR" bash "$SCRIPT_DIR/inbox-process.sh" >> "$log_file" 2>&1 &
-        new_pid=$!
-        ;;
       verification-gates)
         # Verification gates runs per-dept; for a restart we just re-launch
         # the outer loop, which will re-discover all departments.

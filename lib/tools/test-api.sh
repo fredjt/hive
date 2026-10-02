@@ -87,15 +87,6 @@ else
   fail "init-chat-channels.sh" "Script failed to execute"
 fi
 
-# Test 5: init-meeting-schedule.sh
-echo "Testing init-meeting-schedule.sh..."
-OUTPUT=$(bash "$SCRIPT_DIR/init-meeting-schedule.sh" 2>/dev/null || echo "FAILED")
-if echo "$OUTPUT" | jq -e '.next_standup' >/dev/null 2>&1; then
-  pass "init-meeting-schedule.sh creates valid schedule JSON"
-else
-  fail "init-meeting-schedule.sh" "Invalid JSON or missing field"
-fi
-
 # Test 6: status-update.sh
 echo "Testing status-update.sh..."
 mkdir -p "$COMPANY_DIR/departments/test-dept"
@@ -104,24 +95,6 @@ if echo "$OUTPUT" | jq -e '.velocity == 85' >/dev/null 2>&1; then
   pass "status-update.sh updates department status"
 else
   fail "status-update.sh" "Invalid update or missing field"
-fi
-
-# Test 7: inbox-write.sh
-echo "Testing inbox-write.sh..."
-ENTRY=$(bash "$SCRIPT_DIR/inbox-write.sh" bug --content "Test bug report" 2>/dev/null || echo "0")
-if [ "$ENTRY" -gt 0 ] && grep -q "Test bug report" "$COMPANY_DIR/inbox/user-requests.md" 2>/dev/null; then
-  pass "inbox-write.sh writes inbox entry"
-else
-  fail "inbox-write.sh" "Entry not written or invalid entry number"
-fi
-
-# Test 8: outbox-write.sh
-echo "Testing outbox-write.sh..."
-OUTPUT=$(bash "$SCRIPT_DIR/outbox-write.sh" notification --content "Test notification" 2>/dev/null || echo "FAILED")
-if [ -f "$OUTPUT" ] && grep -q "Test notification" "$OUTPUT" 2>/dev/null; then
-  pass "outbox-write.sh writes outbox notification"
-else
-  fail "outbox-write.sh" "Notification not written"
 fi
 
 # Test 9: report-write.sh

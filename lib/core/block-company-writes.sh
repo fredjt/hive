@@ -42,7 +42,6 @@ replacements:
 
   .company/departments/<dept>/status.json    -> mcp__hive__status_update / status-update.sh
   .company/marketing/reports/*.md            -> report-write.sh marketing <name> --stdin
-  .company/meetings/history/*.md             -> meeting-record.sh <type> <ts> --stdin
   .company/chat/*.md                         -> mcp__hive__chat_send / chat-send.sh
   .company/manifest.json                     -> init-manifest.sh ...
   .company/departments/*/tickets/*.json      -> mcp__hive__ticket_* (never edit by hand)

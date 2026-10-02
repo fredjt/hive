@@ -95,9 +95,7 @@ def handle(args) -> int:
         print()
 
     print("Wires currently configured:")
-    print("  classify-ticket    → inbox-write.sh (when --type=auto or --dept=auto)")
+    print("  classify-ticket → ticket-route-expedited.sh (when --type=auto or --dept=auto)")
     print("  narrate-status     → company-start.sh pulse loop (every 5 min, per dept)")
-    print("                       meeting-runner.sh standup (per dept pre-summary)")
     print("  summarize-thread   → company-start.sh pulse loop (every 5 min, leadership digest)")
-    print("                       meeting-runner.sh standup (per channel pre-summary)")
     return 0

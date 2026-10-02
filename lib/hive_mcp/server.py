@@ -34,7 +34,6 @@ TOOL_MODULES = [
     "worktrees",
     "agents",
     "company",
-    "inbox",
     "sprint",
     "rounds",
     "reports",

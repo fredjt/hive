@@ -97,7 +97,7 @@ fi
 # Sanity check: expected children. If they're missing the dir is hollow
 # (newly init'd or partially restored). Warn but allow.
 MISSING=()
-for sub in departments rounds sprints logs inbox outbox; do
+for sub in departments rounds sprints logs ; do
   [ -d "$CDIR/$sub" ] || MISSING+=("$sub")
 done
 if [ "${#MISSING[@]}" -gt 0 ]; then
