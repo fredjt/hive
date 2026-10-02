@@ -38,10 +38,14 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
+          # Install build dependencies first (for pydantic-core, cffi, etc.)
+          pip install maturin setuptools wheel
           # Core runtime deps (needed for imports in hive_cli/hive_mcp)
           pip install mcp fastapi 'uvicorn[standard]' httpx tomli
           # Test deps
           pip install pytest anyio
+          # Verify installation
+          python -c "import mcp; import fastapi; import httpx; print('All dependencies installed successfully')"
 
       - name: Run test suite
         run: |
