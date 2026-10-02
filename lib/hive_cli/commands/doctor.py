@@ -13,7 +13,7 @@ from hive_cli import mcp_client
 # HIVE_INSTALL_DIR — global install (venv, MCP/CLI/dashboard source).
 HIVE_INSTALL_DIR = Path(os.environ.get("HIVE_INSTALL_DIR",
                                        Path(__file__).resolve().parents[3]))
-# HIVE_ROOT — per-project scaffold (set by bin/hive when sentinel found).
+# HIVE_ROOT — global install root (projects use installed scripts directly).
 HIVE_ROOT = Path(os.environ.get("HIVE_ROOT", HIVE_INSTALL_DIR))
 
 
@@ -28,16 +28,16 @@ def handle(args) -> int:
     print("Hive doctor — checking installation\n")
     all_ok = True
 
-    # Install dir (global) and scaffold (per-project, may equal install in dev).
+    # Global install directory.
     all_ok &= _check("HIVE_INSTALL_DIR exists", HIVE_INSTALL_DIR.is_dir(),
                      str(HIVE_INSTALL_DIR))
-    all_ok &= _check("HIVE_ROOT (scaffold)", HIVE_ROOT.is_dir(), str(HIVE_ROOT))
+    all_ok &= _check("HIVE_ROOT", HIVE_ROOT.is_dir(), str(HIVE_ROOT))
 
     # Install-dir subdirs (where venv + source live).
     for sub in ("bin", "lib/hive_mcp", "lib/hive_cli", "lib/dashboard"):
         p = HIVE_INSTALL_DIR / sub
         all_ok &= _check(f"  install/{sub}/", p.is_dir())
-    # Scaffold subdirs (per-project; in dev mode same as install dir).
+    # Install subdirs (used by tools, agents, core).
     for sub in ("lib/tools", "lib/agents", "lib/core"):
         p = HIVE_ROOT / sub
         all_ok &= _check(f"  scaffold/{sub}/", p.is_dir())

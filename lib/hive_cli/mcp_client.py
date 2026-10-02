@@ -22,8 +22,7 @@ from mcp.client.streamable_http import streamable_http_client
 # HIVE_INSTALL_DIR — where the venv + MCP server source live (global).
 HIVE_INSTALL_DIR = Path(os.environ.get("HIVE_INSTALL_DIR",
                                        Path(__file__).resolve().parents[2]))
-# HIVE_ROOT — per-project scaffold root (set by bin/hive when a sentinel
-# was found). Tools find their lib/tools/ here. Falls back to install dir.
+# HIVE_ROOT — global install root. Tools find their lib/tools/ here.
 HIVE_ROOT = Path(os.environ.get("HIVE_ROOT", HIVE_INSTALL_DIR))
 MCP_HOST = os.environ.get("HIVE_MCP_HOST", "127.0.0.1")
 MCP_PORT = int(os.environ.get("HIVE_MCP_PORT", "7891"))
