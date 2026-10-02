@@ -7,7 +7,7 @@
 | `bin/hive` | Bash | Tiny launcher that resolves the venv and execs `hive_cli.main`. |
 | `lib/hive_cli/` | Python | argparse CLI, one module per top-level subcommand. Calls MCP tools via `mcp_client.py`. |
 | `lib/hive_mcp/` | Python | FastMCP server exposing ~50 tools. Each tool wraps a bash script via `shell.py`. Two transports: stdio (for spawned agents) and HTTP (for dashboard + CLI). |
-| `lib/core/claude-spawn.sh` | Bash | Single wrapper around `claude -p`. Injects an MCP config (so spawned agents see hive tools) and logs every spawn. |
+| `lib/core/agent-spawn.sh` | Bash | Wrapper around the agent harness. Injects an MCP config (so spawned agents see hive tools) and logs every spawn. |
 | `lib/core/init.sh` | Bash | Workspace initialization. Replaces SKILL.md Steps 1-3. |
 | `lib/core/orchestrator.sh` | Bash | Initial CEO build + transition to perpetual mode. Replaces SKILL.md Steps 4-7. |
 | `lib/tools/*.sh` | Bash | The actual implementations (ticket lifecycle, chat, gates, derived state, sprint mgmt, etc.). Mostly unchanged from the company skill. |
@@ -85,7 +85,7 @@ configurable via env vars (`GATE_REQUIRE_TESTS`, etc.).
 
 ## Backend abstraction
 
-There is exactly **one** point where Hive talks to the LLM: `claude-spawn.sh`.
+There is exactly **one** point where Hive talks to the LLM: `agent-spawn.sh`.
 It wraps `claude -p` with:
 - An MCP config pointing at hive's HTTP MCP server (so spawned agents can call
   `ticket_create`, `chat_send`, etc. as tools)

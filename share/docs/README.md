@@ -85,7 +85,7 @@ See `MCP-TOOLS.md` for the MCP tool catalog.
 ## Why MCP
 
 Spawned Claude agents see hive's tools via the MCP server (configured
-automatically by `lib/core/claude-spawn.sh`). Instead of generating multi-line
+automatically by `lib/core/agent-spawn.sh`). Instead of generating multi-line
 bash invocations like:
 
 ```bash
@@ -122,7 +122,7 @@ work — they're now thin shims that forward to `hive init`.
 - `bin/hive` — CLI launcher
 - `lib/hive_mcp/` — MCP server (Python)
 - `lib/hive_cli/` — CLI dispatcher (Python)
-- `lib/core/` — bash glue (claude-spawn, init, orchestrator, hook)
+- `lib/core/` — bash glue (agent-spawn, init, orchestrator, hook)
 - `lib/tools/` — bash tool scripts
 - `lib/agents/` — Claude agent prompts
 - `lib/dashboard/` — Node.js web dashboard

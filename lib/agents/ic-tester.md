@@ -138,7 +138,7 @@ Include the scaffolding files in your `[TDD-RED]` commit alongside the test.
   you'll get exit 3 if you try.
 - Do NOT touch PRs. PRs open automatically when the engineer moves the
   ticket to in-review (their stage). Direct calls to `gh-pr-*.sh` exit 4.
-- Do NOT call `claude-spawn.sh` / use `Agent` tool. The sprint-lifecycle spawns
+- Do NOT call `agent-spawn.sh` / use `Agent` tool. The sprint-lifecycle spawns
   the engineer for you in stage 4.
 - Do NOT skip the test failure check (step 4). A test that already passes
   is worthless — the whole point of [TDD-RED] is to prove the test

@@ -29,7 +29,7 @@ By the time you're spawned:
 - Do NOT call `ticket-move.sh` — the sprint-lifecycle moves the ticket on
   your exit-0.
 - Do NOT touch PRs. Admin tickets don't have PRs (no code branch).
-- Do NOT call `claude-spawn.sh` or use the `Agent` tool to spawn helpers.
+- Do NOT call `agent-spawn.sh` or use the `Agent` tool to spawn helpers.
 - Do NOT call `mcp__hive__company_start` / `company_stop` (removed).
 - If your dept's work needs CODE done (e.g., HR proposes a roster change
   that requires editing `.company/org-chart.json` AND a downstream

@@ -60,7 +60,7 @@ hive agent run-vp <dept> [project-dir]
 hive agent verify <dept> <ticket-id> [project-dir]
 ```
 
-All agent spawns route through `lib/core/claude-spawn.sh`, which auto-injects
+All agent spawns route through `lib/core/agent-spawn.sh`, which auto-injects
 the MCP config so the spawned agent can call hive tools.
 
 ## Quality gates

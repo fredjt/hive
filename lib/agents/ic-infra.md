@@ -87,7 +87,7 @@ The verification IC (stage 5) for an infra ticket inspects:
 Same as ic-engineer:
 - Do NOT call `ticket-move.sh` (sprint-lifecycle moves to in-review on exit-0).
 - Do NOT touch PRs (gated; exit 4).
-- Do NOT call `claude-spawn.sh` / use `Agent` tool.
+- Do NOT call `agent-spawn.sh` / use `Agent` tool.
 - Do NOT modify the prior `[TDD-RED]` test to make it pass without doing
   the actual infra work.
 - Do NOT write to `.company/` via Write/Edit (PreToolUse hook).

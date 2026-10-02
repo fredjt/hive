@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Purpose
 
-This directory contains **Claude agent prompt files** (`.md`) that define the behavior, rules, and procedures for each role in the Hive virtual company. These prompts are injected into spawned Claude agents via `lib/core/claude-spawn.sh` or loaded by orchestration scripts.
+This directory contains **agent prompt files** (`.md`) that define the behavior, rules, and procedures for each role in the Hive virtual company. These prompts are injected into spawned agents via `lib/core/agent-spawn.sh` or loaded by orchestration scripts.
 
 ## Prompt architecture
 
@@ -120,5 +120,5 @@ release-ic.md       →  reviews release readiness before publish
 ## See also
 
 - Parent `CLAUDE.md` — Framework-level architecture, sprint lifecycle
-- `lib/core/CLAUDE.md` — Agent spawning via claude-spawn.sh
+- `lib/core/CLAUDE.md` — Agent spawning via agent-spawn.sh
 - `lib/tools/CLAUDE.md` — Agent spawning scripts (ic-spawn.sh, load-agent-prompt.sh)

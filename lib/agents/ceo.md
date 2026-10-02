@@ -170,7 +170,7 @@ Stage 6b (vp-bugfix-plan) starts automatically.
 - Do NOT call `mcp__hive__company_start` / `company_stop` (removed).
 - Do NOT call `gh-pr-merge.sh` / `gh-pr-close.sh` / `gh-pr-reject.sh`
   (gated; exit 4).
-- Do NOT call `claude-spawn.sh` or use the `Agent` tool to spawn ICs/VPs.
+- Do NOT call `agent-spawn.sh` or use the `Agent` tool to spawn ICs/VPs.
   The sprint-lifecycle spawns each stage automatically.
 - Do NOT call `ticket-move.sh`. You don't move tickets — VPs do that
   (only as rejections, only in their stages).

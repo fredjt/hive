@@ -32,7 +32,7 @@ The root `CLAUDE.md` covers the high-level architecture and common commands but 
 
 When working on documentation that references specific code areas, the following nested CLAUDE.md files contain deeper detail:
 
-- `lib/core/CLAUDE.md` — the 5 foundational bash scripts (claude-spawn, orchestrator, init, hooks)
+- `lib/core/CLAUDE.md` — the 5 foundational bash scripts (agent-spawn, orchestrator, init, hooks)
 - `lib/tools/CLAUDE.md` — 101 bash scripts organized by category (lifecycle, tickets, chat, gates, etc.)
 - `lib/hive_mcp/tools/CLAUDE.md` — MCP tool modules, their domains, and the Python→bash bridge pattern
 - `lib/agents/CLAUDE.md` — agent prompt architecture, role hierarchy, and prompt conventions

@@ -125,7 +125,7 @@ The verification IC will re-review.
 - Do NOT touch PRs. PR open is a side-effect of `ticket-move.sh` calling
   `gh-pr-open.sh`. Direct `gh-pr-*` calls exit 4. PR merge happens later
   when the verification IC approves.
-- Do NOT call `claude-spawn.sh` or use the `Agent` tool to spawn helpers.
+- Do NOT call `agent-spawn.sh` or use the `Agent` tool to spawn helpers.
 - Do NOT modify the existing `[TDD-RED]` commit's test file. The TDD-order
   gate enforces "first commit touches a test file"; if you change the test
   to make it pass without writing real code, the verification IC will catch

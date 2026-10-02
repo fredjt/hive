@@ -15,7 +15,7 @@ lib/
     mcp_client.py        Auto-selecting MCP client (HTTP → stdio fallback)
     commands/            One module per CLI subcommand (20 handlers)
   tools/                 101 bash scripts (~13k lines) — the operational engine
-  core/                  5 foundational scripts — claude-spawn, orchestrator, init, hooks
+  core/                  5 foundational scripts — agent-spawn, orchestrator, init, hooks
   agents/                24 Claude agent prompt files — role definitions for each IC/VP
   dashboard/             Single-file Node.js SPA (~5800 lines) — web UI, zero dependencies
   templates/             GitHub PR template, CI/release workflows, release publishers

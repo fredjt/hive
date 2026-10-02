@@ -27,7 +27,7 @@ PATTERNS=(
   "lib/tools/verification-runner.sh"
   "lib/tools/verification-gates.sh"
   "lib/tools/worktree-merger.sh"
-  "lib/core/agent-spawn.sh"                      # in-flight agent spawns (alias: claude-spawn.sh)
+  "lib/core/agent-spawn.sh"                       # in-flight agent spawns
 )
 
 found=0

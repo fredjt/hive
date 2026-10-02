@@ -8,21 +8,21 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 | Script | Role |
 |---|---|
-| `claude-spawn.sh` | Sole entry point for invoking the Claude CLI. Injects MCP config, applies default flags, logs spawns, streams output to `.company/logs/streams/`. |
-| `orchestrator.sh` | CEO initial-build launcher. Reads the CEO prompt, appends assignment metadata, invokes `claude-spawn.sh`, then transitions to perpetual mode via `company-start.sh`. |
+| `agent-spawn.sh` | Sole entry point for invoking an AI agent. Injects MCP config, applies default flags, logs spawns, streams output to `.company/logs/streams/`. |
+| `orchestrator.sh` | CEO initial-build launcher. Reads the CEO prompt, appends assignment metadata, invokes `agent-spawn.sh`, then transitions to perpetual mode via `company-start.sh`. |
 | `init.sh` | Workspace initialization. Creates `.company/`, manifest, brief, chat channels, meeting schedule, marketing/legal/finance scaffolds, git repo, and GitHub remote. |
 | `block-company-writes.sh` | PreToolUse hook. Blocks Write/Edit/NotebookEdit/Bash mutations targeting `.company/` — agents must use MCP tools or script tools instead. |
 | `block-admin-code-writes.sh` | PreToolUse hook. Blocks non-engineering departments from writing application source code (config, docs, build files still allowed). |
 
 ## Conventions
 
-- All scripts use `set -euo pipefail` (except `claude-spawn.sh` which omits `e` on the main pipeline intentionally — see below).
-- Environment variables are sourced from `$HOME/.config/hive/env.sh` when present (see `claude-spawn.sh` line 37).
+- All scripts use `set -euo pipefail` (except `agent-spawn.sh` which omits `e` on the main pipeline intentionally — see below).
+- Environment variables are sourced from `$HOME/.config/hive/env.sh` when present (see `agent-spawn.sh` line 37).
 - `HIVE_ROOT` defaults to `$HOME/.local/share/hive`; `HIVE_INSTALL_DIR` can override the install location.
 - `COMPANY_DIR` defaults to `$PROJECT_ROOT/.company` — this is the live runtime state directory that agents READ freely but MUST NOT write directly.
 - All scripts accept `--` to separate flags from positional args.
 
-## claude-spawn.sh — critical details
+## agent-spawn.sh — critical details
 
 This is the **only** place the `claude` CLI binary is invoked. Any changes to Claude invocation flags, transport config, or agent spawning logic go here.
 
@@ -41,7 +41,7 @@ This script orchestrates the CEO's initial build and the handoff to perpetual mo
 1. Validates manifest exists at `.company/manifest.json`.
 2. Determines `FRESH` vs `RESUME` mode from manifest's `.mode` field.
 3. Reads the CEO prompt from `$HIVE_ROOT/lib/agents/ceo.md`, appends assignment metadata (project root, brief path, manifest path, mode, auto flag).
-4. Invokes `claude-spawn.sh` with the prompt piped via stdin.
+4. Invokes `agent-spawn.sh` with the prompt piped via stdin.
 5. On `INITIAL_BUILD_COMPLETE` signal: updates manifest to `perpetual` mode and `exec`s `company-start.sh`.
 6. On failure: exits with path to CEO output log for debugging.
 

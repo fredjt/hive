@@ -277,7 +277,7 @@ echo "REMOTE_OK=$(type gh_remote_ok >/dev/null 2>&1 && echo FOUND || echo NOT_FO
 
 
 class TestCoreScripts:
-    """Test core scripts (bin/hive, init.sh, orchestrator.sh, claude-spawn.sh)."""
+    """Test core scripts (bin/hive, init.sh, orchestrator.sh, agent-spawn.sh)."""
 
     def test_bin_hive_exists(self):
         assert Path("bin/hive").exists()
@@ -292,7 +292,7 @@ class TestCoreScripts:
         assert Path(f"{CORE_DIR}/orchestrator.sh").exists()
 
     def test_core_claude_spawn_sh_exists(self):
-        assert Path(f"{CORE_DIR}/claude-spawn.sh").exists()
+        assert Path(f"{CORE_DIR}/agent-spawn.sh").exists()
 
 
 class TestAllScriptsExist:

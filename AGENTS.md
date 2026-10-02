@@ -34,7 +34,7 @@ lib/                                  Runtime core
   hive_cli/                           CLI dispatcher (Python)
     main.py                           Subcommand routing
     commands/                         Per-subcommand handlers
-  core/                               Foundational bash scripts (claude-spawn, init, hooks)
+  core/                               Foundational bash scripts (agent-spawn, init, hooks)
   tools/                              ~101 bash scripts (~13k lines)
   agents/                             Claude agent prompt files
   dashboard/                          Node.js web dashboard (single-file SPA)

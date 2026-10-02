@@ -145,7 +145,7 @@ Do nothing else. Your only output is the verdict file.
   3-5, not at release time.
 - Do NOT call `release-publish-runner.sh` directly. The script runs it
   at stage 8 if your verdict is GO.
-- Do NOT call `claude-spawn.sh` or use the `Agent` tool to spawn helpers.
+- Do NOT call `agent-spawn.sh` or use the `Agent` tool to spawn helpers.
   You're the only agent in stage 7.
 - Do NOT call `ticket-move.sh`. You don't move tickets; the bugfix
   sub-cycle (Loop B) handles followup tickets via the CEO and VPs.

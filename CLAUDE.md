@@ -112,7 +112,7 @@ node lib/dashboard/server.js --dir .company --port 3456
 ## See also
 
 - [`lib/CLAUDE.md`](lib/) — Cross-module map, data flow, serialization points
-- [`lib/core/CLAUDE.md`](lib/core/) — 5 foundational scripts (claude-spawn, orchestrator, init, PreToolUse hooks)
+- [`lib/core/CLAUDE.md`](lib/core/) — 5 foundational scripts (agent-spawn, orchestrator, init, hooks)
 - [`lib/tools/CLAUDE.md`](lib/tools/) — 101 bash scripts organized by category, conventions, state files, sprint lifecycle
 - [`lib/hive_mcp/tools/CLAUDE.md`](lib/hive_mcp/tools/) — MCP tool modules, Python→bash bridge pattern
 - [`lib/hive_cli/CLAUDE.md`](lib/hive_cli/) — CLI dispatcher, command handler patterns

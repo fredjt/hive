@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with th
 
 ## What this directory is
 
-These scripts are the **runtime core** of Hive. They are called by the MCP server (`lib/hive_mcp/`) as tool implementations, by the sprint-lifecycle as orchestration steps, and by daemons as background workers. They read/write JSON state in `.company/` and never invoke Claude directly (that goes through `lib/core/claude-spawn.sh`).
+These scripts are the **runtime core** of Hive. They are called by the MCP server (`lib/hive_mcp/`) as tool implementations, by the sprint-lifecycle as orchestration steps, and by daemons as background workers. They read/write JSON state in `.company/` and never invoke an agent directly (that goes through `lib/core/agent-spawn.sh`).
 
 ## Script categories
 
