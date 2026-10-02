@@ -14,7 +14,7 @@ SKILL_DIR="$4"
 if [ -z "$DEPT" ] || [ -z "$TICKET_ID" ] || [ -z "$PROJECT_ROOT" ] || [ -z "$SKILL_DIR" ]; then
   echo "ERROR: Missing required arguments" >&2
   echo "Usage: ic-spawn.sh <department> <ticket-id> <project-root> <skill-dir>" >&2
-  echo "Example: ic-spawn.sh backend-api-services TICK-API-0097 /home/user/project /home/user/.hive" >&2
+  echo "Example: ic-spawn.sh backend-api-services TICK-API-0097 /home/user/project /home/user/.local/share/hive" >&2
   exit 1
 fi
 

@@ -279,12 +279,12 @@ def _add_tool(sub) -> None:
 
 
 def _add_scaffold(sub) -> None:
-    p = sub.add_parser("scaffold", help="Manage the per-project .hive/ tweakable scaffold")
+    p = sub.add_parser("scaffold", help="(deprecated) No-op; .hive/ scaffolds removed")
     sp = p.add_subparsers(dest="scaffold_action", required=True)
 
-    e = sp.add_parser("extract", help="First-time extract from the global install into <project>/.hive/")
+    e = sp.add_parser("extract", help="(deprecated) No-op; .hive/ scaffolds removed")
     e.add_argument("project_dir", nargs="?", default=".")
-    e.add_argument("--force", action="store_true", help="Overwrite an existing .hive/")
+    e.add_argument("--force", action="store_true", help="(deprecated) ignored")
 
     u = sp.add_parser("update", help="Re-sync from current global install; .new sibling for tweaks")
     u.add_argument("project_dir", nargs="?", default=".")

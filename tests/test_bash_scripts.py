@@ -331,16 +331,20 @@ class TestAllCoreScriptsParse:
 
 
 class TestScaffoldExtractScript:
-    """Test scaffold-extract.sh."""
+    """Test scaffold-extract.sh (deprecated no-op)."""
 
-    def test_scaffold_extract_no_args_shows_usage(self):
+    def test_scaffold_extract_is_noop(self):
         result = run_script(f"{SCRIPTS_DIR}/scaffold-extract.sh")
-        assert result.returncode != 0
+        # Now a no-op that prints deprecation notice and exits 0
+        assert result.returncode == 0
+        assert "no longer used" in result.stderr.lower() or "deprecated" in result.stderr.lower()
 
 
 class TestScaffoldUpdateScript:
-    """Test scaffold-update.sh."""
+    """Test scaffold-update.sh (deprecated no-op)."""
 
-    def test_scaffold_update_no_args_shows_usage(self):
+    def test_scaffold_update_is_noop(self):
         result = run_script(f"{SCRIPTS_DIR}/scaffold-update.sh")
-        assert result.returncode != 0
+        # Now a no-op that prints deprecation notice and exits 0
+        assert result.returncode == 0
+        assert "no longer used" in result.stderr.lower() or "deprecated" in result.stderr.lower()

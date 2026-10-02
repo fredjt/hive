@@ -5,15 +5,12 @@ from pathlib import Path
 
 import pytest
 
-import os
-from pathlib import Path
-
 # Ensure we can find hive_mcp when running from within the hive/ directory
 _hive_lib = str(Path(__file__).resolve().parent.parent / "lib")
 if _hive_lib not in __import__("sys").path:
     __import__("sys").path.insert(0, _hive_lib)
 
-from hive_mcp.shell import ShellResult, run, _resolve_scaffold
+from hive_mcp.shell import ShellResult, run
 
 
 class TestShellResult:
@@ -45,22 +42,6 @@ class TestShellResult:
         )
         d = result.to_dict()
         assert d["stdout"] == "hello"
-
-
-class TestResolveScaffold:
-    """Test scaffold path resolution."""
-
-    def test_returns_hive_root_when_no_company_dir(self, install_dir):
-        result = _resolve_scaffold(None)
-        assert isinstance(result, Path)
-        assert (result / "lib" / "tools").is_dir()
-
-    def test_prefers_company_dir_over_env(self, tmp_project_dir):
-        company_dir = tmp_project_dir / ".company"
-        company_dir.mkdir()
-        result = _resolve_scaffold(str(company_dir))
-        # Should resolve to .hive under the project root
-        assert (result / "lib" / "tools").is_dir()
 
 
 class TestRun:

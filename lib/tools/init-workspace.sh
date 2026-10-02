@@ -83,21 +83,6 @@ ensure_gitignore_entry() {
 ensure_gitignore_entry ".company"   "Company skill workspace (state, logs, agent coordination)"
 ensure_gitignore_entry ".worktrees" "Per-ticket git worktrees"
 
-# .hive/ holds the per-project tweakable scaffold (agents, tools, templates,
-# config). Untracked by default; opt-in tracking via negation entries below.
-ensure_gitignore_entry ".hive"      "Hive scaffold (tweakable per-project; see negation entries below to track specific tweaks)"
-
-# Append the negation-pattern hint once, just after the .hive entry. Users
-# uncomment the lines (or add their own) to track customizations.
-if ! grep -qF '!.hive/agents/' "$GITIGNORE" 2>/dev/null && \
-   ! grep -qF '# To track a specific scaffold tweak' "$GITIGNORE" 2>/dev/null; then
-  cat >> "$GITIGNORE" <<'EOF'
-# To track a specific scaffold tweak, add a negation entry, e.g.:
-#   !.hive/agents/ceo.md       # track your customized CEO prompt
-#   !.hive/lib/tools/custom-*.sh
-# Or wholesale track the scaffold by commenting out the `.hive` line above.
-EOF
-fi
 
 # Initialize empty JSON files from templates
 echo '{"next_ticket_id": 1}' > "$COMPANY_DIR/tickets/global-counter.json"

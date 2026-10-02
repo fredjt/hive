@@ -27,7 +27,7 @@ import httpx
 HIVE_INSTALL_DIR = Path(os.environ.get("HIVE_INSTALL_DIR",
                                        Path(__file__).resolve().parents[3]))
 
-# HIVE_ROOT — per-project scaffold (.hive/).
+# HIVE_ROOT — global install (projects use installed scripts directly).
 HIVE_ROOT = Path(os.environ.get("HIVE_ROOT", HIVE_INSTALL_DIR))
 
 

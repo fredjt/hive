@@ -241,7 +241,7 @@ MCP_PORT="${HIVE_MCP_PORT:-7891}"
 MCP_URL="http://$MCP_HOST:$MCP_PORT/mcp"
 
 # Resolve the global install dir (where venv + Python/Node sources live).
-# SKILL_DIR may point at a per-project .hive/ that doesn't contain venv —
+# SKILL_DIR points to the global install (projects use installed scripts directly) —
 # HIVE_INSTALL_DIR is the authoritative path for global resources.
 INSTALL_DIR="${HIVE_INSTALL_DIR:-$SKILL_DIR}"
 

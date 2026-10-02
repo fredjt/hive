@@ -43,26 +43,18 @@ def get_install_dir():
 
 @pytest.fixture()
 def tmp_project_dir(tmp_path):
-    """Create a temporary directory with a minimal .hive scaffold extracted.
+    """Create a temporary project directory.
     
-    Returns the project root (the parent of .hive/).
+    Projects now use installed scripts directly from HIVE_INSTALL_DIR;
+    no per-project .hive/ scaffold is needed.
+    
+    Returns the project root.
     """
     install_dir = get_install_dir()
     os.environ["HIVE_INSTALL_DIR"] = str(install_dir)
     
     project_root = tmp_path / "test-project"
     project_root.mkdir()
-    
-    extract_script = install_dir / "lib" / "tools" / "scaffold-extract.sh"
-    if extract_script.exists():
-        result = subprocess.run(
-            ["bash", str(extract_script), str(project_root)],
-            capture_output=True, text=True, timeout=30,
-            env={**os.environ, "HIVE_INSTALL_DIR": str(install_dir)},
-        )
-        assert result.returncode == 0, f"scaffold-extract failed: {result.stderr}"
-    else:
-        (project_root / ".hive").mkdir()
     
     return project_root
 

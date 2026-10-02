@@ -58,13 +58,8 @@ export SKILL_DIR="$HIVE_ROOT"
 
 echo "Initializing hive workspace at $PROJECT_ROOT" >&2
 
-# 1. Workspace + .gitignore (pre-seeds .hive too)
+# 1. Workspace + .gitignore
 bash "$TOOLS/init-workspace.sh" "$PROJECT_ROOT"
-
-# 1b. Extract the per-project scaffold into <project>/.hive/. From now on,
-# the launcher will resolve HIVE_ROOT to <project>/.hive/ for this project.
-INSTALL_DIR="${HIVE_INSTALL_DIR:-$HIVE_ROOT}"
-bash "$INSTALL_DIR/lib/tools/scaffold-extract.sh" "$PROJECT_ROOT" --install-dir "$INSTALL_DIR"
 
 # 2. Manifest
 bash "$TOOLS/init-manifest.sh" "$NAME" "$AUTO" --mode build >/dev/null

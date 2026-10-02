@@ -1,13 +1,10 @@
 """Subprocess helper for MCP tools that wrap bash scripts.
 
-Each MCP tool shells out to a script in <project>/.hive/lib/tools/ (per-project
-scaffold). This module centralizes script-path resolution, env handling,
-output parsing, and error mapping so tool modules stay tiny.
+Each MCP tool shells out to a script in $HIVE_ROOT/lib/tools/. This module
+centralizes script-path resolution, env handling, output parsing, and error
+mapping so tool modules stay tiny.
 
-Scaffold resolution order, per call:
-  1. company_dir argument → project_root → project_root/.hive/lib/tools
-  2. $HIVE_ROOT env var (set by bin/hive when project sentinel was found)
-  3. $HIVE_INSTALL_DIR/lib/tools (dev/legacy fallback)
+Scaffold resolution: HIVE_ROOT env var (set by bin/hive to the global install).
 """
 
 from __future__ import annotations
@@ -26,25 +23,8 @@ from typing import Any
 HIVE_INSTALL_DIR = Path(os.environ.get("HIVE_INSTALL_DIR",
                                        Path(__file__).resolve().parents[2]))
 
-# Default scaffold root if no per-call company_dir was supplied. Honors the
-# launcher's HIVE_ROOT, then falls back to the install dir (so direct-from-
-# source dev runs still work).
+# HIVE_ROOT is the global install — projects use installed scripts directly.
 HIVE_ROOT = Path(os.environ.get("HIVE_ROOT", HIVE_INSTALL_DIR))
-
-
-def _resolve_scaffold(company_dir: str | None) -> Path:
-    """Resolve the .hive/ scaffold root for this call.
-
-    company_dir wins because it lets a long-running MCP server serve multiple
-    projects: each tool call carries the project context. When omitted, fall
-    back to the env-set HIVE_ROOT, then to the install dir.
-    """
-    if company_dir:
-        project_root = Path(company_dir).resolve().parent
-        candidate = project_root / ".hive"
-        if candidate.is_dir() and (candidate / "lib" / "tools").is_dir():
-            return candidate
-    return HIVE_ROOT
 
 
 @dataclass
@@ -97,15 +77,14 @@ def run(
     if not script.endswith(".sh"):
         script = script + ".sh"
 
-    # Resolve COMPANY_DIR first so scaffold resolution can use it.
+    # Resolve COMPANY_DIR first so it's available for scripts.
     resolved_company_dir = company_dir
     if not resolved_company_dir:
         cand = Path.cwd() / ".company"
         if cand.is_dir():
             resolved_company_dir = str(cand)
 
-    scaffold = _resolve_scaffold(resolved_company_dir)
-    script_path = scaffold / "lib" / "tools" / script
+    script_path = HIVE_ROOT / "lib" / "tools" / script
     if not script_path.exists():
         return ShellResult(
             ok=False,
@@ -117,8 +96,8 @@ def run(
     full_env = os.environ.copy()
     if resolved_company_dir:
         full_env["COMPANY_DIR"] = str(resolved_company_dir)
-    full_env["SKILL_DIR"] = str(scaffold)
-    full_env["HIVE_ROOT"] = str(scaffold)
+    full_env["SKILL_DIR"] = str(HIVE_ROOT)
+    full_env["HIVE_ROOT"] = str(HIVE_ROOT)
     full_env["HIVE_INSTALL_DIR"] = str(HIVE_INSTALL_DIR)
     if env:
         full_env.update(env)
