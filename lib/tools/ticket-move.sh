@@ -171,7 +171,7 @@ fi
 #   - HIVE_SCRIPTED_MOVE=1 (system safety valves: loop-cap, retry-cap)
 #
 # This prevents agents from prematurely shipping tickets and is the primary
-# quality gate for the company skill. Operators who need to override the gate
+# quality gate for the sprint lifecycle. Operators who need to override the gate
 # should `mv` the ticket file by hand.
 if [ "$NEW_STATUS" = "done" ] && [ "$REASON" != "rejected" ] && [ "$HIVE_SCRIPTED_MOVE_ENV" != "1" ]; then
   TICKET_FILE_FOR_GATE=""

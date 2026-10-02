@@ -25,7 +25,7 @@ export SKILL_DIR
 
 if [ ! -d "$COMPANY_DIR" ]; then
   echo "Error: No .company directory found at $PROJECT_ROOT" >&2
-  echo "Run the company skill first to build the initial project." >&2
+  echo "Run 'hive init' then 'hive company start' to create the initial project." >&2
   exit 1
 fi
 
