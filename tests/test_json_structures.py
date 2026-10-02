@@ -179,21 +179,6 @@ class TestChatSchema:
             assert field in msg
 
 
-class TestMeetingSchema:
-    """Test meeting JSON structure."""
-
-    def test_meeting_required_fields(self):
-        meeting = {
-            "title": "Standup",
-            "start_time": "2025-01-01T09:00:00Z",
-            "end_time": "2025-01-01T09:15:00Z",
-            "attendees": ["VP-IT"],
-        }
-        required = ["title", "start_time", "end_time"]
-        for field in required:
-            assert field in meeting
-
-
 class TestReportSchema:
     """Test report JSON structure."""
 

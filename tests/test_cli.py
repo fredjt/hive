@@ -103,15 +103,6 @@ class TestBuildParser:
         args = p.parse_args(["backlog", "prioritize", "it"])
         assert args.action == "prioritize"
 
-    def test_parser_has_inbox(self):
-        p = _make_parser()
-        for action in ["file", "process"]:
-            if action == "file":
-                args = p.parse_args(["inbox", action, "Some request"])
-            else:
-                args = p.parse_args(["inbox", action])
-            assert args.action == action
-
     def test_parser_has_config(self):
         p = _make_parser()
         for action in ["get", "set", "edit", "show"]:

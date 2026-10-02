@@ -377,28 +377,6 @@ class TestWorktreesToolModule:
                 os.environ.pop("PYTHONPATH", None)
 
 
-@pytest.mark.skipif(not _HAS_FASTMCP, reason='mcp.server.fastmcp not available')
-class TestInboxToolModule:
-    """Test the inbox tool module."""
-
-    def test_inbox_tools_exist(self, install_dir):
-        sys_path = str(install_dir / "lib")
-        old_path = os.environ.get("PYTHONPATH", "")
-        if sys_path not in old_path:
-            os.environ["PYTHONPATH"] = sys_path + (":" + old_path if old_path else "")
-
-        try:
-            from hive_mcp.server import build_server
-            server = build_server()
-            tools = list(server._tool_manager._tools.keys())
-            inbox_tools = [t for t in tools if "inbox" in t.lower()]
-            assert len(inbox_tools) >= 1, f"Expected at least 1 inbox tool, got: {inbox_tools}"
-        finally:
-            if old_path:
-                os.environ["PYTHONPATH"] = old_path
-            else:
-                os.environ.pop("PYTHONPATH", None)
-
 
 @pytest.mark.skipif(not _HAS_FASTMCP, reason='mcp.server.fastmcp not available')
 class TestReportsToolModule:

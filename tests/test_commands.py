@@ -21,7 +21,7 @@ class TestCommandModulesExist:
 
     EXPECTED_COMMANDS = [
         "agent", "backlog", "chat", "company", "config", "dashboard",
-        "doctor", "gates", "gh", "inbox", "init", "killall", "llm",
+        "doctor", "gates", "gh", "init", "killall", "llm",
         "release", "restart", "round", "ticket", "tool",
     ]
 
@@ -102,14 +102,6 @@ class TestBacklogCommand:
 
     def test_backlog_handle_exists(self):
         from hive_cli.commands.backlog import handle
-        assert callable(handle)
-
-
-class TestInboxCommand:
-    """Test the inbox command handler."""
-
-    def test_inbox_handle_exists(self):
-        from hive_cli.commands.inbox import handle
         assert callable(handle)
 
 

@@ -79,8 +79,7 @@ touch "$LOCK"
 if [ -z "$LOG_TO" ]; then
   case "$KIND" in
     standup-brief|standup-synth) LOG_TO="$COMPANY_DIR/logs/standup.log" ;;
-    sprint-retro|sprint-planning|sprint-review)
-
+    sprint-retro|sprint-planning|sprint-review) LOG_TO="$COMPANY_DIR/logs/sprint-review.log" ;;
     verification)                LOG_TO="$COMPANY_DIR/logs/verification-${DEPT}.log" ;;
     ic-cycle)                    LOG_TO="$COMPANY_DIR/logs/ic-${TICKET:-$AGENT}.log" ;;
     *)                           LOG_TO="$COMPANY_DIR/logs/${AGENT}.log" ;;
