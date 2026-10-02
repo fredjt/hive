@@ -19,15 +19,10 @@ if [ ! -d "$PROJECT_ROOT" ]; then
   exit 1
 fi
 
-# Check if .company already exists
-if [ -d "$COMPANY_DIR" ]; then
-  echo "Warning: .company/ directory already exists at $COMPANY_DIR" >&2
-  echo "Skipping initialization (workspace already exists)" >&2
-  exit 0
+# Check if .company already exists — still create missing subdirs for idempotency
+if [ ! -d "$COMPANY_DIR" ]; then
+  echo "Creating .company/ workspace at $COMPANY_DIR..." >&2
 fi
-
-# Create directory structure
-echo "Creating .company/ workspace at $COMPANY_DIR..." >&2
 
 # Core directories
 mkdir -p "$COMPANY_DIR/departments/hr"
