@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
-# block-company-writes.sh — PreToolUse hook to forbid agents from clobbering
+# block-company-writes.sh — DEPRECATED. No longer installed by hive.
+# Kept for reference only. Formerly a PreToolUse hook to forbid agents from clobbering
 # .company/ via either direct file edits OR bash commands.
 #
-# Reads PreToolUse JSON from stdin. Blocks:
+# (Formerly read PreToolUse JSON from stdin.) Blocks:
 #
 #   1. Write / Edit / NotebookEdit on any path under .company/.
 #      Agents must use the script tools so live state changes go through

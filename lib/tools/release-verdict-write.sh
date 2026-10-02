@@ -8,10 +8,8 @@ set -uo pipefail
 #   NO-GO -> ceo-bugfix-plan (Loop B)
 #
 # This script exists because release-ic prompts told the agent to
-# `cat > "$VERIFY_LOG" <<EOF ... EOF`, but VERIFY_LOG lives under
-# .company/releases/ which the block-company-writes PreToolUse hook
-# blocks (correctly — direct shell redirects into .company are forbidden).
-# Without a script the release-ic literally cannot write its verdict.
+# `cat > "$VERIFY_LOG" <<EOF ... EOF`. VERIFY_LOG lives under
+# .company/releases/. This tool wraps the write operation.
 #
 # Usage:
 #   release-verdict-write.sh <GO|NO-GO> [--rationale "..."] [--blockers-stdin]

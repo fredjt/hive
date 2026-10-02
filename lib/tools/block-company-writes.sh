@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# block-company-writes.sh - PreToolUse hook to forbid Write/Edit on .company/ paths
+# block-company-writes.sh — DEPRECATED. No longer installed by hive.
+# Kept for reference only. Formerly a PreToolUse hook to forbid Write/Edit on .company/ paths
 #
-# Reads PreToolUse JSON from stdin. Blocks Write/Edit tool calls whose
+# (Formerly read PreToolUse JSON from stdin.) Blocks Write/Edit tool calls whose
 # file_path contains ".company/" anywhere in the path.
 #
 # Exit codes:

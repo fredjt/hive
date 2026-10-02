@@ -10,10 +10,8 @@ Exposed:
   release_status     — read current/historical release state
   release_history    — list recent published releases
   release_verdict    — release-ic writes its GO/NO-GO verdict here.
-                       (The verdict file lives under .company/releases/
-                       which the block-company-writes PreToolUse hook
-                       blocks for direct shell writes. This tool wraps
-                       release-verdict-write.sh.)
+                       (The verdict file lives under .company/releases/.
+                       This tool wraps release-verdict-write.sh.)
 """
 
 from __future__ import annotations

@@ -69,11 +69,8 @@ symlink" crash. Recovery options, in order of preference:
        rm $CDIR
        rsync -a fredt@tanchin.org:photonic-proc/.company/ $CDIR/
 
-After restoring, also verify the .gitignore lists '.company/' so future
-git operations don't re-create the loop. And install or re-install hive
-to get the PreToolUse hook that blocks this class of mutation:
-       jq '.hooks.PreToolUse' ~/.claude/settings.json | grep -q block-company-writes \\
-         || bash ~/.local/share/hive/packaging/install.sh --copy-to ~/.local/share/hive
+After restoring, verify the .gitignore lists '.company/' so future
+git operations don't re-create the loop.
 
 ========================================================================
 EOF
