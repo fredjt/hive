@@ -15,7 +15,11 @@ import pytest
 
 import pytest
 try:
-    from mcp.server.fastmcp import FastMCP
+    # mcp >= 2.0 renamed FastMCP to MCPServer; mcp 1.x has FastMCP.
+    try:
+        from mcp.server.mcpserver import MCPServer  # noqa: F401
+    except ImportError:
+        from mcp.server.fastmcp import FastMCP  # noqa: F401
     _HAS_FASTMCP = True
 except ImportError:
     _HAS_FASTMCP = False
@@ -67,13 +71,25 @@ class TestToolRegistration:
                 "ticket_create", "ticket_get", "ticket_list", "ticket_move",
                 "ticket_approve", "ticket_bounce", "ticket_reject",
                 "chat_send", "chat_read",
-                "agent_spawn_ceo", "agent_run_vp", "agent_verify",
+                "agent_spawn_ceo", "agent_run_vp",
                 "gates_run", "gates_check",
                 "status_get",
-                "round_status", "round_enqueue", "round_advance",
+                "round_get_current", "round_enqueue", "round_advance",
             ]
             for tool in expected_tools:
                 assert tool in tools, f"Expected tool '{tool}' not found. Available: {tools}"
+
+            # Intentionally REMOVED tools must stay removed:
+            #   - agent_verify: verification ICs are spawned by
+            #     sprint-lifecycle during the verify stage (see
+            #     lib/hive_mcp/tools/agents.py).
+            #   - company_start / company_stop: agents kept invoking them
+            #     mid-cycle (see lib/hive_cli/commands/company.py and
+            #     lib/dashboard/server.js).
+            for removed in ("agent_verify", "company_start", "company_stop"):
+                assert removed not in tools, (
+                    f"tool '{removed}' was intentionally removed but is registered again"
+                )
         finally:
             if old_path:
                 os.environ["PYTHONPATH"] = old_path
@@ -122,15 +138,22 @@ class TestTicketsToolModule:
     """Test the tickets tool module specifically."""
 
     def test_ticket_create_has_docstring(self, install_dir):
+        """ticket_create must register with a substantial description.
+
+        Tool functions are closures inside register(server), so inspect the
+        registered server rather than module attributes.
+        """
         sys_path = str(install_dir / "lib")
         old_path = os.environ.get("PYTHONPATH", "")
         if sys_path not in old_path:
             os.environ["PYTHONPATH"] = sys_path + (":" + old_path if old_path else "")
 
         try:
-            from hive_mcp.tools import tickets
-            assert tickets.ticket_create.__doc__ is not None
-            assert len(tickets.ticket_create.__doc__) > 50
+            from hive_mcp.server import build_server
+            server = build_server()
+            tool = server._tool_manager._tools["ticket_create"]
+            assert tool.description
+            assert len(tool.description) > 50
         finally:
             if old_path:
                 os.environ["PYTHONPATH"] = old_path
@@ -144,9 +167,11 @@ class TestTicketsToolModule:
             os.environ["PYTHONPATH"] = sys_path + (":" + old_path if old_path else "")
 
         try:
-            from hive_mcp.tools import tickets
-            assert tickets.ticket_approve.__doc__ is not None
-            assert "atomic" in tickets.ticket_approve.__doc__.lower()
+            from hive_mcp.server import build_server
+            server = build_server()
+            tool = server._tool_manager._tools["ticket_approve"]
+            assert tool.description
+            assert "atomic" in tool.description.lower()
         finally:
             if old_path:
                 os.environ["PYTHONPATH"] = old_path
@@ -167,7 +192,14 @@ class TestServerBuild:
         try:
             from hive_mcp.server import build_server
             server = build_server()
-            assert server._state is not None  # FastMCP has state
+            # Name is set at construction; instructions live on the server
+            # (mcp 2.x) or its internal MCP server (mcp 1.x).
+            assert server.name == "hive"
+            instructions = getattr(server, "instructions", None)
+            if instructions is None:
+                internal = getattr(server, "_mcp_server", None)
+                instructions = getattr(internal, "instructions", None) if internal else None
+            assert instructions, "server has no instructions"
         finally:
             if old_path:
                 os.environ["PYTHONPATH"] = old_path
@@ -270,7 +302,10 @@ class TestVerificationToolModule:
 class TestCompanyToolModule:
     """Test the company tool module."""
 
-    def test_company_start_exists(self, install_dir):
+    def test_company_start_stop_removed(self, install_dir):
+        """company_start/company_stop are intentionally removed: spawned
+        agents kept invoking them mid-cycle. company_status remains.
+        """
         sys_path = str(install_dir / "lib")
         old_path = os.environ.get("PYTHONPATH", "")
         if sys_path not in old_path:
@@ -280,7 +315,9 @@ class TestCompanyToolModule:
             from hive_mcp.server import build_server
             server = build_server()
             tools = list(server._tool_manager._tools.keys())
-            assert "company_start" in tools
+            assert "company_start" not in tools
+            assert "company_stop" not in tools
+            assert "company_status" in tools
         finally:
             if old_path:
                 os.environ["PYTHONPATH"] = old_path
@@ -415,8 +452,11 @@ class TestLLMTinyToolModule:
             from hive_mcp.server import build_server
             server = build_server()
             tools = list(server._tool_manager._tools.keys())
-            llm_tools = [t for t in tools if "llm" in t.lower()]
-            assert len(llm_tools) >= 1, f"Expected at least 1 llm tool, got: {llm_tools}"
+            # The small-model (llm-tiny) tools register under their
+            # functional names, not an llm_* prefix.
+            for tool in ("classify_ticket", "triage_test_failure",
+                         "narrate_status", "summarize_thread"):
+                assert tool in tools, f"Expected llm-tiny tool '{tool}' not found"
         finally:
             if old_path:
                 os.environ["PYTHONPATH"] = old_path
