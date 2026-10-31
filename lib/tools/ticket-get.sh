@@ -37,19 +37,19 @@ fi
 if [ "$JSON" = true ]; then
   cat "$FOUND"
 else
-  python3 -c "
-import json
-t = json.load(open('$FOUND'))
-print(f'Ticket: {t.get(\"id\",\"?\")}')
-print(f'Status: $FOUND_STATUS')
-print(f'Title: {t.get(\"title\",\"\")}')
-print(f'Type: {t.get(\"type\",\"\")}')
-print(f'Priority: {t.get(\"priority\",\"\")}')
+  TG_FOUND="$FOUND" TG_STATUS="$FOUND_STATUS" python3 - <<'PYEOF' 2>/dev/null
+import json, os
+t = json.load(open(os.environ['TG_FOUND']))
+print(f"Ticket: {t.get('id','?')}")
+print(f"Status: {os.environ['TG_STATUS']}")
+print(f"Title: {t.get('title','')}")
+print(f"Type: {t.get('type','')}")
+print(f"Priority: {t.get('priority','')}")
 a = t.get('assignee', {})
 name = a.get('name', 'Unassigned') if isinstance(a, dict) else str(a) if a else 'Unassigned'
 print(f'Assignee: {name}')
-print(f'Created: {t.get(\"created_at\",\"\")}')
-print(f'Updated: {t.get(\"updated_at\",\"\")}')
+print(f"Created: {t.get('created_at','')}")
+print(f"Updated: {t.get('updated_at','')}")
 print()
 print('Description:')
 print(t.get('description', '(none)'))
@@ -64,12 +64,12 @@ if comments:
     print()
     print(f'Comments ({len(comments)}):')
     for c in comments:
-        print(f'  [{c.get(\"timestamp\",\"\")}] {c.get(\"author\",\"\")}: {c.get(\"body\",\"\")}')
+        print(f"  [{c.get('timestamp','')}] {c.get('author','')}: {c.get('body','')}")
 r = t.get('resolution', {})
 if r and isinstance(r, dict) and r.get('status'):
     print()
-    print(f'Resolution: {r.get(\"status\",\"\")} by {r.get(\"resolved_by\",\"\")} at {r.get(\"resolved_at\",\"\")}')
-    if r.get('git_branch'): print(f'  Branch: {r[\"git_branch\"]}')
-    if r.get('commit'): print(f'  Commit: {r[\"commit\"]}')
-" 2>/dev/null
+    print(f"Resolution: {r.get('status','')} by {r.get('resolved_by','')} at {r.get('resolved_at','')}")
+    if r.get('git_branch'): print(f"  Branch: {r['git_branch']}")
+    if r.get('commit'): print(f"  Commit: {r['commit']}")
+PYEOF
 fi

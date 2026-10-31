@@ -19,22 +19,24 @@ mkdir -p "$(dirname "$CYCLE_FILE")"
 TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 KEY="${ROLE}_${DEPT}"
 
-python3 -c "
+# Env-var inputs + single-quoted heredoc (path/role/dept may contain
+# quotes or spaces that would break inline python interpolation)
+AC_CYCLE_FILE="$CYCLE_FILE" AC_KEY="$KEY" AC_ROLE="$ROLE" AC_DEPT="$DEPT" AC_TIMESTAMP="$TIMESTAMP" python3 - <<'PYEOF'
 import json, os
 
-f = '$CYCLE_FILE'
+f = os.environ['AC_CYCLE_FILE']
 data = {}
 if os.path.exists(f):
     try: data = json.load(open(f))
-    except: data = {}
+    except Exception: data = {}
 
-key = '$KEY'
+key = os.environ['AC_KEY']
 if key not in data:
-    data[key] = {'role': '$ROLE', 'department': '$DEPT', 'cycles': 0, 'first_seen': '$TIMESTAMP', 'last_seen': '$TIMESTAMP'}
+    data[key] = {'role': os.environ['AC_ROLE'], 'department': os.environ['AC_DEPT'], 'cycles': 0, 'first_seen': os.environ['AC_TIMESTAMP'], 'last_seen': os.environ['AC_TIMESTAMP']}
 
 data[key]['cycles'] += 1
-data[key]['last_seen'] = '$TIMESTAMP'
+data[key]['last_seen'] = os.environ['AC_TIMESTAMP']
 
 json.dump(data, open(f, 'w'), indent=2)
 print(data[key]['cycles'])
-"
+PYEOF

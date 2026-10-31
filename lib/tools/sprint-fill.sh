@@ -82,8 +82,10 @@ for dept_path in "$DEPT_DIR"/*/; do
   # Priority is normalized so ALL-CAPS / synonym values from older tickets
   # don't sink to the bottom — same vocabulary the dashboard knows.
   if [ -z "$tickets" ]; then
-    tickets=$(python3 -c "
-import json, glob
+    # Env-var inputs (ticket_dir/need) — inline interpolation would break
+    # on paths containing quotes or spaces.
+    tickets=$(SF_TICKET_DIR="$ticket_dir" SF_NEED="$need" python3 - <<'PYEOF' 2>/dev/null
+import json, glob, os
 
 PRIORITY_ORDER = {'critical': 0, 'high': 1, 'medium': 2, 'low': 3}
 SYNONYMS = {
@@ -96,8 +98,10 @@ def normalize(p):
     p = (p or 'low').lower()
     return SYNONYMS.get(p, p)
 
+ticket_dir = os.environ['SF_TICKET_DIR']
+need = int(os.environ['SF_NEED'])
 tickets = []
-for f in glob.glob('$ticket_dir/backlog/*.json'):
+for f in glob.glob(os.path.join(ticket_dir, 'backlog', '*.json')):
     try:
         t = json.load(open(f))
         pri = normalize(t.get('priority'))
@@ -108,9 +112,10 @@ for f in glob.glob('$ticket_dir/backlog/*.json'):
         pass
 
 tickets.sort()
-for _, _, tid, f in tickets[:$need]:
+for _, _, tid, f in tickets[:need]:
     print(tid)
-" 2>/dev/null)
+PYEOF
+)
   fi
 
   promoted=0
@@ -122,15 +127,15 @@ for _, _, tid, f in tickets[:$need]:
       continue
     fi
 
-    # Update status in JSON and move
-    python3 -c "
-import json
-t = json.load(open('$src'))
+    # Update status in JSON and move (env-var inputs)
+    SF_SRC="$src" SF_DST="$dst" python3 - <<'PYEOF' 2>/dev/null
+import json, os
+t = json.load(open(os.environ['SF_SRC']))
 t['status'] = 'sprint-current'
 from datetime import datetime, timezone
 t['updated_at'] = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
-json.dump(t, open('$dst', 'w'), indent=2)
-" 2>/dev/null
+json.dump(t, open(os.environ['SF_DST'], 'w'), indent=2)
+PYEOF
 
     if [ -f "$dst" ]; then
       rm "$src"

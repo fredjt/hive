@@ -54,14 +54,15 @@ if [ "$TYPE_LOWER" != "bug" ] && [ "$TYPE_LOWER" != "infrastructure" ]; then
   exit 1
 fi
 
-# Validate target department exists
+# Validate target department exists (env-var inputs; quotes/spaces in the
+# path or dept name would break inline python interpolation)
 if [ -f "$COMPANY_DIR/org-chart.json" ]; then
-  VALID_DEPT=$(python3 -c "
-import json, sys
+  VALID_DEPT=$(TE_OC_FILE="$COMPANY_DIR/org-chart.json" TE_TARGET="$TARGET_DEPT" python3 - <<'PYEOF' 2>/dev/null
+import json, os, sys
 try:
-    oc=json.load(open('$COMPANY_DIR/org-chart.json'))
+    oc=json.load(open(os.environ['TE_OC_FILE']))
     depts=list(oc.get('departments',{}).keys())
-    target = '$TARGET_DEPT'
+    target = os.environ['TE_TARGET']
 
     # Exact match
     if target in depts:
@@ -85,12 +86,18 @@ try:
 except Exception as e:
     print('', file=sys.stderr)
     print(f'Error: {e}', file=sys.stderr)
-" 2>/dev/null)
+PYEOF
+)
 
   if [ -z "$VALID_DEPT" ]; then
     echo "ERROR: Target department '$TARGET_DEPT' not found in org-chart.json" >&2
     echo "Valid departments:" >&2
-    python3 -c "import json; [print('  ' + d) for d in json.load(open('$COMPANY_DIR/org-chart.json')).get('departments',{}).keys()]" 2>/dev/null
+    TE_OC_FILE="$COMPANY_DIR/org-chart.json" python3 - <<'PYEOF' 2>/dev/null
+import json, os
+oc = json.load(open(os.environ['TE_OC_FILE']))
+for d in oc.get('departments', {}).keys():
+    print('  ' + d)
+PYEOF
     exit 1
   fi
 

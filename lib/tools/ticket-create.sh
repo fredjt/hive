@@ -126,15 +126,18 @@ mkdir -p "$TICKET_DIR/sprints/history"
 
 # Validate department exists in org-chart
 if [ -f "$COMPANY_DIR/org-chart.json" ]; then
-  VALID_DEPT=$(python3 -c "
-import json
-oc=json.load(open('$COMPANY_DIR/org-chart.json'))
-depts=list(oc.get('departments',{}).keys())
-if '$DEPT' in depts:
+  # Inputs via env vars + single-quoted heredoc so no character in the
+  # path or dept name (quote, space, backslash) can break the python.
+  VALID_DEPT=$(TC_OC_FILE="$COMPANY_DIR/org-chart.json" TC_DEPT="$DEPT" python3 - <<'PYEOF' 2>/dev/null
+import json, os
+oc = json.load(open(os.environ['TC_OC_FILE']))
+depts = list(oc.get('departments', {}).keys())
+dept = os.environ['TC_DEPT']
+if dept in depts:
     print('valid')
 else:
     # Try case-insensitive match first
-    dept_lower = '$DEPT'.lower()
+    dept_lower = dept.lower()
     for d in depts:
         if d.lower() == dept_lower:
             print(d)
@@ -145,12 +148,18 @@ else:
             print(d)
             exit(0)
     print('')
-" 2>/dev/null)
+PYEOF
+)
 
   if [ -z "$VALID_DEPT" ]; then
     echo "ERROR: Department '$DEPT' not found in org-chart.json" >&2
     echo "Valid departments:" >&2
-    python3 -c "import json; [print('  ' + d) for d in json.load(open('$COMPANY_DIR/org-chart.json')).get('departments',{}).keys()]" 2>/dev/null
+    TC_OC_FILE="$COMPANY_DIR/org-chart.json" python3 - <<'PYEOF' 2>/dev/null
+import json, os
+oc = json.load(open(os.environ['TC_OC_FILE']))
+for d in oc.get('departments', {}).keys():
+    print('  ' + d)
+PYEOF
     exit 1
   elif [ "$VALID_DEPT" != "valid" ]; then
     echo "CORRECTED: '$DEPT' -> '$VALID_DEPT'" >&2
@@ -160,22 +169,26 @@ else:
   fi
 fi
 
-# Check for duplicate title (skip if title already exists in any status)
-DUP=$(python3 -c "
+# Check for duplicate title (skip if title already exists in any status).
+# Title comes in via env var — the previous '''$TITLE''' form corrupted
+# backslashes and SyntaxError'd on triple quotes.
+DUP=$(TC_TICKET_DIR="$TICKET_DIR" TC_TITLE="$TITLE" python3 - <<'PYEOF' 2>/dev/null
 import json, os, glob
-title = '''$TITLE'''.strip().lower()
+ticket_dir = os.environ['TC_TICKET_DIR']
+title = os.environ['TC_TITLE'].strip().lower()
 for status in ['backlog','sprint-current','in-progress','in-review']:
-    d = '$TICKET_DIR/' + status
+    d = os.path.join(ticket_dir, status)
     if not os.path.isdir(d): continue
-    for f in glob.glob(d + '/*.json'):
+    for f in glob.glob(os.path.join(d, '*.json')):
         try:
             t = json.load(open(f))
             if t.get('title','').strip().lower() == title:
                 print(t.get('id',''))
                 exit(0)
-        except: pass
+        except Exception: pass
 print('')
-" 2>/dev/null)
+PYEOF
+)
 
 if [ -n "$DUP" ]; then
   echo "DUPLICATE: '$TITLE' already exists as $DUP" >&2
@@ -197,8 +210,18 @@ DEPT_PREFIX=$(echo "$DEPT" | tr '[:lower:]' '[:upper:]' | tr -d -c '[:upper:]' |
 # {prefix: "", next_id: 0}). .get(k, default) only fires when k is MISSING,
 # not when it has a falsy value, so we re-validate here.
 if [ -f "$COUNTER_FILE" ]; then
-  PREFIX=$(python3 -c "import json,sys; p=json.load(open('$COUNTER_FILE')).get('prefix') or ''; sys.stdout.write(p)")
-  NEXT_ID=$(python3 -c "import json,sys; n=json.load(open('$COUNTER_FILE')).get('next_id') or 0; sys.stdout.write(str(int(n)))")
+  PREFIX=$(TC_COUNTER_FILE="$COUNTER_FILE" python3 - <<'PYEOF' 2>/dev/null
+import json, os, sys
+c = json.load(open(os.environ['TC_COUNTER_FILE']))
+sys.stdout.write(c.get('prefix') or '')
+PYEOF
+)
+  NEXT_ID=$(TC_COUNTER_FILE="$COUNTER_FILE" python3 - <<'PYEOF' 2>/dev/null
+import json, os, sys
+c = json.load(open(os.environ['TC_COUNTER_FILE']))
+sys.stdout.write(str(int(c.get('next_id') or 0)))
+PYEOF
+)
 else
   PREFIX=""
   NEXT_ID=0
@@ -217,17 +240,19 @@ esac
 # off-by-one and ugly). If counter is corrupted, scan existing ticket
 # files in this dept and start at max(seen) + 1 so we don't collide.
 if [ -z "$NEXT_ID" ] || [ "$NEXT_ID" -lt 1 ] 2>/dev/null; then
-  NEXT_ID=$(python3 -c "
+  NEXT_ID=$(TC_TICKET_DIR="$TICKET_DIR" python3 - <<'PYEOF' 2>/dev/null
 import os, glob, re
 hi = 0
+ticket_dir = os.environ['TC_TICKET_DIR']
 for st in ['backlog','sprint-current','in-progress','in-review','done','archive']:
-    for f in glob.glob('$TICKET_DIR/' + st + '/*.json'):
+    for f in glob.glob(os.path.join(ticket_dir, st, '*.json')):
         m = re.search(r'-(\\d+)\\.json\$', os.path.basename(f))
         if m:
             try: hi = max(hi, int(m.group(1)))
-            except: pass
+            except Exception: pass
 print(hi + 1)
-" 2>/dev/null)
+PYEOF
+)
   [ -z "$NEXT_ID" ] && NEXT_ID=1
 fi
 
@@ -235,42 +260,73 @@ TICKET_ID="${PREFIX}-$(printf '%04d' $NEXT_ID)"
 NEW_NEXT=$((NEXT_ID + 1))
 TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 
-# Write updated counter
-python3 -c "
-import json
-counter = {'prefix': '$PREFIX', 'next_id': $NEW_NEXT}
-json.dump(counter, open('$COUNTER_FILE', 'w'), indent=2)
-"
+# Write updated counter (env-var inputs; see ticket-create header note)
+TC_PREFIX="$PREFIX" TC_NEW_NEXT="$NEW_NEXT" TC_COUNTER_FILE="$COUNTER_FILE" python3 - <<'PYEOF'
+import json, os
+counter = {'prefix': os.environ['TC_PREFIX'], 'next_id': int(os.environ['TC_NEW_NEXT'])}
+json.dump(counter, open(os.environ['TC_COUNTER_FILE'], 'w'), indent=2)
+PYEOF
 
-# Create ticket JSON
+# Create ticket JSON.
+# CRITICAL: user text ($TITLE/$DESC/$EXTERNAL_ID) comes in via environment
+# vars and the heredoc is single-quoted, so bash does NOT interpolate into
+# the python source. The previous '''$TITLE''' form corrupted backslashes
+# (C:\\temp\\new → 'C:<TAB>emp<NEWLINE>ew'), SyntaxError'd on titles with
+# quotes, and — because the counter above had already advanced — printed a
+# phantom ticket ID with exit 0 while writing no file at all.
 TICKET_FILE="$TICKET_DIR/backlog/$TICKET_ID.json"
-python3 -c "
-import json
+TC_TICKET_FILE="$TICKET_FILE" \
+TC_TICKET_ID="$TICKET_ID" \
+TC_TYPE="$TYPE" \
+TC_TITLE="$TITLE" \
+TC_DESC="$DESC" \
+TC_CREATED_BY="$CREATED_BY" \
+TC_DEPT="$DEPT" \
+TC_SOURCE="$SOURCE" \
+TC_PRIORITY="$PRIORITY" \
+TC_ESTIMATE="$ESTIMATE" \
+TC_TIMESTAMP="$TIMESTAMP" \
+TC_EXTERNAL_ID="$EXTERNAL_ID" \
+python3 - <<'PYEOF'
+import json, os
 ticket = {
-    'id': '$TICKET_ID',
-    'type': '$TYPE',
-    'title': '''$TITLE''',
-    'description': '''$DESC''',
-    'created_by': '$CREATED_BY',
-    'filed_by_department': '$DEPT',
-    'source': '$SOURCE',
-    'priority': '$PRIORITY',
+    'id': os.environ['TC_TICKET_ID'],
+    'type': os.environ['TC_TYPE'],
+    'title': os.environ['TC_TITLE'],
+    'description': os.environ['TC_DESC'],
+    'created_by': os.environ.get('TC_CREATED_BY', ''),
+    'filed_by_department': os.environ['TC_DEPT'],
+    'source': os.environ.get('TC_SOURCE', ''),
+    'priority': os.environ['TC_PRIORITY'],
     'status': 'backlog',
-    'target_department': '$DEPT',
+    'target_department': os.environ['TC_DEPT'],
     'assignee': {'role': 'unassigned', 'agent_id': '', 'name': 'Unassigned'},
     'sprint': None,
-    'estimate': '$ESTIMATE',
+    'estimate': os.environ['TC_ESTIMATE'],
     'dependencies': [],
     'blocked_by': [],
     'labels': [],
     'acceptance_criteria': [],
     'comments': [],
     'resolution': {'status': None, 'resolved_at': None, 'resolved_by': None, 'git_branch': None, 'commit': None, 'notes': None},
-    'created_at': '$TIMESTAMP',
-    'updated_at': '$TIMESTAMP',
-    'external_id': '''$EXTERNAL_ID''' or None,
+    'created_at': os.environ['TC_TIMESTAMP'],
+    'updated_at': os.environ['TC_TIMESTAMP'],
+    'external_id': os.environ['TC_EXTERNAL_ID'] or None,
 }
-json.dump(ticket, open('$TICKET_FILE', 'w'), indent=2)
-"
+json.dump(ticket, open(os.environ['TC_TICKET_FILE'], 'w'), indent=2)
+PYEOF
+
+# Guard: never report a ticket ID for a file that was not actually written.
+# The counter advanced above; roll it back and fail loudly instead of
+# printing a phantom ID with exit 0.
+if [ ! -f "$TICKET_FILE" ]; then
+  echo "ERROR: ticket $TICKET_ID was not written to $TICKET_FILE — rolling back counter." >&2
+  TC_PREFIX="$PREFIX" TC_NEXT_ID="$NEXT_ID" TC_COUNTER_FILE="$COUNTER_FILE" python3 - <<'PYEOF' 2>/dev/null
+import json, os
+counter = {'prefix': os.environ['TC_PREFIX'], 'next_id': int(os.environ['TC_NEXT_ID'])}
+json.dump(counter, open(os.environ['TC_COUNTER_FILE'], 'w'), indent=2)
+PYEOF
+  exit 1
+fi
 
 echo "$TICKET_ID"

@@ -54,30 +54,51 @@ fi
 mkdir -p "$TICKET_DIR/in-progress"
 DEST="$TICKET_DIR/in-progress/$TICKET_ID.json"
 
-# Update assignee, link git branch, move to in-progress
-python3 -c "
-import json
-ticket = json.load(open('$FOUND'))
-ticket['assignee'] = {'role': '$ROLE', 'agent_id': '$AGENT_ID', 'name': '''$AGENT_NAME'''}
+# Update assignee, link git branch, move to in-progress.
+# CRITICAL: inputs come in via environment vars and the heredoc is
+# single-quoted, so bash does NOT interpolate into the python source. Any
+# character in $AGENT_NAME / $ROLE / $AGENT_ID / paths (quote, backslash,
+# newline) is safe. The previous form interpolated '''$AGENT_NAME''' inline
+# — a quote in the name raised SyntaxError, and because the script never
+# checked python's exit status, the unconditional rm below then DELETED
+# the ticket while still reporting success.
+TC_FOUND="$FOUND" \
+TC_DEST="$DEST" \
+TC_ROLE="$ROLE" \
+TC_AGENT_ID="$AGENT_ID" \
+TC_AGENT_NAME="$AGENT_NAME" \
+TC_TIMESTAMP="$TIMESTAMP" \
+TC_GIT_BRANCH="$GIT_BRANCH" \
+TC_WORKTREE_PATH="${WORKTREE_PATH:-}" \
+python3 - <<'PYEOF'
+import json, os
+FOUND        = os.environ['TC_FOUND']
+DEST         = os.environ['TC_DEST']
+ROLE         = os.environ['TC_ROLE']
+AGENT_ID     = os.environ.get('TC_AGENT_ID', '')
+AGENT_NAME   = os.environ['TC_AGENT_NAME']
+TIMESTAMP    = os.environ['TC_TIMESTAMP']
+GIT_BRANCH   = os.environ.get('TC_GIT_BRANCH', '')
+WORKTREE     = os.environ.get('TC_WORKTREE_PATH', '')
+
+ticket = json.load(open(FOUND))
+ticket['assignee'] = {'role': ROLE, 'agent_id': AGENT_ID, 'name': AGENT_NAME}
 ticket['status'] = 'in-progress'
-ticket['updated_at'] = '$TIMESTAMP'
+ticket['updated_at'] = TIMESTAMP
 
 # Link git branch at claim time
 if not ticket.get('resolution') or ticket['resolution'] is None:
     ticket['resolution'] = {}
-git_branch = '$GIT_BRANCH'
-worktree = '$WORKTREE_PATH'
-if git_branch:
-    ticket['resolution']['git_branch'] = git_branch
-if worktree:
-    ticket['resolution']['worktree'] = worktree
-ticket['resolution']['started_at'] = '$TIMESTAMP'
+if GIT_BRANCH:
+    ticket['resolution']['git_branch'] = GIT_BRANCH
+if WORKTREE:
+    ticket['resolution']['worktree'] = WORKTREE
+ticket['resolution']['started_at'] = TIMESTAMP
 
 # Merge comments from destination if it exists (prevents comment loss)
-import os
-if os.path.exists('$DEST') and '$FOUND' != '$DEST':
+if os.path.exists(DEST) and DEST != FOUND:
     try:
-        existing = json.load(open('$DEST'))
+        existing = json.load(open(DEST))
         existing_comments = existing.get('comments') or []
         current_comments = ticket.get('comments') or []
         seen = set()
@@ -89,12 +110,17 @@ if os.path.exists('$DEST') and '$FOUND' != '$DEST':
                 merged.append(c)
         merged.sort(key=lambda x: x.get('timestamp',''))
         ticket['comments'] = merged
-    except: pass
+    except Exception: pass
 
-json.dump(ticket, open('$DEST', 'w'), indent=2)
-"
+json.dump(ticket, open(DEST, 'w'), indent=2)
+PYEOF
 
-# Remove from old location
+# Guard: a python failure above must never delete the ticket. Only remove
+# the source file if the destination file was actually written.
+if [ ! -f "$DEST" ]; then
+  echo "ERROR: claim failed for $TICKET_ID — destination $DEST was not written; source ticket left in place." >&2
+  exit 1
+fi
 if [ "$FOUND" != "$DEST" ] && [ -f "$FOUND" ]; then
   rm "$FOUND"
 fi

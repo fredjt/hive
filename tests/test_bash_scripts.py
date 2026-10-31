@@ -73,6 +73,63 @@ class TestTicketCreateScript:
         # Should output a ticket ID
         assert len(result.stdout.strip()) > 0
 
+    def test_ticket_create_backslash_in_description_stored_verbatim(self, tmp_company_dir):
+        """Backslashes in title/description must be stored byte-for-byte.
+
+        Regression: ticket-create.sh interpolated $TITLE/$DESC into a
+        python3 -c "'''...'''" literal, so Python interpreted backslash
+        escapes (C:\\temp\\new became 'C:<TAB>emp<NEWLINE>ew') — silent data
+        corruption for any path/regex in a ticket body.
+        """
+        env = {"COMPANY_DIR": str(tmp_company_dir)}
+        desc = r"Fix the C:\temp\new path and the \t tab"
+        title = r"Regex [a-z]+ must survive"
+        result = run_script(
+            f"{SCRIPTS_DIR}/ticket-create.sh",
+            ["it", "bug", "high", title, desc, "test", "qa-finding"],
+            env=env,
+        )
+        assert result.returncode == 0, result.stderr
+        ticket_id = result.stdout.strip()
+        ticket_file = (tmp_company_dir / "departments" / "it" / "tickets" / "backlog" / f"{ticket_id}.json")
+        assert ticket_file.exists(), f"ticket file {ticket_file} was not created"
+        data = json.loads(ticket_file.read_text())
+        assert data["title"] == title, f"title corrupted: {data['title']!r} != {title!r}"
+        assert data["description"] == desc, f"description corrupted: {data['description']!r} != {desc!r}"
+
+    def test_ticket_create_title_with_quotes_creates_matching_ticket(self, tmp_company_dir):
+        """Titles containing single quotes (incl. ''') must not crash the
+        JSON writer or desync the counter.
+
+        Regression: '''$TITLE''' interpolation produced a SyntaxError for
+        quotes; the counter was already incremented, the ticket file was
+        never written, and the script printed a phantom ticket ID with
+        exit 0.
+        """
+        env = {"COMPANY_DIR": str(tmp_company_dir)}
+        title = "It's done' and '''quoted'''"
+        result = run_script(
+            f"{SCRIPTS_DIR}/ticket-create.sh",
+            ["it", "bug", "high", title, "quote test", "test", "qa-finding"],
+            env=env,
+        )
+        assert result.returncode == 0, result.stderr
+        assert "SyntaxError" not in result.stderr
+        ticket_id = result.stdout.strip()
+        assert ticket_id, "expected a ticket ID on stdout"
+        ticket_file = (tmp_company_dir / "departments" / "it" / "tickets" / "backlog" / f"{ticket_id}.json")
+        assert ticket_file.exists(), (
+            f"phantom ticket ID {ticket_id!r} printed but no ticket file exists"
+        )
+        data = json.loads(ticket_file.read_text())
+        assert data["title"] == title
+        # Counter must be consistent with the file we just created.
+        counter = json.loads((tmp_company_dir / "departments" / "it" / "tickets" / "counter.json").read_text())
+        seq = int(ticket_id.rsplit("-", 1)[1])
+        assert counter["next_id"] == seq + 1, (
+            f"counter next_id={counter['next_id']} out of sync with ticket {ticket_id}"
+        )
+
 
 class TestTicketGetScript:
     """Test ticket-get.sh."""
@@ -81,6 +138,130 @@ class TestTicketGetScript:
         result = run_script(f"{SCRIPTS_DIR}/ticket-get.sh")
         assert result.returncode != 0
         assert "Usage" in result.stderr or "usage" in result.stderr.lower()
+
+
+class TestTicketClaimScript:
+    """Test ticket-claim.sh."""
+
+    def test_ticket_claim_no_args_shows_usage(self):
+        result = run_script(f"{SCRIPTS_DIR}/ticket-claim.sh")
+        assert result.returncode != 0
+        assert "Usage" in result.stderr or "usage" in result.stderr.lower()
+
+    def _create_ticket(self, company_dir, env):
+        """Helper: create a ticket and return its ID."""
+        result = run_script(
+            f"{SCRIPTS_DIR}/ticket-create.sh",
+            ["it", "feature", "medium", "Claim me", "A claimable ticket"],
+            env=env,
+        )
+        assert result.returncode == 0, result.stderr
+        return result.stdout.strip()
+
+    def test_ticket_claim_agent_name_with_quotes_does_not_delete_ticket(self, tmp_company_dir):
+        """An agent name containing single quotes must not delete the ticket.
+
+        Regression: ticket-claim.sh interpolated '''$AGENT_NAME''' into a
+        python3 -c string. A name ending in a quote (or containing ''')
+        caused a SyntaxError; the script did not check python's exit
+        status, so the unconditional 'rm "$FOUND"' still ran and DELETED
+        the ticket — while reporting success.
+        """
+        env = {"COMPANY_DIR": str(tmp_company_dir)}
+        ticket_id = self._create_ticket(tmp_company_dir, env)
+        agent_name = "IC-Engineer (it/IT-0001) 'lead'"
+        result = run_script(
+            f"{SCRIPTS_DIR}/ticket-claim.sh",
+            ["it", ticket_id, "IC-Engineer", "ic-it-0001", agent_name],
+            env=env,
+        )
+        assert "SyntaxError" not in result.stderr, result.stderr
+        ticket_dir = tmp_company_dir / "departments" / "it" / "tickets"
+        claimed = ticket_dir / "in-progress" / f"{ticket_id}.json"
+        assert claimed.exists(), (
+            f"ticket {ticket_id} missing after claim (deleted? in-progress={claimed.exists()}, "
+            f"backlog={(ticket_dir / 'backlog' / f'{ticket_id}.json').exists()})"
+        )
+        data = json.loads(claimed.read_text())
+        assert data["assignee"]["name"] == agent_name
+        assert data["status"] == "in-progress"
+        assert not (ticket_dir / "backlog" / f"{ticket_id}.json").exists()
+
+    def test_ticket_claim_backslash_in_agent_name_stored_verbatim(self, tmp_company_dir):
+        """Backslashes in the agent name must be stored verbatim."""
+        env = {"COMPANY_DIR": str(tmp_company_dir)}
+        ticket_id = self._create_ticket(tmp_company_dir, env)
+        agent_name = r"IC-Engineer C:\work\agent-1"
+        result = run_script(
+            f"{SCRIPTS_DIR}/ticket-claim.sh",
+            ["it", ticket_id, "IC-Engineer", "ic-it-0001", agent_name],
+            env=env,
+        )
+        assert "SyntaxError" not in result.stderr, result.stderr
+        claimed = tmp_company_dir / "departments" / "it" / "tickets" / "in-progress" / f"{ticket_id}.json"
+        assert claimed.exists(), "ticket missing after claim"
+        data = json.loads(claimed.read_text())
+        assert data["assignee"]["name"] == agent_name, (
+            f"agent name corrupted: {data['assignee']['name']!r} != {agent_name!r}"
+        )
+
+
+class TestQuotedProjectPaths:
+    """Scripts must work when the project path contains a single quote.
+
+    Regression: the scripts interpolated paths into python3 -c "..." source
+    (open('$FOUND'), glob('$TICKET_DIR/...'), etc.). A path like
+    /home/u/O'Brien-proj/.company closed the Python string literal early,
+    raising SyntaxError; with stderr discarded (2>/dev/null) every read
+    silently returned nothing and every write silently lost data.
+    """
+
+    @pytest.fixture()
+    def quoted_company_dir(self, tmp_path):
+        company = tmp_path / "O'Brien-proj .company"
+        company.mkdir()
+        (company / "org-chart.json").write_text(json.dumps(
+            {"departments": {"it": {"name": "IT"}, "rd": {"name": "R&D"}}}, indent=2))
+        (company / "manifest.json").write_text(json.dumps(
+            {"project_name": "quoted", "mode": "build"}))
+        return company
+
+    def test_ticket_create_list_get_roundtrip(self, quoted_company_dir):
+        env = {"COMPANY_DIR": str(quoted_company_dir)}
+        r = run_script(
+            f"{SCRIPTS_DIR}/ticket-create.sh",
+            ["it", "feature", "medium", "Path safety", "desc"], env=env,
+        )
+        assert r.returncode == 0, r.stderr
+        ticket_id = r.stdout.strip()
+
+        r = run_script(f"{SCRIPTS_DIR}/ticket-list.sh", ["it", "--json"], env=env)
+        assert r.returncode == 0, r.stderr
+        data = json.loads(r.stdout)
+        assert data["count"] == 1, f"expected 1 ticket in list, got: {r.stdout[:200]}"
+        assert data["tickets"][0]["id"] == ticket_id
+
+        r = run_script(f"{SCRIPTS_DIR}/ticket-get.sh", ["it", ticket_id], env=env)
+        assert r.returncode == 0, r.stderr
+        assert "Path safety" in r.stdout, (
+            f"ticket-get returned nothing for quoted path; stderr: {r.stderr[:200]}"
+        )
+
+    def test_chat_read_json(self, quoted_company_dir):
+        env = {"COMPANY_DIR": str(quoted_company_dir)}
+        chat_dir = quoted_company_dir / "chat"
+        chat_dir.mkdir()
+        (chat_dir / "general.md").write_text(
+            "# Channel: general\n\n"
+            "---\n"
+            "**[2026-01-01T00:00:00Z] VP-IT (it)**\n"
+            "Hello world\n"
+        )
+        r = run_script(f"{SCRIPTS_DIR}/chat-read.sh", ["general", "--json"], env=env)
+        assert r.returncode == 0, r.stderr
+        data = json.loads(r.stdout)
+        assert data["count"] == 1, f"expected 1 message, got: {r.stdout[:200]}"
+        assert data["messages"][0]["message"] == "Hello world"
 
 
 class TestTicketListScript:

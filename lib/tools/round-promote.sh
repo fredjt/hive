@@ -89,13 +89,13 @@ else
     RID=$(jq -r '.round_id // empty' "$CURRENT" 2>/dev/null)
     if [ -n "$RID" ] && [ "$RID" != "null" ]; then
       NOW="$(ts)"
-      NOW="$NOW" python3 -c "
+      RP_CURRENT="$CURRENT" NOW="$NOW" python3 - <<'PYEOF' 2>/dev/null || true
 import json, os
-f = '$CURRENT'
+f = os.environ['RP_CURRENT']
 d = json.load(open(f))
 d['ended_at'] = os.environ['NOW']
 json.dump(d, open(f, 'w'), indent=2)
-" 2>/dev/null || true
+PYEOF
       mv "$CURRENT" "$ROUNDS_DIR/history/${RID}.json"
       log "archived $RID (sprint boundary or first boot)"
     else

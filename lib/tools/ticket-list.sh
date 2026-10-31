@@ -47,9 +47,12 @@ else
 fi
 
 if [ "$JSON" = true ]; then
-  FULL_VAR="$FULL" python3 -c "
+  FULL_VAR="$FULL" TL_DEPT="$DEPT" TL_STATUSES="$STATUSES" TL_TICKET_DIR="$TICKET_DIR" python3 - <<'PYEOF'
 import json, os, glob
 full = os.environ.get('FULL_VAR') == 'true'
+DEPT = os.environ.get('TL_DEPT', '')
+STATUSES = os.environ.get('TL_STATUSES', '')
+TICKET_DIR = os.environ.get('TL_TICKET_DIR', '')
 
 def summarize(t):
     a = t.get('assignee') or {}
@@ -73,21 +76,21 @@ def summarize(t):
     }
 
 tickets = []
-for status in '$STATUSES'.split():
-    d = '$TICKET_DIR/' + status
+for status in STATUSES.split():
+    d = os.path.join(TICKET_DIR, status)
     if not os.path.isdir(d):
         continue
-    for f in sorted(glob.glob(d + '/*.json')):
+    for f in sorted(glob.glob(os.path.join(d, '*.json'))):
         try:
             t = json.load(open(f))
             t['_status_dir'] = status
             t['_file'] = f
             tickets.append(t if full else summarize(t))
-        except:
+        except Exception:
             pass
 
-print(json.dumps({'department': '$DEPT', 'count': len(tickets), 'tickets': tickets, 'mode': 'full' if full else 'summary'}, indent=2))
-"
+print(json.dumps({'department': DEPT, 'count': len(tickets), 'tickets': tickets, 'mode': 'full' if full else 'summary'}, indent=2))
+PYEOF
 else
   for status in $STATUSES; do
     dir="$TICKET_DIR/$status"
@@ -97,14 +100,14 @@ else
     echo "=== $status ($count) ==="
     for f in "$dir"/*.json; do
       [ -f "$f" ] || continue
-      python3 -c "
-import json
-t = json.load(open('$f'))
+      TL_FILE="$f" python3 - <<'PYEOF' 2>/dev/null
+import json, os
+t = json.load(open(os.environ['TL_FILE']))
 pri = t.get('priority','?')
 assignee = t.get('assignee',{})
 name = assignee.get('name','Unassigned') if isinstance(assignee,dict) else str(assignee) if assignee else 'Unassigned'
-print(f\"  {t.get('id','?'):15s} [{pri:8s}] {t.get('title','')[:60]:60s} -> {name}\")
-" 2>/dev/null
+print(f"  {t.get('id','?'):15s} [{pri:8s}] {t.get('title','')[:60]:60s} -> {name}")
+PYEOF
     done
   done
 fi

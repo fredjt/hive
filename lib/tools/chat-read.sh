@@ -37,11 +37,12 @@ if [ ! -f "$CHAT_FILE" ]; then
 fi
 
 if [ "$JSON" = true ]; then
-  # Parse messages into JSON
-  python3 -c "
-import sys, json, re
+  # Parse messages into JSON (env-var inputs; path/channel/last/since all
+  # come from the environment so quotes or spaces in any of them are safe)
+  CR_CHAT_FILE="$CHAT_FILE" CR_CHANNEL="$CHANNEL" CR_LAST="$LAST" CR_SINCE="$SINCE" python3 - <<'PYEOF'
+import sys, json, re, os
 
-content = open('$CHAT_FILE').read()
+content = open(os.environ['CR_CHAT_FILE']).read()
 blocks = content.split('\n---\n')
 messages = []
 for block in blocks:
@@ -59,32 +60,36 @@ for block in blocks:
     else:
         messages.append({'timestamp': '', 'role': 'system', 'department': '', 'message': block})
 
-last = int('$LAST') if '$LAST' else None
-since = '$SINCE' if '$SINCE' else None
+last_raw = os.environ.get('CR_LAST', '')
+since_raw = os.environ.get('CR_SINCE', '')
+last = int(last_raw) if last_raw else None
+since = since_raw if since_raw else None
 
 if since:
     messages = [m for m in messages if m['timestamp'] >= since]
 if last:
     messages = messages[-last:]
 
-json.dump({'channel': '$CHANNEL', 'count': len(messages), 'messages': messages}, sys.stdout, indent=2)
+json.dump({'channel': os.environ.get('CR_CHANNEL', ''), 'count': len(messages), 'messages': messages}, sys.stdout, indent=2)
 print()
-"
+PYEOF
 else
   # Plain text output
   if [ -n "$LAST" ]; then
     # Split by --- and get last N messages
     awk 'BEGIN{RS="---"; ORS="---"} {a[NR]=$0} END{start=NR-'$LAST'; if(start<1)start=1; for(i=start;i<=NR;i++) print a[i]}' "$CHAT_FILE"
   elif [ -n "$SINCE" ]; then
-    # Show messages since timestamp
-    python3 -c "
-content = open('$CHAT_FILE').read()
+    # Show messages since timestamp (env-var inputs)
+    CR_CHAT_FILE="$CHAT_FILE" CR_SINCE="$SINCE" python3 - <<'PYEOF'
+import os
+content = open(os.environ['CR_CHAT_FILE']).read()
+since = os.environ.get('CR_SINCE', '')
 blocks = content.split('\n---\n')
 for block in blocks:
-    if '$SINCE' in block or any(line for line in block.split('\n') if '**[' in line and line.split('[')[1].split(']')[0] >= '$SINCE'):
+    if since in block or any(line for line in block.split('\n') if '**[' in line and line.split('[')[1].split(']')[0] >= since):
         print('---')
         print(block.strip())
-"
+PYEOF
   else
     cat "$CHAT_FILE"
   fi
