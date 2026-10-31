@@ -206,6 +206,54 @@ class TestTicketClaimScript:
         )
 
 
+class TestReleaseGatesDryRun:
+    """release-gates.sh --dry-run must not run the heavy gates or write files.
+
+    Regression: DRY_RUN was parsed from the flag but never referenced, so
+    --dry-run still executed the project's full test suite, lint, and
+    security audit and still wrote .company/releases/<v>-gates.json.
+    """
+
+    def _make_project(self, tmp_path):
+        proj = tmp_path / "relproj"
+        proj.mkdir()
+        (proj / "pytest.ini").write_text("[pytest]\n")
+        # conftest is imported when pytest starts: its existence proves the
+        # tests gate actually executed the project test suite.
+        (proj / "conftest.py").write_text(
+            "from pathlib import Path\n"
+            "Path(__file__).with_name('tests-ran.marker').write_text('ran')\n"
+        )
+        subprocess.run(["git", "init", "-q"], cwd=proj, check=True)
+        return proj, proj / "tests-ran.marker"
+
+    def test_dry_run_skips_heavy_gates_and_report(self, tmp_path):
+        proj, marker = self._make_project(tmp_path)
+        result = run_script(
+            f"{SCRIPTS_DIR}/release-gates.sh",
+            ["--version", "v9.9.9", "--project-root", str(proj), "--dry-run"],
+            timeout=120,
+        )
+        # Cheap read-only gates still ran
+        assert "semver" in result.stderr, result.stderr
+        assert not marker.exists(), "--dry-run executed the project test suite"
+        report = proj / ".company" / "releases" / "v9.9.9-gates.json"
+        assert not report.exists(), "--dry-run wrote a report file"
+
+    def test_real_run_executes_tests_and_writes_report(self, tmp_path):
+        proj, marker = self._make_project(tmp_path)
+        run_script(
+            f"{SCRIPTS_DIR}/release-gates.sh",
+            ["--version", "v9.9.9", "--project-root", str(proj)],
+            timeout=300,
+        )
+        assert marker.exists(), "tests gate did not run the project test suite"
+        report = proj / ".company" / "releases" / "v9.9.9-gates.json"
+        assert report.exists(), "no report written on a real run"
+        data = json.loads(report.read_text())
+        assert data["version"] == "v9.9.9"
+
+
 class TestQuotedProjectPaths:
     """Scripts must work when the project path contains a single quote.
 

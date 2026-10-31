@@ -8,6 +8,11 @@ set -uo pipefail
 # Usage: release-gates.sh --version vX.Y.Z [--project-root <path>] [--dry-run]
 # Exits 0 if all required gates pass; non-zero with a summary on stderr otherwise.
 # Writes a per-release report to .company/releases/<version>-gates.json.
+#
+# --dry-run: run only the cheap read-only gates (semver, changelog,
+# all-tickets-done, local main-clean). Skips the heavy/side-effecting
+# gates (project test suite, lint, security audit, remote comparisons)
+# and does NOT write the report file.
 
 VERSION=""
 PROJECT_ROOT="${PROJECT_ROOT:-$PWD}"
@@ -25,7 +30,6 @@ done
 PROJECT_ROOT="$(cd "$PROJECT_ROOT" 2>/dev/null && pwd)" || { echo "bad project root" >&2; exit 2; }
 SKILL_DIR="${HIVE_ROOT:-$(cd "$(dirname "$0")/../.." && pwd)}"
 COMPANY_DIR="$PROJECT_ROOT/.company"
-mkdir -p "$COMPANY_DIR/releases"
 REPORT="$COMPANY_DIR/releases/${VERSION}-gates.json"
 
 . "$SKILL_DIR/lib/tools/gh-helpers.sh" 2>/dev/null || true
@@ -61,7 +65,9 @@ status_porcelain=$(git -C "$PROJECT_ROOT" status --porcelain 2>/dev/null)
 if [ -n "$status_porcelain" ]; then
   record "main-clean" "fail" "uncommitted changes in working tree ($(echo "$status_porcelain" | wc -l) lines)"
 else
-  if gh_remote_ok; then
+  if [ "$DRY_RUN" -eq 1 ]; then
+    record "main-clean" "pass" "working tree clean (dry-run: remote comparison skipped)"
+  elif gh_remote_ok; then
     git fetch -q origin main 2>/dev/null || true
     ahead=$(git rev-list --count origin/main..main 2>/dev/null || echo 0)
     behind=$(git rev-list --count main..origin/main 2>/dev/null || echo 0)
@@ -110,7 +116,9 @@ else
 fi
 
 # Gate: ci-green-on-main — last CI run on main was success
-if gh_preflight 2>/dev/null; then
+if [ "$DRY_RUN" -eq 1 ]; then
+  record "ci-green-on-main" "skip" "dry-run"
+elif gh_preflight 2>/dev/null; then
   conc=$(gh run list --branch main --limit 1 --json conclusion -q '.[0].conclusion' 2>/dev/null)
   if [ -z "$conc" ]; then
     record "ci-green-on-main" "skip" "no CI runs on main yet"
@@ -131,7 +139,9 @@ elif [ -f Cargo.toml ]; then TEST_CMD="cargo test --quiet"
 elif [ -f go.mod ]; then TEST_CMD="go test ./..."
 fi
 if [ -n "$TEST_CMD" ]; then
-  if eval "$TEST_CMD" >/tmp/release-gates-tests.log 2>&1; then
+  if [ "$DRY_RUN" -eq 1 ]; then
+    record "tests" "skip" "dry-run (would run: $TEST_CMD)"
+  elif eval "$TEST_CMD" >/tmp/release-gates-tests.log 2>&1; then
     record "tests" "pass" "$TEST_CMD"
   else
     record "tests" "fail" "$TEST_CMD failed (see /tmp/release-gates-tests.log)"
@@ -148,7 +158,9 @@ elif [ -f Cargo.toml ]; then LINT_CMD="cargo clippy --quiet -- -D warnings"
 elif [ -f go.mod ]; then LINT_CMD="go vet ./..."
 fi
 if [ -n "$LINT_CMD" ]; then
-  if eval "$LINT_CMD" >/tmp/release-gates-lint.log 2>&1; then
+  if [ "$DRY_RUN" -eq 1 ]; then
+    record "lint" "skip" "dry-run (would run: $LINT_CMD)"
+  elif eval "$LINT_CMD" >/tmp/release-gates-lint.log 2>&1; then
     record "lint" "pass" "$LINT_CMD"
   else
     record "lint" "fail" "$LINT_CMD failed (see /tmp/release-gates-lint.log)"
@@ -164,7 +176,9 @@ elif [ -f pyproject.toml ] && command -v pip-audit >/dev/null 2>&1; then SEC_CMD
 elif [ -f Cargo.toml ] && command -v cargo-audit >/dev/null 2>&1; then SEC_CMD="cargo audit --quiet"
 fi
 if [ -n "$SEC_CMD" ]; then
-  if eval "$SEC_CMD" >/tmp/release-gates-sec.log 2>&1; then
+  if [ "$DRY_RUN" -eq 1 ]; then
+    record "security" "skip" "dry-run (would run: $SEC_CMD)"
+  elif eval "$SEC_CMD" >/tmp/release-gates-sec.log 2>&1; then
     record "security" "pass" "$SEC_CMD"
   else
     record "security" "fail" "$SEC_CMD found issues (see /tmp/release-gates-sec.log)"
@@ -173,8 +187,12 @@ else
   record "security" "skip" "no detected security auditor"
 fi
 
-# Write the report
-{
+# Write the report (a dry-run has no side effects, so skip the file)
+if [ "$DRY_RUN" -eq 1 ]; then
+  echo "release-gates (dry-run): no report written. pass=$PASS fail=$FAIL skip=$SKIP"
+else
+  mkdir -p "$COMPANY_DIR/releases"
+  {
   echo "{"
   echo "  \"version\":   \"$VERSION\","
   echo "  \"timestamp\": \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\","
@@ -190,11 +208,11 @@ fi
   echo
   echo "  }"
   echo "}"
-} > "$REPORT"
-
-echo
-echo "release-gates report: $REPORT"
-echo "  pass=$PASS  fail=$FAIL  skip=$SKIP"
+  } > "$REPORT"
+  echo
+  echo "release-gates report: $REPORT"
+  echo "  pass=$PASS  fail=$FAIL  skip=$SKIP"
+fi
 
 if [ "$FAIL" -gt 0 ]; then
   echo "release-gates: $FAIL gate(s) failed — release blocked." >&2
