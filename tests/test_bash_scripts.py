@@ -312,6 +312,33 @@ class TestQuotedProjectPaths:
         assert data["messages"][0]["message"] == "Hello world"
 
 
+class TestCompanyStopScript:
+    """Test company-stop.sh."""
+
+    def test_company_stop_marks_processes_json_stopped(self, tmp_path):
+        """Regression: company-stop.sh interpolated $COMPANY_DIR into
+        python3 -c "..." source. With an apostrophe in the project path the
+        JSON-update block raised SyntaxError (stderr discarded via
+        2>/dev/null), so processes.json was never marked stopped even
+        though the script reported success."""
+        proj = tmp_path / "O'Co"
+        company = proj / ".company"
+        (company / "logs").mkdir(parents=True)
+        (company / "processes.json").write_text(json.dumps({
+            "started_at": "2026-01-01T00:00:00Z",
+            "project_root": str(proj),
+            "processes": [
+                {"pid": 999999, "role": "company-health",
+                 "department": "infrastructure", "interval": "30s"},
+            ],
+        }))
+        result = run_script(f"{SCRIPTS_DIR}/company-stop.sh", [str(proj)], timeout=60)
+        assert result.returncode == 0, result.stderr
+        data = json.loads((company / "processes.json").read_text())
+        assert "stopped_at" in data, "processes.json was not marked stopped"
+        assert data["processes"] == []
+
+
 class TestTicketListScript:
     """Test ticket-list.sh."""
 

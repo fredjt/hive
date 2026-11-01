@@ -45,22 +45,23 @@ fi
 
 # Clean up bogus department directories (only keep org-chart departments)
 if [ -f "$COMPANY_DIR/org-chart.json" ]; then
-  python3 -c "
+  CS_OC_FILE="$COMPANY_DIR/org-chart.json" CS_DEPT_DIR="$COMPANY_DIR/departments" python3 - <<'PYEOF' 2>/dev/null
 import json, os, shutil
-oc=json.load(open('$COMPANY_DIR/org-chart.json'))
+oc=json.load(open(os.environ['CS_OC_FILE']))
 valid=set(oc.get('departments',{}).keys())
-for d in os.listdir('$COMPANY_DIR/departments'):
-    if d not in valid and os.path.isdir(os.path.join('$COMPANY_DIR/departments',d)):
-        shutil.rmtree(os.path.join('$COMPANY_DIR/departments',d))
+dept_dir=os.environ['CS_DEPT_DIR']
+for d in os.listdir(dept_dir):
+    if d not in valid and os.path.isdir(os.path.join(dept_dir,d)):
+        shutil.rmtree(os.path.join(dept_dir,d))
         print(f'  Removed bogus department: {d}')
-" 2>/dev/null
+PYEOF
 fi
 
 # Clean up roster: dedup VPs, ensure verification managers exist
-python3 -c "
+CS_ROSTER_FILE="$COMPANY_DIR/roster.json" CS_ORG_FILE="$COMPANY_DIR/org-chart.json" python3 - <<'PYEOF'
 import json, os
-roster_file='$COMPANY_DIR/roster.json'
-org_file='$COMPANY_DIR/org-chart.json'
+roster_file=os.environ['CS_ROSTER_FILE']
+org_file=os.environ['CS_ORG_FILE']
 if not os.path.exists(roster_file): exit(0)
 r=json.load(open(roster_file))
 agents=r.get('agents',r) if isinstance(r,dict) else r
@@ -82,7 +83,7 @@ if os.path.exists(org_file):
             agents.append({'id':'verification-mgr-'+d,'role':'Manager-Verification','department':d,'status':'active'})
 if isinstance(r,dict): r['agents']=agents; json.dump(r,open(roster_file,'w'),indent=2)
 else: json.dump(agents,open(roster_file,'w'),indent=2)
-" 2>/dev/null
+PYEOF
 
 # Clean up stale worktrees — but ONLY ones whose tickets are no longer
 # active. The previous logic deleted any worktree with "0 commits ahead
@@ -195,11 +196,13 @@ PROCS='[]'
 
 add_proc() {
   local pid=$1 role=$2 dept=$3 interval=$4
-  PROCS=$(echo "$PROCS" | python3 -c "
-import json,sys
+  PROCS=$(echo "$PROCS" | CS_PID="$pid" CS_ROLE="$role" CS_DEPT="$dept" CS_INTERVAL="$interval" CS_STARTED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)" python3 - <<'PYEOF'
+import json,sys,os
 procs=json.load(sys.stdin)
-procs.append({'pid':$pid,'role':'$role','department':'$dept','interval':'$interval','started_at':'$(date -u +%Y-%m-%dT%H:%M:%SZ)'})
-json.dump(procs,sys.stdout)")
+procs.append({'pid':int(os.environ['CS_PID']),'role':os.environ['CS_ROLE'],'department':os.environ['CS_DEPT'],'interval':os.environ['CS_INTERVAL'],'started_at':os.environ['CS_STARTED_AT']})
+json.dump(procs,sys.stdout)
+PYEOF
+)
   PIDS+=($pid)
   echo "  Started $role ($dept) PID=$pid"
 }
@@ -440,16 +443,16 @@ add_proc $! "company-health" "infrastructure" "30s"
 
 # --- Save process info ---
 
-python3 -c "
-import json
-procs=$PROCS
+CS_PROCS="$PROCS" CS_STARTED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)" CS_PROJECT_ROOT="$PROJECT_ROOT" CS_PROCS_FILE="$COMPANY_DIR/processes.json" python3 - <<'PYEOF'
+import json, os
+procs=json.loads(os.environ['CS_PROCS'])
 result={
-  'started_at': '$(date -u +%Y-%m-%dT%H:%M:%SZ)',
-  'project_root': '$PROJECT_ROOT',
+  'started_at': os.environ['CS_STARTED_AT'],
+  'project_root': os.environ['CS_PROJECT_ROOT'],
   'processes': procs
 }
-json.dump(result, open('$COMPANY_DIR/processes.json','w'), indent=2)
-"
+json.dump(result, open(os.environ['CS_PROCS_FILE'],'w'), indent=2)
+PYEOF
 
 echo ""
 echo "================================================"

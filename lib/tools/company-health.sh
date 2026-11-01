@@ -53,34 +53,37 @@ is_pid_alive() {
   kill -0 "$1" 2>/dev/null
 }
 
+# Env-var inputs + single-quoted heredoc: an apostrophe in the project
+# path would break inline python3 -c interpolation (same class of bug as
+# the one fixed across the ticket/chat scripts).
 get_proc_role() {
-  python3 -c "
-import json, sys
+  CH_PID="$1" CH_PROCS_FILE="$COMPANY_DIR/processes.json" python3 - <<'PYEOF' 2>/dev/null
+import json, os
 try:
-    data = json.load(open('$COMPANY_DIR/processes.json'))
+    data = json.load(open(os.environ['CH_PROCS_FILE']))
     procs = data.get('processes', data.get('agents', []))
     for p in procs:
-        if p.get('pid') == $1:
+        if p.get('pid') == int(os.environ['CH_PID']):
             print(p.get('role', 'unknown'))
             break
 except Exception:
     pass
-" 2>/dev/null
+PYEOF
 }
 
 get_proc_interval() {
-  python3 -c "
-import json, sys
+  CH_PID="$1" CH_PROCS_FILE="$COMPANY_DIR/processes.json" python3 - <<'PYEOF' 2>/dev/null
+import json, os
 try:
-    data = json.load(open('$COMPANY_DIR/processes.json'))
+    data = json.load(open(os.environ['CH_PROCS_FILE']))
     procs = data.get('processes', data.get('agents', []))
     for p in procs:
-        if p.get('pid') == $1:
+        if p.get('pid') == int(os.environ['CH_PID']):
             print(p.get('interval', 'continuous'))
             break
 except Exception:
     pass
-" 2>/dev/null
+PYEOF
 }
 
 # --- Cleanup stale active spawn records ---
@@ -253,21 +256,22 @@ restart_daemon() {
   local role="$2"
   local interval="$3"
 
-  # Check restart count
+  # Check restart count (env-var inputs)
   local restart_count
-  restart_count=$(python3 -c "
-import json
+  restart_count=$(CH_PROCS_FILE="$COMPANY_DIR/processes.json" CH_PID="$pid" python3 - <<'PYEOF' 2>/dev/null
+import json, os
 try:
-    data = json.load(open('$COMPANY_DIR/processes.json'))
+    data = json.load(open(os.environ['CH_PROCS_FILE']))
     for p in data.get('processes', []):
-        if p.get('pid') == $pid:
+        if p.get('pid') == int(os.environ['CH_PID']):
             print(p.get('restart_count', 0))
             break
     else:
         print(0)
 except Exception:
     print(0)
-" 2>/dev/null)
+PYEOF
+)
   restart_count=${restart_count:-0}
 
   if [ "$restart_count" -ge "$MAX_RESTARTS" ]; then
@@ -356,15 +360,16 @@ except Exception:
 
     echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] health: $role restarted as pid=$new_pid" >> "$COMPANY_DIR/logs/health.log"
 
-    # Update processes.json with the new PID and incremented restart count.
-    python3 -c "
+    # Update processes.json with the new PID and incremented restart count
+    # (env-var inputs; heredoc is single-quoted so no interpolation).
+    CH_PROCS_FILE="$COMPANY_DIR/processes.json" CH_NEW_PID="$new_pid" CH_PID="$pid" CH_ROLE="$role" CH_INTERVAL="$interval" python3 - <<'PYEOF' 2>/dev/null
 import json, os, sys
 from datetime import datetime, timezone
 
-procs_file = '$COMPANY_DIR/processes.json'
-new_pid = $new_pid
-old_pid = $pid
-role = '$role'
+procs_file = os.environ['CH_PROCS_FILE']
+new_pid = int(os.environ['CH_NEW_PID'])
+old_pid = int(os.environ['CH_PID'])
+role = os.environ['CH_ROLE']
 
 try:
     data = json.load(open(procs_file))
@@ -387,7 +392,7 @@ if not found:
         'pid': new_pid,
         'role': role,
         'department': 'infrastructure',
-        'interval': '$interval',
+        'interval': os.environ.get('CH_INTERVAL', 'continuous'),
         'started_at': datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'),
         'restart_count': 1,
         'restarted_at': datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'),
@@ -398,7 +403,7 @@ data['processes'] = procs
 tmp = procs_file + '.tmp.' + str(os.getpid())
 json.dump(data, open(tmp, 'w'), indent=2)
 os.replace(tmp, procs_file)
-" 2>/dev/null
+PYEOF
 
     # Wait for the restarted process to exit
     wait $new_pid 2>/dev/null || true
@@ -417,10 +422,12 @@ echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] health: starting" >> "$COMPANY_DIR/logs/h
 while true; do
   # 1. Check process liveness
   if [ -f "$COMPANY_DIR/processes.json" ]; then
-    python3 -c "
+    # Env-var input for the path (apostrophe-safe); prints "pid:role:interval"
+    # for every dead process, one per line.
+    CH_PROCS_FILE="$COMPANY_DIR/processes.json" python3 - <<'PYEOF' 2>/dev/null | while IFS=: read -r pid role interval; do
 import json, os, sys
 
-procs_file = '$COMPANY_DIR/processes.json'
+procs_file = os.environ['CH_PROCS_FILE']
 try:
     data = json.load(open(procs_file))
 except Exception:
@@ -436,8 +443,8 @@ for p in data.get('processes', []):
         os.kill(pid, 0)
     except OSError:
         # Process is dead
-        print(f'{pid}:{p.get(\"role\", \"unknown\")}:{p.get(\"interval\", \"continuous\")}')
-" 2>/dev/null | while IFS=: read -r pid role interval; do
+        print(f"{pid}:{p.get('role', 'unknown')}:{p.get('interval', 'continuous')}")
+PYEOF
     [ -z "$pid" ] && continue
     restart_daemon "$pid" "$role" "$interval" || true
   done

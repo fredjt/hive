@@ -37,16 +37,17 @@ killed=0
 
 # 1. Recorded PIDs (if processes.json exists)
 if [ -f "$COMPANY_DIR/processes.json" ]; then
-  PIDS=$(python3 -c "
-import json
+  PIDS=$(CS_PROCS_FILE="$COMPANY_DIR/processes.json" python3 - <<'PYEOF' 2>/dev/null
+import json, os
 try:
-    data=json.load(open('$COMPANY_DIR/processes.json'))
+    data=json.load(open(os.environ['CS_PROCS_FILE']))
     for p in data.get('processes',[]):
         pid=p.get('pid')
         if pid: print(pid)
 except Exception:
     pass
-" 2>/dev/null)
+PYEOF
+)
   for pid in $PIDS; do
     if kill -0 "$pid" 2>/dev/null; then
       # Kill the whole process group (the bash loop + everything it spawned)
@@ -121,16 +122,17 @@ done
 
 # 3. Update processes.json
 if [ -f "$COMPANY_DIR/processes.json" ]; then
-  python3 -c "
-import json
+  CS_PROCS_FILE="$COMPANY_DIR/processes.json" CS_STOPPED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)" python3 - <<'PYEOF' 2>/dev/null
+import json, os
 try:
-    data=json.load(open('$COMPANY_DIR/processes.json'))
-    data['stopped_at']='$(date -u +%Y-%m-%dT%H:%M:%SZ)'
+    procs_file = os.environ['CS_PROCS_FILE']
+    data=json.load(open(procs_file))
+    data['stopped_at']=os.environ['CS_STOPPED_AT']
     data['processes']=[]
-    json.dump(data, open('$COMPANY_DIR/processes.json','w'), indent=2)
+    json.dump(data, open(procs_file,'w'), indent=2)
 except Exception:
     pass
-" 2>/dev/null
+PYEOF
 fi
 
 echo "Stopped $killed processes"
