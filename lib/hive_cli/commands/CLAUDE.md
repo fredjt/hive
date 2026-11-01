@@ -62,7 +62,7 @@ proc = subprocess.Popen(
 | `company.py` | `start`, `stop`, `status` | Script (start/stop), MCP (status) |
 | `ticket.py` | `ticket create|get|list|move|claim|comment|approve` | MCP |
 | `chat.py` | `chat send|read` | MCP |
-| `agent.py` | `agent spawn-ceo|run-vp|verify` | MCP |
+| `agent.py` | `agent spawn-ceo|run-vp` | MCP |
 | `round.py` | `round status|next|history|get|enqueue|advance|promote` | MCP |
 | `gates.py` | `gates run|check|status` | MCP + direct filesystem read |
 | `gh.py` | `gh status|issues|mirror|pr open|merge|reject` | MCP |

@@ -16,14 +16,6 @@ Args:
   - `project_root`: string (required)
   - `mode`: string
 
-### `agent_verify`
-Spawn an adversarial verification IC for a single ticket.
-
-Args:
-  - `dept`: string (required)
-  - `ticket_id`: string (required)
-  - `project_root`: string (required)
-
 ### `chat_read`
 Read messages from a channel.
 

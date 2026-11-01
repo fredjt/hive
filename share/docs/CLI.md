@@ -57,8 +57,10 @@ Channels: `general | engineering | leadership | incidents | dept-<name>`
 ```
 hive agent spawn-ceo [project-dir] [--mode FRESH|RESUME]
 hive agent run-vp <dept> [project-dir]
-hive agent verify <dept> <ticket-id> [project-dir]
 ```
+
+(There is no `agent verify` subcommand: verification ICs are spawned by
+sprint-lifecycle during the verify stage, not on demand.)
 
 All agent spawns route through `lib/core/agent-spawn.sh`, which auto-injects
 the MCP config so the spawned agent can call hive tools.

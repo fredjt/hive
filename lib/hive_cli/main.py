@@ -143,9 +143,11 @@ def _add_agent(sub) -> None:
     pv.add_argument("dept")
     pv.add_argument("project_dir", nargs="?", default=".")
 
-    pver = sp.add_parser("verify", help="Spawn verification IC for a ticket")
-    pver.add_argument("dept"); pver.add_argument("ticket_id")
-    pver.add_argument("project_dir", nargs="?", default=".")
+    # NOTE: a `verify` subcommand used to exist here; it called the
+    # agent_verify MCP tool, which was removed under the sprint-staged
+    # lifecycle (verification ICs are spawned by sprint-lifecycle during
+    # the verify stage). Do not re-add it — see
+    # tests/test_cli.py::test_agent_verify_subcommand_removed.
 
     p.set_defaults(_handler=agent.handle)
 

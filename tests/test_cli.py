@@ -78,14 +78,21 @@ class TestBuildParser:
 
     def test_parser_has_agent(self):
         p = _make_parser()
-        for action in ["spawn-ceo", "run-vp", "verify"]:
+        for action in ["spawn-ceo", "run-vp"]:
             if action == "spawn-ceo":
                 args = p.parse_args(["agent", action])
             elif action == "run-vp":
                 args = p.parse_args(["agent", action, "it"])
-            elif action == "verify":
-                args = p.parse_args(["agent", action, "it", "TICKET-001"])
             assert args.action == action
+
+    def test_agent_verify_subcommand_removed(self):
+        """hive agent verify is gone: it called the agent_verify MCP tool,
+        which was removed under the sprint-staged lifecycle (verification
+        ICs are spawned by sprint-lifecycle during the verify stage, not
+        via an ad-hoc tool). The subcommand must not come back silently."""
+        p = _make_parser()
+        with pytest.raises(SystemExit):
+            p.parse_args(["agent", "verify", "it", "TICKET-001"])
 
     def test_parser_has_gates(self):
         p = _make_parser()
