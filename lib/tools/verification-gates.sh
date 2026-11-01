@@ -323,8 +323,11 @@ fi
 if [ -z "$GATE_FAIL" ] && [ "$GATE_REQUIRE_SECURITY" = "true" ]; then
   SEC_CMD=$(detect_security_cmd "$WORKTREE")
   if [ -z "$SEC_CMD" ]; then
-    record_gate "$TID" "security-clean" "fail" "no security tool available"
-    GATE_FAIL="no security tool available"
+    # No security tool installed for this stack (e.g. Python without
+    # bandit/pip-audit). Skip, like the tests-pass and lint-pass gates do
+    # when no framework/linter is detected — hard-failing here bounced
+    # EVERY code ticket on any project without the audit tool installed.
+    record_gate "$TID" "security-clean" "skip" "no security tool available"
   else
     if SEC_OUT=$(bash -c "$SEC_CMD" 2>&1); then
       record_gate "$TID" "security-clean" "pass" "no high-severity vulnerabilities"
