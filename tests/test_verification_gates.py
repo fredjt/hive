@@ -70,7 +70,7 @@ ENGINEERING_DEPT = "backend"
 def make_company(root: Path, ticket_id: str, dept: str = ENGINEERING_DEPT):
     company = root / ".company"
     for status in ["backlog", "sprint-current", "in-progress", "in-review", "done"]:
-        (company / "departments" / dept / "tickets" / status).mkdir(parents=True)
+        (company / "departments" / dept / "tickets" / status).mkdir(parents=True, exist_ok=True)
     ticket = {
         "id": ticket_id,
         "title": "Gate test ticket",
@@ -164,3 +164,55 @@ class TestPathQuoting:
              / "tickets" / "in-review" / "T3.json").read_text()
         )
         assert ticket["gates_passed"] is True
+
+class TestTicketTargeting:
+    def test_empty_in_review_is_idle_not_error(self, space_free_proj):
+        """No ticket in in-review is the normal idle state for the 90s
+        daemon — exit 0, not exit 2 (exit 2 made the daemon log
+        'restarting in 5s' every cycle for every idle dept)."""
+        project = space_free_proj
+        make_company(project, "none")
+
+        result = run_gates(project, ENGINEERING_DEPT)
+        assert result.returncode == 0, result.stderr
+
+    def test_named_ticket_is_the_one_gated(self, space_free_proj):
+        project = space_free_proj
+        make_company(project, "A1")
+        make_company(project, "B2")  # second ticket in the same dept
+
+        result = run_gates(project, ENGINEERING_DEPT, "--ticket", "B2")
+        assert result.returncode == 0, result.stderr
+
+        b2 = json.loads((project / ".company" / "departments" / ENGINEERING_DEPT
+                         / "tickets" / "in-review" / "B2.json").read_text())
+        a1 = json.loads((project / ".company" / "departments" / ENGINEERING_DEPT
+                         / "tickets" / "in-review" / "A1.json").read_text())
+        assert b2.get("gates_passed") is True
+        assert a1.get("gates_passed") is not True
+
+    def test_named_ticket_missing_is_an_error(self, space_free_proj):
+        project = space_free_proj
+        make_company(project, "A1")
+
+        result = run_gates(project, ENGINEERING_DEPT, "--ticket", "NOPE")
+        assert result.returncode == 2
+
+    def test_already_gated_ticket_is_not_re_gated(self, space_free_proj):
+        """Second run over an already-gates_passed ticket must be a no-op:
+        no re-run of the test suite, no duplicate 'gates passed' comment."""
+        project = space_free_proj
+        make_company(project, "C1")
+
+        first = run_gates(project, ENGINEERING_DEPT)
+        assert first.returncode == 0, first.stderr
+        ticket_path = (project / ".company" / "departments" / ENGINEERING_DEPT
+                       / "tickets" / "in-review" / "C1.json")
+        comments_after_first = len(json.loads(ticket_path.read_text()).get("comments", []))
+
+        second = run_gates(project, ENGINEERING_DEPT)
+        assert second.returncode == 0, second.stderr
+        assert "already gates_passed" in second.stderr
+        ticket = json.loads(ticket_path.read_text())
+        assert ticket.get("gates_passed") is True
+        assert len(ticket.get("comments", [])) == comments_after_first

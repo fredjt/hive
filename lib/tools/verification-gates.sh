@@ -17,7 +17,12 @@ set -euo pipefail
 #   6. Linter passes
 #   7. Security audit clean
 #
-# Usage: verification-gates.sh <dept> <project-root>
+# Usage: verification-gates.sh <dept> <project-root> [--ticket <id>] [--quiet]
+#   --ticket <id>  Gate this specific in-review ticket (the lifecycle passes
+#                  its own ticket). Without it, the first ticket in the
+#                  dept's in-review dir is used (the 90s daemon).
+#   --quiet        Accepted for compatibility with the daemon; output is
+#                  captured by the caller either way.
 #
 # Return codes:
 #   0 — all gates passed
@@ -32,12 +37,23 @@ set -euo pipefail
 #   GATE_REQUIRE_COMMITS      - bounce if branch has no commits beyond main (default: true)
 
 if [ $# -lt 2 ]; then
-  echo "Usage: verification-gates.sh <dept> <project-root>" >&2
+  echo "Usage: verification-gates.sh <dept> <project-root> [--ticket <id>] [--quiet]" >&2
   exit 1
 fi
 
 DEPT="$1"
 PROJECT_ROOT="$(cd "$2" && pwd)"
+GATE_TICKET=""
+shift 2
+for arg in "$@"; do
+  case "$arg" in
+    --quiet) : ;;
+    --ticket) : ;;           # its value arrives as the next bare arg
+    --ticket=*) GATE_TICKET="${arg#--ticket=}" ;;
+    -*) : ;;                 # unknown flag: ignore
+    *) [ -z "$GATE_TICKET" ] && GATE_TICKET="$arg" ;;
+  esac
+done
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 COMPANY_DIR="$PROJECT_ROOT/.company"
@@ -183,15 +199,39 @@ mark_gates_passed() {
 
 # ── Find the ticket file ────────────────────────────────────────────
 # The caller (sprint-lifecycle.sh) moves the ticket to in-review before
-# calling this script. We find it there.
-TICKET_FILE=$(find "$TICKET_DIR/in-review" -name '*.json' -type f 2>/dev/null | head -1)
+# calling this script and names it explicitly (--ticket). The 90s daemon
+# calls without a name and gets the first ticket in the dept's in-review
+# dir. A named ticket that is not in in-review is an error (exit 2 — the
+# caller's move raced or failed); an unnamed run with nothing in
+# in-review is the normal idle state (exit 0, not an error).
+if [ -n "$GATE_TICKET" ]; then
+  TICKET_FILE="$TICKET_DIR/in-review/$GATE_TICKET.json"
+  [ -f "$TICKET_FILE" ] || TICKET_FILE=""
+else
+  TICKET_FILE=$(find "$TICKET_DIR/in-review" -name '*.json' -type f 2>/dev/null | sort | head -1)
+fi
 if [ -z "$TICKET_FILE" ] || [ ! -f "$TICKET_FILE" ]; then
-  log "no ticket file found in in-review for dept=$DEPT"
-  exit 2
+  if [ -n "$GATE_TICKET" ]; then
+    log "ticket $GATE_TICKET not found in in-review for dept=$DEPT"
+    exit 2
+  fi
+  log "no ticket in in-review for dept=$DEPT — nothing to gate"
+  exit 0
 fi
 
 TID=$(jq -r '.id // empty' "$TICKET_FILE")
 [ -z "$TID" ] && { log "no ticket id in file"; exit 2; }
+
+# Already gates_passed and the caller did not force a re-run: nothing to
+# do. Without this, the 90s daemon re-ran the full test suite AND appended
+# a fresh 'All deterministic gates passed' comment on an already-passed
+# ticket every single cycle. (The lifecycle resets gates_passed=false
+# before its synchronous run, so it always gets a fresh evaluation.)
+ALREADY_PASSED=$(jq -r '.gates_passed // false' "$TICKET_FILE" 2>/dev/null)
+if [ "$ALREADY_PASSED" = "true" ]; then
+  log "  $TID already gates_passed — skipping re-run"
+  exit 0
+fi
 
 WORKTREE="$PROJECT_ROOT/.worktrees/$TID"
 BRANCH="feature/$TID"

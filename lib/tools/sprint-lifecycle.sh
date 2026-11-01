@@ -549,7 +549,8 @@ After exit 0, this script will:
 
   # Run gates synchronously
   local GATES_RC=0
-  GATE_LOG="$GATE_LOG" bash "$SKILL_DIR/lib/tools/verification-gates.sh" "$dept" "$PROJECT_ROOT" || GATES_RC=$?
+  GATE_LOG="$GATE_LOG" bash "$SKILL_DIR/lib/tools/verification-gates.sh" \
+    "$dept" "$PROJECT_ROOT" --ticket "$ticket" || GATES_RC=$?
 
   if [ "$GATES_RC" -eq 1 ]; then
     # skip_tdd_red flag set — bounce to tdd-red
