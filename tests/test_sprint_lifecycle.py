@@ -80,6 +80,7 @@ class LifecycleHarness:
     """Temp project + .company + lib copy with a stubbed agent-spawn."""
 
     def __init__(self, tmp_path, mode="noop", with_code_branch=False,
+                 failing_tests=False,
                  failing_release_tests=False, preset_release_retries=0):
         self.root = tmp_path
         self.project = tmp_path / "proj"
@@ -90,7 +91,7 @@ class LifecycleHarness:
         self._build_project()
         self._build_company(failing_release_tests, preset_release_retries)
         if with_code_branch:
-            self._build_code_branch()
+            self._build_code_branch(failing=failing_tests)
         self._build_hive_copy()
 
     def _git(self, *args, cwd=None):
@@ -149,14 +150,20 @@ class LifecycleHarness:
                 },
             }, indent=2))
 
-    def _build_code_branch(self):
-        """Worktree + feature branch with a [TDD-RED] commit whose tests
-        pass, so the deterministic gates go green and the verifier runs."""
+    def _build_code_branch(self, failing: bool = False):
+        """Worktree + feature branch with a [TDD-RED] commit so the
+        TDD-RED gate passes without spawning a tester. By default the
+        committed tests pass (deterministic gates go green and the
+        verifier runs); with failing=True the committed test fails, so
+        the tests-pass gate bounces the ticket on every pass."""
         branch = f"feature/{TICKET}"
         wt = self.project / ".worktrees" / TICKET
         self._git("worktree", "add", "-b", branch, str(wt))
         (wt / "pytest.ini").write_text("")
-        (wt / "test_tick.py").write_text("def test_alpha():\n    assert True\n")
+        assert_line = "assert False" if failing else "assert True"
+        (wt / "test_tick.py").write_text(
+            f"def test_alpha():\n    {assert_line}\n"
+        )
         self._git("add", "-A", cwd=wt)
         self._git("commit", "-m", f"[TDD-RED] {TICKET}: add failing test first",
                   cwd=wt)
@@ -378,4 +385,37 @@ def test_verifier_bounce_cap_defers_and_resets_counter(tmp_path):
     assert ticket.get("bounce_count", 0) == 0, (
         f"stale bounce_count={ticket.get('bounce_count')} survived the "
         "backlog deferral - the reset wrote to the pre-move path"
+    )
+
+
+def test_gate_failure_bounce_hits_per_ticket_cap(tmp_path):
+    """Release goal A.2: a ticket whose deterministic gates keep failing
+    (flaky test, broken branch, skip_tdd_red rework loop) bounced only
+    against the GLOBAL MAX_LOOP_ITERATIONS safety valve, so one bad
+    ticket could burn up to 100 loop iterations and starve the rest of
+    the sprint. The gate-failure branch now applies the same per-ticket
+    bounce cap (MAX_VERIFICATION_BOUNCES) as the verifier-bounce path."""
+    h = LifecycleHarness(tmp_path, mode="noop", with_code_branch=True,
+                         failing_tests=True)
+    ticket_file = (h.project / ".company" / "departments" / DEPT / "tickets"
+                   / "sprint-current" / f"{TICKET}.json")
+    ticket_file.write_text(_ticket_json("sprint-current"))
+
+    r = h.run(extra_env={"HIVE_MAX_VERIFICATION_BOUNCES": "2"})
+    assert r.returncode == 0, r.stderr
+
+    # The cap must fire on the 2nd gate bounce - NOT the loop safety
+    # valve (harness sets 3 loop iterations; the old code gate-bounced on
+    # passes 1-3 and only then deferred via the valve).
+    assert "bounce limit exceeded" in r.stderr, (
+        "per-ticket bounce cap never fired on the gate-failure path"
+    )
+    assert "safety valve" not in r.stderr.lower(), (
+        "gate-failure ticket looped to the safety valve instead of the "
+        "per-ticket cap"
+    )
+    n_gate_bounces = r.stderr.count("gates failed (rc=")
+    assert n_gate_bounces == 2, (
+        f"expected exactly 2 gate bounces before cap deferral, saw "
+        f"{n_gate_bounces}"
     )

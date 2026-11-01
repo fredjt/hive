@@ -607,11 +607,27 @@ After exit 0, this script will:
   if [ "$GATES_RC" -ne 0 ]; then
     # Gates failed (rc=2) or usage error (rc=1) — bounce to tdd-green.
     # On a real gate failure, verification-gates.sh's bounce_ticket has
-    # already moved the ticket back to in-progress, so TFILE exists and
-    # the counter write below lands.
+    # already moved the ticket back to in-progress, so the scripted move
+    # below is a no-op and TFILE exists for the counter write; on a usage
+    # error (rc=1) the ticket is still in in-review and the move lands
+    # it. Move first, then increment — the same order as the
+    # verifier-crash path (jq on the in-progress path before the move is
+    # a silent no-op on the missing file).
     log "$log_prefix: gates failed (rc=$GATES_RC) — bouncing to tdd-green"
-    jq '.bounce_count = ((.bounce_count // 0) + 1)' "$TFILE" > "${TFILE}.tmp.$$" && mv "${TFILE}.tmp.$$" "$TFILE"
     scripted_move "$dept" "$ticket" in-progress "Gate failure (rc=$GATES_RC)"
+    jq '.bounce_count = ((.bounce_count // 0) + 1)' "$TFILE" > "${TFILE}.tmp.$$" && mv "${TFILE}.tmp.$$" "$TFILE"
+    # Per-ticket bounce cap (release goal A.2): a ticket whose
+    # deterministic gates keep failing (flaky test, skip_tdd_red rework
+    # loop) previously bounced only against the GLOBAL
+    # MAX_LOOP_ITERATIONS safety valve, so one bad ticket could burn up
+    # to 100 loop iterations and starve the rest of the sprint. It now
+    # defers to backlog at MAX_VERIFICATION_BOUNCES, exactly like the
+    # verifier-bounce path.
+    bc=$(jq -r '.bounce_count // 0' "$TFILE" 2>/dev/null)
+    if [ "${bc:-0}" -ge "$MAX_VERIFICATION_BOUNCES" ]; then
+      log "$log_prefix: bounce limit exceeded ($bc >= $MAX_VERIFICATION_BOUNCES, gate-failure) → backlog"
+      defer_on_bounce_cap "$dept" "$ticket" "$bc" "gate-failure"
+    fi
     return 1
   fi
 
@@ -684,6 +700,13 @@ After approve or bounce, EXIT. This script handles the status move."
     # abandoned it in in-progress instead of re-processing (or capping) it.
     scripted_move "$dept" "$ticket" in-progress "Verifier failed (exit=$EC)"
     jq '.bounce_count = ((.bounce_count // 0) + 1)' "$TFILE" > "${TFILE}.tmp.$$" && mv "${TFILE}.tmp.$$" "$TFILE"
+    # A persistently crashing verifier counts toward the same per-ticket
+    # cap as bounces (the increment was always meant to feed it).
+    bc=$(jq -r '.bounce_count // 0' "$TFILE" 2>/dev/null)
+    if [ "${bc:-0}" -ge "$MAX_VERIFICATION_BOUNCES" ]; then
+      log "$log_prefix: bounce limit exceeded ($bc >= $MAX_VERIFICATION_BOUNCES, verifier-crash) → backlog"
+      defer_on_bounce_cap "$dept" "$ticket" "$bc" "verifier-crash"
+    fi
     return 1
   fi
 
