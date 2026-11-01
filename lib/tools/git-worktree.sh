@@ -70,15 +70,24 @@ case "$ACTION" in
     done
 
     # ── Authoritative pre-flight: is the branch already a git worktree? ──
+    # Porcelain groups lines per worktree:
+    #   worktree /path
+    #   HEAD <sha>
+    #   branch refs/heads/<branch>
+    # (blank line between entries). The old implementation piped the
+    # output through `sed -n 's/^worktree //p'`, which strips exactly the
+    # `branch` lines it then tried to `read` — so detection always missed
+    # and every create over an existing worktree fell through to the
+    # force-rebuild cleanup: worktree remove --force + branch -D + fresh
+    # branch off main. In-progress commits on the ticket's branch were
+    # destroyed every time the lifecycle re-ran ensure_worktree (bugfix
+    # cycle, daemon restart, second pass).
     ALREADY_WORKTREE=""   # path where git says the worktree lives
-    git -C "$PROJECT_ROOT" worktree list --porcelain 2>/dev/null | \
-      sed -n 's/^worktree //p' | while IFS= read -r wt; do
-        # read the next line for the branch
-        read -r bline 2>/dev/null || true
-        case "$bline" in "branch refs/heads/$BRANCH"*) echo "$wt"; break ;; esac
-      done > /tmp/.hive-wt-check-$$
-    ALREADY_WORKTREE="$(cat /tmp/.hive-wt-check-$$ 2>/dev/null)"
-    rm -f /tmp/.hive-wt-check-$$
+    ALREADY_WORKTREE=$(git -C "$PROJECT_ROOT" worktree list --porcelain 2>/dev/null | \
+      awk -v want="refs/heads/$BRANCH" '
+        /^worktree /{wt=substr($0,10)}  # path starts after "worktree " (may contain spaces)
+        /^branch / && $2 == want {print wt; exit}
+      ')
 
     if [ "$FORCE_REBUILD" = 0 ] && [ -n "$ALREADY_WORKTREE" ]; then
       if [ "$ALREADY_WORKTREE" = "$WT_PATH" ]; then

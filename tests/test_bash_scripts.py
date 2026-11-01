@@ -312,6 +312,64 @@ class TestQuotedProjectPaths:
         assert data["messages"][0]["message"] == "Hello world"
 
 
+class TestGitWorktreeCreate:
+    """git-worktree.sh create must be non-destructive for existing worktrees.
+
+    Regression: the pre-flight 'is this branch already a worktree?' check
+    piped `git worktree list --porcelain` through
+    `sed -n 's/^worktree //p'`, which strips exactly the `branch` lines it
+    then tried to read. Detection always missed, so every create over a
+    ticket that already had a worktree fell into the force-rebuild cleanup
+    (worktree remove --force + branch -D + fresh branch off main) and
+    destroyed the in-progress commits on the ticket's branch — on every
+    sprint-lifecycle ensure_worktree re-run (bugfix cycle, daemon restart,
+    second pass).
+    """
+
+    @pytest.fixture()
+    def wt_project(self, tmp_path):
+        proj = tmp_path / "wt-proj"
+        proj.mkdir()
+        gitenv = {**os.environ,
+                  "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t",
+                  "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"}
+
+        def git(*args, cwd=None):
+            r = subprocess.run(["git", *args], cwd=str(cwd or proj),
+                               capture_output=True, text=True, timeout=30,
+                               env=gitenv)
+            assert r.returncode == 0, f"git {args} failed: {r.stderr}"
+            return r
+
+        git("init", "-b", "main")
+        (proj / "README.md").write_text("x\n")
+        git("add", "-A")
+        git("commit", "-m", "initial")
+        wt = proj / ".worktrees" / "W1"
+        git("worktree", "add", "-b", "feature/W1", str(wt))
+        (wt / "work.md").write_text("in-progress work\n")
+        git("add", "-A", cwd=wt)
+        git("commit", "-m", "W1: in-progress commit", cwd=wt)
+        return proj
+
+    def test_create_reuses_existing_worktree_and_keeps_commits(self, wt_project):
+        r = run_script(f"{SCRIPTS_DIR}/git-worktree.sh",
+                       ["create", "W1", str(wt_project)])
+        assert r.returncode == 0, r.stderr
+        assert "Reusing existing worktree" in r.stdout, (
+            f"expected the existing worktree to be detected and reused, "
+            f"got:\n{r.stdout}\n{r.stderr}"
+        )
+        # The in-progress commit must survive the idempotent create.
+        r2 = subprocess.run(["git", "-C", str(wt_project), "log",
+                             "main..feature/W1", "--oneline"],
+                            capture_output=True, text=True, timeout=30)
+        assert "in-progress commit" in r2.stdout, (
+            "create destroyed the branch's commits: "
+            f"stdout={r2.stdout!r} stderr={r2.stderr!r}"
+        )
+
+
 class TestCompanyStopScript:
     """Test company-stop.sh."""
 
