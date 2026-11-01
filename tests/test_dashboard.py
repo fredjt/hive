@@ -285,3 +285,89 @@ class TestPullRequestTemplate:
 
     def test_pr_template_exists(self):
         assert Path("lib/templates/PULL_REQUEST_TEMPLATE.md").exists()
+
+
+import json as _json
+import socket
+import subprocess
+import time
+import urllib.error
+import urllib.request
+
+
+def _node_available():
+    try:
+        subprocess.run(["node", "--version"], capture_output=True, timeout=10)
+        return True
+    except Exception:
+        return False
+
+
+@pytest.mark.skipif(not _node_available(), reason="node not available")
+class TestDashboardServerRobustness:
+    """Boot the real dashboard server and probe its robustness."""
+
+    @staticmethod
+    def _free_port():
+        s = socket.socket()
+        s.bind(("127.0.0.1", 0))
+        p = s.getsockname()[1]
+        s.close()
+        return p
+
+    def test_server_survives_malformed_json_body(self):
+        """A malformed JSON body on any API endpoint must not crash the
+        server.
+
+        Regression: handleApi is an async function returned from the request
+        handler with no .catch, so a rejected readBody() (malformed JSON)
+        became an unhandled promise rejection — Node >= 15 terminates the
+        process on unhandled rejections, so one malformed request killed the
+        entire dashboard.
+        """
+        port = self._free_port()
+        proc = subprocess.Popen(
+            ["node", "lib/dashboard/server.js", "--port", str(port)],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
+        try:
+            up = False
+            deadline = time.time() + 10
+            while time.time() < deadline:
+                if proc.poll() is not None:
+                    raise AssertionError("dashboard process exited before becoming ready")
+                try:
+                    with urllib.request.urlopen(f"http://127.0.0.1:{port}/api/status", timeout=1):
+                        up = True
+                    break
+                except Exception:
+                    time.sleep(0.1)
+            assert up, "dashboard did not start"
+
+            req = urllib.request.Request(
+                f"http://127.0.0.1:{port}/api/connect",
+                data=b"{not valid json",
+                method="POST",
+                headers={"Content-Type": "application/json"},
+            )
+            try:
+                with urllib.request.urlopen(req, timeout=5) as r:
+                    r.read()
+            except urllib.error.HTTPError as e:
+                assert 400 <= e.code < 500, (
+                    f"malformed body should yield a 4xx client error, got {e.code}"
+                )
+            except Exception:
+                # Connection reset — the pre-fix crash behavior. The liveness
+                # check below is what makes the test fail.
+                pass
+
+            with urllib.request.urlopen(f"http://127.0.0.1:{port}/api/status", timeout=5) as r:
+                data = _json.loads(r.read())
+            assert "connected" in data
+        finally:
+            proc.terminate()
+            try:
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                proc.kill()
