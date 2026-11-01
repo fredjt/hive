@@ -48,6 +48,13 @@ case "${STUB_MODE:-noop}" in
       exit 1
     fi
     ;;
+  bounce)
+    if printf '%s' "$PROMPT" | grep -q -- "--- STAGE: verify"; then
+      bash "$SKILL_DIR/lib/tools/ticket-bounce.sh" "$HIVE_DEPT" "$HIVE_TICKET" \
+        "stub-verifier" "Stub rejection: the diff misses every numbered acceptance criterion, ignores the edge cases the ticket calls out, and touches files the ticket never asked for. Rework before re-review." \
+        >> "$AGENT_SPAWN_LOG" 2>&1
+    fi
+    ;;
 esac
 exit 0
 '''
@@ -160,7 +167,7 @@ class LifecycleHarness:
         stub.write_text(STUB_AGENT_SPAWN)
         stub.chmod(0o755)
 
-    def run(self, timeout=180):
+    def run(self, timeout=180, extra_env=None):
         env = os.environ.copy()
         env.update({
             "HIVE_ROOT": str(self.hive),
@@ -170,6 +177,8 @@ class LifecycleHarness:
             # bounces instead of 100 - the tests only need it to trigger.
             "HIVE_MAX_LOOP_ITERATIONS": "3",
         })
+        if extra_env:
+            env.update(extra_env)
         r = subprocess.run(
             ["bash", str(LIFECYCLE), str(self.project)],
             env=env, capture_output=True, text=True, timeout=timeout,
@@ -278,4 +287,95 @@ def test_tester_loop_is_bounded_when_no_tdd_red_commit(tmp_path):
     assert "safety valve" in r.stderr.lower(), (
         "no safety-valve deferral in the lifecycle log - the bounce loop "
         f"was not bounded\nstderr: {r.stderr}"
+    )
+
+
+def test_verifier_crash_increments_bounce_count(tmp_path):
+    """Regression (release goal A.1): when the verification IC's
+    agent-spawn exits non-zero (a crash, not a bounce), sprint-lifecycle
+    wrote the bounce_count increment to TFILE (the in-progress path)
+    BEFORE the scripted move put the ticket back there - jq on a
+    not-yet-existing file, silently lost. The ticket sat at
+    bounce_count=0 in in-progress, pick_next_ticket's priority-2 bounce
+    picker never saw it again, and the loop advanced to release with the
+    ticket abandoned. Now the move happens first, the counter lands, and
+    the ticket is re-processed every loop pass until the safety valve
+    defers it."""
+    h = LifecycleHarness(tmp_path, mode="fail-verify", with_code_branch=True)
+    ticket_file = (h.project / ".company" / "departments" / DEPT / "tickets"
+                   / "sprint-current" / f"{TICKET}.json")
+    ticket_file.write_text(_ticket_json("sprint-current"))
+
+    r = h.run()
+    assert r.returncode == 0, r.stderr
+
+    # The verifier spawn runs once per loop pass. With the increment
+    # lost, the ticket was never re-picked and exactly ONE crash bounce
+    # happened; with it persisted, the ticket bounces on every pass until
+    # the safety valve (3 loop iterations in the harness) defers it.
+    n_crash_bounces = r.stderr.count("verifier failed (exit=")
+    assert n_crash_bounces >= 2, (
+        f"crash-bounced ticket was not re-processed - the bounce_count "
+        f"increment did not persist ({n_crash_bounces} crash bounces)\n"
+        f"stderr: {r.stderr}"
+    )
+    assert "safety valve" in r.stderr.lower(), (
+        "no safety-valve deferral - the crash-bounced ticket was not "
+        f"re-enqueued on later passes\nstderr: {r.stderr}"
+    )
+    # The ticket must not be abandoned in in-progress, and the release
+    # bugfix cycle's sprint-fill re-promotes it after the deferral.
+    assert h.ticket_at("in-progress") is None, (
+        "crash-bounced ticket abandoned in in-progress with a zero "
+        "bounce_count - the increment was lost"
+    )
+    ticket = h.ticket_at("sprint-current")
+    assert ticket is not None, (
+        f"ticket not in sprint-current after deferral + re-promotion\n"
+        f"stderr: {r.stderr}"
+    )
+
+
+def test_verifier_bounce_cap_defers_and_resets_counter(tmp_path):
+    """Regression (release goal A.1): the bounce-cap deferral must reset
+    bounce_count on the ticket's NEW (backlog) location. ticket-bounce.sh
+    moves the ticket to in-progress, so the cap check reads the right
+    counter - but the scripted move to backlog then relocates the file,
+    and a `del` on the old in-progress path is jq-on-a-missing-file. The
+    stale counter survived the deferral, so the next sprint deferred the
+    ticket on its very first bounce instead of giving it a fresh budget."""
+    h = LifecycleHarness(tmp_path, mode="bounce", with_code_branch=True)
+    ticket_file = (h.project / ".company" / "departments" / DEPT / "tickets"
+                   / "sprint-current" / f"{TICKET}.json")
+    ticket_file.write_text(_ticket_json("sprint-current"))
+
+    r = h.run(extra_env={"HIVE_MAX_VERIFICATION_BOUNCES": "2"})
+    assert r.returncode == 0, r.stderr
+
+    # Two verifier bounces (bc 1 then 2) hit the cap; the third loop pass
+    # finds no active tickets and advances straight to release.
+    assert "bounce limit exceeded" in r.stderr.lower(), (
+        "per-ticket bounce cap never fired\nstderr: {r.stderr}"
+    )
+    assert "safety valve" not in r.stderr.lower(), (
+        "the bounce cap should defer before the loop safety valve does\n"
+        f"stderr: {r.stderr}"
+    )
+    bodies = " ".join(
+        (c.get("body") or "")
+        for c in (h.ticket_at("sprint-current") or {}).get("comments", [])
+    )
+    assert bodies.count("REJECTED by verification") >= 2, (
+        "expected two verifier bounces before the cap deferral"
+    )
+
+    # After the deferral + bugfix-cycle re-promotion the ticket must have
+    # a FRESH bounce budget: no stale bounce_count left behind.
+    ticket = h.ticket_at("sprint-current")
+    assert ticket is not None, (
+        f"ticket not re-promoted to sprint-current\nstderr: {r.stderr}"
+    )
+    assert ticket.get("bounce_count", 0) == 0, (
+        f"stale bounce_count={ticket.get('bounce_count')} survived the "
+        "backlog deferral - the reset wrote to the pre-move path"
     )

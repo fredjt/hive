@@ -125,6 +125,24 @@ scripted_move() {
       >> "$LOG" 2>&1 || log "  move $dept/$ticket → $new_status failed"
 }
 
+# Defer one ticket to backlog after it hit the per-ticket bounce cap.
+# The bounce_count is reset on the ticket's NEW (backlog) location — the
+# scripted move has already relocated the file, so jq on the old path would
+# be a silent no-op and the stale counter would poison the next sprint
+# (the ticket would be cap-deferred on its very first bounce there).
+defer_on_bounce_cap() {
+  local dept="$1" ticket="$2" bc="$3" source="$4"
+  local f
+  scripted_move "$dept" "$ticket" backlog \
+    "Bounce limit exceeded ($bc >= $MAX_VERIFICATION_BOUNCES, $source)"
+  f="$COMPANY_DIR/departments/$dept/tickets/backlog/${ticket}.json"
+  if [ -f "$f" ]; then
+    jq 'del(.bounce_count)' "$f" > "${f}.tmp.$$" && mv "${f}.tmp.$$" "$f"
+  else
+    log "  defer_on_bounce_cap: $dept/$ticket not found in backlog after move"
+  fi
+}
+
 # Defer all remaining active tickets to backlog
 defer_remaining_to_backlog() {
   local reason_text="$1"
@@ -658,8 +676,14 @@ After approve or bounce, EXIT. This script handles the status move."
 
   if [ $EC -ne 0 ]; then
     log "$log_prefix: verifier failed (exit=$EC), bouncing to in-progress"
-    jq '.bounce_count = ((.bounce_count // 0) + 1)' "$TFILE" > "${TFILE}.tmp.$$" && mv "${TFILE}.tmp.$$" "$TFILE"
+    # Move FIRST, then write the counter: the ticket is still in in-review
+    # here, so $TFILE (the in-progress path) does not exist yet. Writing
+    # the increment before the move was jq-on-a-missing-file and the
+    # bounce_count silently stayed at 0 — pick_next_ticket's priority-2
+    # bounce picker never saw the ticket again, and a crashing verifier
+    # abandoned it in in-progress instead of re-processing (or capping) it.
     scripted_move "$dept" "$ticket" in-progress "Verifier failed (exit=$EC)"
+    jq '.bounce_count = ((.bounce_count // 0) + 1)' "$TFILE" > "${TFILE}.tmp.$$" && mv "${TFILE}.tmp.$$" "$TFILE"
     return 1
   fi
 
@@ -679,9 +703,7 @@ After approve or bounce, EXIT. This script handles the status move."
     bc=$(jq -r '.bounce_count // 0' "$TFILE" 2>/dev/null)
     if [ "${bc:-0}" -ge "$MAX_VERIFICATION_BOUNCES" ]; then
       log "$log_prefix: bounce limit exceeded ($bc >= $MAX_VERIFICATION_BOUNCES) → backlog"
-      scripted_move "$dept" "$ticket" backlog "Bounce limit exceeded ($bc >= $MAX_VERIFICATION_BOUNCES)"
-      # Reset bounce_count for future sprints
-      jq 'del(.bounce_count)' "$TFILE" > "${TFILE}.tmp.$$" 2>/dev/null && mv "${TFILE}.tmp.$$" "$TFILE"
+      defer_on_bounce_cap "$dept" "$ticket" "$bc" "verifier-bounce"
     else
       log "$log_prefix: bounced by verifier (bounce_count=$bc) → in-progress"
     fi
