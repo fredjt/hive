@@ -303,8 +303,16 @@ run_ticket_lifecycle() {
   tdd_red_attempts=$(jq -r '.tdd_red_attempts // 0' "$TFILE" 2>/dev/null)
 
   # ── Phase 1: TDD-RED (tester) ──
+  # Bounded: each lifecycle pass gets at most MAX_TESTER_ITER tester spawns.
+  # An unbounded `while true` here spun forever when the tester never
+  # produced a [TDD-RED] commit: skip_red was read ONCE before the loop,
+  # so the file-level skip_tdd_red=true written at strike 3 was invisible
+  # to the loop (stale local), and `continue` re-spawned the tester
+  # indefinitely — same for a persistently failing agent-spawn (EC!=0).
   local HAS_RED TITLE DESC FRESH_HINT PROMPT LOG_TO
-  while true; do
+  local TESTER_ITER=0
+  local MAX_TESTER_ITER=3
+  while [ $TESTER_ITER -lt $MAX_TESTER_ITER ]; do
     BRANCH="feature/$ticket"
     HAS_RED=0
     if git -C "$PROJECT_ROOT" log "main..$BRANCH" --oneline 2>/dev/null \
@@ -385,7 +393,8 @@ After committing the failing test, EXIT. The engineer will run next.$FRESH_HINT"
     EC=$?
 
     if [ $EC -ne 0 ]; then
-      log "$log_prefix: tester failed (exit=$EC), retrying"
+      TESTER_ITER=$((TESTER_ITER + 1))
+      log "$log_prefix: tester failed (exit=$EC); iteration $TESTER_ITER/$MAX_TESTER_ITER"
       continue
     fi
 
@@ -406,7 +415,9 @@ After committing the failing test, EXIT. The engineer will run next.$FRESH_HINT"
           "ic-tester ran $tdd_red_attempts times without producing a [TDD-RED] $ticket commit. Setting skip_tdd_red=true so the engineer writes both the test AND the implementation." \
           >> "$LOG" 2>&1 || true
         log "$log_prefix: skip_tdd_red=true after $tdd_red_attempts failed attempts"
+        break
       fi
+      TESTER_ITER=$((TESTER_ITER + 1))
       continue
     fi
 
