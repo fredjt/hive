@@ -81,51 +81,59 @@ log() { echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] gates dept=$DEPT $*" >&2; }
 
 log "starting gate run (strict=$GATE_REQUIRE_TESTS,$GATE_REQUIRE_LINT,$GATE_REQUIRE_SECURITY,$GATE_REQUIRE_COMMITS)"
 
-# Detect project test framework
+# Detect project test framework.
+#
+# The returned string is executed via `bash -c`, so the worktree path is
+# shell-quoted with printf %q — an unquoted $wt broke command parsing for
+# any project path containing a space (cd failed → every ticket bounced
+# on the tests-pass gate even though the tests themselves pass).
 detect_test_cmd() {
-  local wt="$1"
+  local wt="$1" qwt
+  qwt=$(printf '%q' "$wt")
   if [ -f "$wt/package.json" ] && jq -e '.scripts.test' "$wt/package.json" >/dev/null 2>&1; then
-    echo "npm test --silent --prefix $wt -- --reporter=min"
+    echo "npm test --silent --prefix $qwt -- --reporter=min"
   elif [ -f "$wt/pyproject.toml" ] || [ -f "$wt/pytest.ini" ] || [ -f "$wt/setup.cfg" ]; then
-    echo "cd $wt && pytest -q --tb=line"
+    echo "cd $qwt && pytest -q --tb=line"
   elif [ -f "$wt/Cargo.toml" ]; then
-    echo "cd $wt && cargo test --quiet"
+    echo "cd $qwt && cargo test --quiet"
   elif [ -f "$wt/go.mod" ]; then
-    echo "cd $wt && go test ./..."
+    echo "cd $qwt && go test ./..."
   else
     echo ""
   fi
 }
 
 detect_lint_cmd() {
-  local wt="$1"
+  local wt="$1" qwt
+  qwt=$(printf '%q' "$wt")
   if [ -f "$wt/package.json" ] && jq -e '.scripts.lint' "$wt/package.json" >/dev/null 2>&1; then
-    echo "npm run lint --silent --prefix $wt"
+    echo "npm run lint --silent --prefix $qwt"
   elif [ -f "$wt/pyproject.toml" ] && command -v ruff >/dev/null; then
-    echo "cd $wt && ruff check ."
+    echo "cd $qwt && ruff check ."
   elif [ -f "$wt/Cargo.toml" ]; then
-    echo "cd $wt && cargo clippy --quiet -- -D warnings"
+    echo "cd $qwt && cargo clippy --quiet -- -D warnings"
   elif [ -f "$wt/go.mod" ]; then
-    echo "cd $wt && go vet ./..."
+    echo "cd $qwt && go vet ./..."
   else
     echo ""
   fi
 }
 
 detect_security_cmd() {
-  local wt="$1"
+  local wt="$1" qwt
+  qwt=$(printf '%q' "$wt")
   if [ -f "$wt/package.json" ]; then
-    echo "cd $wt && npm audit --audit-level=high --silent"
+    echo "cd $qwt && npm audit --audit-level=high --silent"
   elif [ -f "$wt/pyproject.toml" ] || [ -f "$wt/requirements.txt" ]; then
     if command -v bandit >/dev/null; then
-      echo "cd $wt && bandit -r -f txt -ll -ll . 2>/dev/null"
+      echo "cd $qwt && bandit -r -f txt -ll -ll . 2>/dev/null"
     elif command -v pip-audit >/dev/null; then
-      echo "cd $wt && pip-audit --disable-pip"
+      echo "cd $qwt && pip-audit --disable-pip"
     fi
   elif [ -f "$wt/Cargo.toml" ] && command -v cargo-audit >/dev/null; then
-    echo "cd $wt && cargo audit --quiet"
+    echo "cd $qwt && cargo audit --quiet"
   elif [ -f "$wt/go.mod" ] && command -v govulncheck >/dev/null; then
-    echo "cd $wt && govulncheck ./..."
+    echo "cd $qwt && govulncheck ./..."
   else
     echo ""
   fi

@@ -144,3 +144,23 @@ class TestSecurityGate:
         )
         gates = json.loads(gates_file.read_text())
         assert gates["gates"]["tests-pass"]["status"] == "fail"
+
+
+class TestPathQuoting:
+    def test_worktree_path_with_space(self, tmp_path):
+        """Project paths containing a space must not break the generated
+        `cd <worktree> && pytest` command (it is run via bash -c)."""
+        project = tmp_path / "my proj" / "inner dir"
+        make_code_project(project, "T3")
+        make_company(project, "T3")
+
+        result = run_gates(project, ENGINEERING_DEPT)
+        assert result.returncode == 0, (
+            f"expected pass, got rc={result.returncode}\n"
+            f"stderr: {result.stderr}"
+        )
+        ticket = json.loads(
+            (project / ".company" / "departments" / ENGINEERING_DEPT
+             / "tickets" / "in-review" / "T3.json").read_text()
+        )
+        assert ticket["gates_passed"] is True

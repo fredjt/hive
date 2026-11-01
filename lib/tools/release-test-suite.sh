@@ -90,17 +90,22 @@ _run_with_resource_guard() {
 
 # Detect + run. Same detection table as verification-gates.sh detect_test_cmd,
 # plus CMake/ctest for C/C++ projects.
+#
+# The command string is executed via `bash -c` (inside the resource guard),
+# so the project root is shell-quoted with printf %q — an unquoted path
+# containing a space broke command parsing and failed the build for no reason.
+QROOT=$(printf '%q' "$PROJECT_ROOT")
 TEST_CMD=""
 if   [ -f "$PROJECT_ROOT/package.json" ] && jq -e '.scripts.test' "$PROJECT_ROOT/package.json" >/dev/null 2>&1; then
-  TEST_CMD="cd $PROJECT_ROOT && npm test --silent"
+  TEST_CMD="cd $QROOT && npm test --silent"
 elif [ -f "$PROJECT_ROOT/pyproject.toml" ] || [ -f "$PROJECT_ROOT/pytest.ini" ] || [ -f "$PROJECT_ROOT/setup.cfg" ]; then
-  TEST_CMD="cd $PROJECT_ROOT && pytest -q --tb=line"
+  TEST_CMD="cd $QROOT && pytest -q --tb=line"
 elif [ -f "$PROJECT_ROOT/Cargo.toml" ]; then
-  TEST_CMD="cd $PROJECT_ROOT && cargo test --quiet"
+  TEST_CMD="cd $QROOT && cargo test --quiet"
 elif [ -f "$PROJECT_ROOT/go.mod" ]; then
-  TEST_CMD="cd $PROJECT_ROOT && go test ./..."
+  TEST_CMD="cd $QROOT && go test ./..."
 elif [ -f "$PROJECT_ROOT/CMakeLists.txt" ]; then
-  TEST_CMD="cd $PROJECT_ROOT && ctest --output-on-failure"
+  TEST_CMD="cd $QROOT && ctest --output-on-failure"
 fi
 
 if [ -z "$TEST_CMD" ]; then
