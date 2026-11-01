@@ -26,6 +26,9 @@ venv/
 .DS_Store
 Thumbs.db
 
+# Local planning — never committed
+RELEASE_GOALS.md
+
 # Hive scaffold (tweakable per-project; see negation entries below to track specific tweaks)
 .hive
 # To track a specific scaffold tweak, add a negation entry, e.g.:
