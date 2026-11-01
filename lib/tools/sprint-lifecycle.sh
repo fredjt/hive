@@ -293,6 +293,16 @@ run_ticket_lifecycle() {
 
   log "$log_prefix: starting lifecycle"
 
+  # Scripted pre-spawn claim: sprint-current -> in-progress. The rest of
+  # this function assumes the ticket file lives at TFILE (the in-progress
+  # path), but a freshly-promoted ticket is still in sprint-current until
+  # we move it. Without this move the tester/engineer prompts get empty
+  # title/description and the tdd_red_attempts counter is never persisted
+  # (jq on a missing file fails silently), so the 3-strike skip_tdd_red
+  # fallback can never trigger. Bounced tickets are already in
+  # in-progress - ticket-move no-ops then.
+  scripted_move "$dept" "$ticket" in-progress "sprint-lifecycle: starting ticket lifecycle"
+
   # Ensure worktree exists
   ensure_worktree "$dept" "$ticket"
 

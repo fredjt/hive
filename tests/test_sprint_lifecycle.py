@@ -166,6 +166,9 @@ class LifecycleHarness:
             "HIVE_ROOT": str(self.hive),
             "AGENT_SPAWN_LOG": str(self.spawn_log),
             "STUB_MODE": self.mode,
+            # Cap the main loop so the safety valve fires after a handful of
+            # bounces instead of 100 - the tests only need it to trigger.
+            "HIVE_MAX_LOOP_ITERATIONS": "3",
         })
         r = subprocess.run(
             ["bash", str(LIFECYCLE), str(self.project)],
@@ -203,8 +206,12 @@ def test_tester_loop_is_bounded_when_no_tdd_red_commit(tmp_path):
     write went to the ticket file, but the loop checked a stale local read
     from before the loop, so the tester was re-spawned FOREVER (one spawn
     per ~second, unbounded API spend). Now: at most MAX_TESTER_ITER tester
-    spawns per pass, skip_tdd_red persists at strike 3, the engineer
-    takes over, and the ticket eventually bounces out via the gate loop."""
+    spawns per pass, the tdd_red_attempts counter persists at strike 3
+    (possible only once the ticket is claimed into in-progress), the
+    engineer takes over, and the ticket bounces on the gate loop until the
+    loop-iteration safety valve defers it to backlog; the release bugfix
+    cycle's sprint-fill then re-promotes it, so the run ends with the
+    ticket back in sprint-current."""
     h = LifecycleHarness(tmp_path)
     ticket_file = (h.project / ".company" / "departments" / DEPT / "tickets"
                    / "sprint-current" / f"{TICKET}.json")
@@ -214,34 +221,49 @@ def test_tester_loop_is_bounded_when_no_tdd_red_commit(tmp_path):
     assert r.returncode == 0, r.stderr
 
     # No [TDD-RED] commit is ever produced (the tester is a stub), so the
-    # 3-strike fallback must kick in: skip_tdd_red=true persisted on the
-    # ticket. The ticket then bounces on the has-commits gate until the
-    # bounce limit defers it to backlog.
-    ticket = h.ticket_at("backlog")
+    # 3-strike fallback must kick in. The ticket then bounces on the gate
+    # loop; the loop-iteration safety valve defers it to backlog, and the
+    # release bugfix cycle's sprint-fill re-promotes it - so after the run
+    # the ticket is back in sprint-current.
+    ticket = h.ticket_at("sprint-current")
     assert ticket is not None, (
-        f"ticket not in backlog. "
-        f"in-progress: {h.ticket_at('in-progress')} "
-        f"sprint-current: {h.ticket_at('sprint-current')}\n"
+        f"ticket not in sprint-current after the release bugfix cycle. "
+        f"backlog: {h.ticket_at('backlog')} "
+        f"in-progress: {h.ticket_at('in-progress')}\n"
         f"stderr: {r.stderr}"
     )
-    assert ticket.get("skip_tdd_red") is True, (
-        "skip_tdd_red was never persisted - the tdd_red_attempts counter "
-        "wrote to a missing file (ticket not in in-progress during TDD-RED)"
+    assert ticket.get("tdd_red_attempts") == 3, (
+        "tdd_red_attempts never reached 3 - the counter writes went to a "
+        "missing file (ticket not claimed into in-progress during TDD-RED)"
     )
 
-    # The tester was actually run (3 attempts), and the prompts it and the
-    # engineer received carry the stage marker AND the ticket title, which
-    # only exists in TFILE once the ticket lives in in-progress.
+    # The tester ran exactly 3 times IN TOTAL (all on pass 1; later passes
+    # skip it via the persisted state), and every pass spawned an engineer.
     testers = h.spawn_blocks("ic-tester")
     engineers = h.spawn_blocks("ic-engineer")
     assert len(testers) == 3, f"expected 3 tester attempts, got {len(testers)}"
-    assert engineers, "engineer was never spawned"
+    assert len(engineers) == 3, (
+        f"expected an engineer on every pass, got {len(engineers)}"
+    )
     for _agent, _stage, prompt in testers + engineers:
         assert "--- STAGE: " in prompt
+        # The prompts carry the ticket title: it is only present once the
+        # ticket lives in in-progress (the scripted pre-spawn claim), where
+        # TFILE points. Before the claim, a sprint-current ticket yields an
+        # empty title/description in the prompt.
+        assert TITLE in prompt, (
+            "ticket title missing from agent prompt - ticket was not in "
+            "in-progress (pre-spawn claim) when the prompt was built"
+        )
     assert "--- STAGE: tdd-red" in testers[0][2]
     assert "--- STAGE: tdd-green" in engineers[0][2]
 
-    # The gate bounces were recorded on the ticket.
-    gate_comments = [c for c in ticket.get("comments", [])
-                     if "GATE FAILURE" in (c.get("body") or "")]
-    assert gate_comments, "no GATE FAILURE comments on the deferred ticket"
+    # The gate bounces are recorded on the ticket as comments; the
+    # safety-valve deferral (in-progress -> backlog) lands in the lifecycle
+    # log (ticket-move only appends comments for done / in-progress moves).
+    bodies = " ".join((c.get("body") or "") for c in ticket.get("comments", []))
+    assert "GATE FAILURE" in bodies, "no GATE FAILURE comments on the ticket"
+    assert "safety valve" in r.stderr.lower(), (
+        "no safety-valve deferral in the lifecycle log - the bounce loop "
+        f"was not bounded\nstderr: {r.stderr}"
+    )
