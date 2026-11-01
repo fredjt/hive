@@ -508,3 +508,49 @@ class TestGithubToolModule:
                 os.environ["PYTHONPATH"] = old_path
             else:
                 os.environ.pop("PYTHONPATH", None)
+
+
+@pytest.mark.skipif(not _HAS_FASTMCP, reason='mcp server not available')
+class TestTicketRouteExpeditedTool:
+    """ticket_route_expedited must actually create the expedited ticket.
+
+    Regression: the MCP wrapper passed (dept, ticket_id, priority) but
+    ticket-route-expedited.sh expects
+    (type, priority, title, description, created_by, target_department),
+    so every call died at the script's usage check with rc=1.
+    Separately, the script's SKILLS_DIR default pointed at
+    $HIVE_ROOT/lib/agents (agent prompt files), so the internal
+    ticket-create.sh invocation resolved to a nonexistent path.
+    """
+
+    def test_tool_creates_expedited_ticket(self, install_dir, tmp_company_dir):
+        sys_path = str(install_dir / "lib")
+        old_path = os.environ.get("PYTHONPATH", "")
+        if sys_path not in old_path:
+            os.environ["PYTHONPATH"] = sys_path + (":" + old_path if old_path else "")
+
+        try:
+            from hive_mcp.server import build_server
+            server = build_server()
+            fn = server._tool_manager._tools["ticket_route_expedited"].fn
+            (tmp_company_dir / "logs").mkdir(exist_ok=True)
+            result = fn(
+                type="bug",
+                priority="critical",
+                title="DB connection pool exhausted",
+                description="Production blocker: pool saturates under load",
+                created_by="VP-RD",
+                target_department="rd",
+                company_dir=str(tmp_company_dir),
+            )
+            assert result.get("ok") is True, result
+            tickets = list((tmp_company_dir / "departments" / "rd" / "tickets" / "backlog").glob("*.json"))
+            assert len(tickets) == 1, f"expected 1 expedited ticket, got {len(tickets)}"
+            data = json.loads(tickets[0].read_text())
+            assert data["title"] == "DB connection pool exhausted"
+            assert data["source"] == "expedited-routing"
+        finally:
+            if old_path:
+                os.environ["PYTHONPATH"] = old_path
+            else:
+                os.environ.pop("PYTHONPATH", None)

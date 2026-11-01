@@ -273,16 +273,24 @@ def register(server: Server) -> None:
 
     @server.tool()
     def ticket_route_expedited(
-        dept: str,
-        ticket_id: str,
-        priority: str = "HIGH",
+        type: str,
+        priority: str,
+        title: str,
+        description: str,
+        created_by: str,
+        target_department: str,
+        estimate: str | None = None,
         company_dir: str | None = None,
     ) -> dict:
-        """Bypass review queue for HIGH/CRITICAL blockers — routes directly to dept."""
-        return run(
-            "ticket-route-expedited",
-            dept,
-            ticket_id,
-            priority,
-            company_dir=company_dir,
-        ).to_dict()
+        """Create an expedited ticket directly on the target dept's backlog,
+        bypassing the normal review queue. For HIGH/CRITICAL blockers only.
+
+        The script enforces: priority must be high|critical and type must be
+        bug|infrastructure. Returns the new ticket ID (or the duplicate's ID
+        if a ticket with the same title already exists). The CEO gets a
+        tracking notification.
+        """
+        args = [type, priority, title, description, created_by, target_department]
+        if estimate:
+            args.append(estimate)
+        return run("ticket-route-expedited", *args, company_dir=company_dir).to_dict()

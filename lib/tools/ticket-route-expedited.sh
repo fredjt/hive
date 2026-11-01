@@ -15,7 +15,9 @@
 # the review bottleneck for clear infrastructure/blocker issues.
 
 COMPANY_DIR="${COMPANY_DIR:-.company}"
-SKILLS_DIR="${SKILLS_DIR:-$HIVE_ROOT/lib/agents}"
+# lib/ holds tools/ (bash scripts) and agents/ (prompt files); the tools
+# live under lib/tools, so the default must point at lib, not lib/agents.
+SKILLS_DIR="${SKILLS_DIR:-$HIVE_ROOT/lib}"
 
 TYPE="$1"
 PRIORITY="$2"

@@ -331,12 +331,17 @@ Args:
   - `company_dir`: ?
 
 ### `ticket_route_expedited`
-Bypass CEO inbox for HIGH/CRITICAL blockers — routes directly to dept.
+Create an expedited ticket directly on the target dept's backlog,
+bypassing the review queue. HIGH/CRITICAL blockers only.
 
 Args:
-  - `dept`: string (required)
-  - `ticket_id`: string (required)
-  - `priority`: string
+  - `type`: string (required) — bug | infrastructure
+  - `priority`: string (required) — high | critical
+  - `title`: string (required)
+  - `description`: string (required)
+  - `created_by`: string (required)
+  - `target_department`: string (required)
+  - `estimate`: string
   - `company_dir`: ?
 
 ### `triage_test_failure`
