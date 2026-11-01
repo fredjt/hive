@@ -198,6 +198,60 @@ class TestTicketTargeting:
         result = run_gates(project, ENGINEERING_DEPT, "--ticket", "NOPE")
         assert result.returncode == 2
 
+
+class TestSkipTddRedFlag:
+    """Regression: skip_tdd_red=true must NOT be a hard gate bounce.
+
+    The flag means 'skip the tester; the engineer works the ticket'
+    (ticket-bounce.sh --skip-tdd-red, the PR-merge-conflict rollback, and
+    the 3-strike tester fallback all set it), and NOTHING clears it - it
+    survives to done. A gate-0 bounce on it made every flagged ticket a
+    permanent zombie: the engineer re-spawns, the ticket bounces, repeat,
+    until the loop safety valve defers it - for every sprint, forever, and
+    the ticket could never be verified. Flagged in-review tickets must be
+    evaluated by the real gates (a branch with no test commit fails the
+    TDD-order gate for the right reason)."""
+
+    def test_flagged_ticket_with_green_tests_passes(self, space_free_proj):
+        project = space_free_proj
+        make_code_project(project, "T9")  # [TDD-RED] commit, tests pass
+        make_company(project, "T9")
+
+        tf = (project / ".company" / "departments" / ENGINEERING_DEPT
+              / "tickets" / "in-review" / "T9.json")
+        t = json.loads(tf.read_text())
+        t["skip_tdd_red"] = True
+        tf.write_text(json.dumps(t, indent=2))
+
+        result = run_gates(project, ENGINEERING_DEPT)
+        assert result.returncode == 0, (
+            f"rc={result.returncode} - a skip_tdd_red ticket must be gated "
+            f"on its actual work, not bounced on the flag\n"
+            f"stdout: {result.stdout}\nstderr: {result.stderr}"
+        )
+
+        ticket = json.loads(tf.read_text())
+        assert ticket["gates_passed"] is True
+
+    def test_flagged_ticket_with_failing_tests_still_fails(self, space_free_proj):
+        """Removing the flag bounce must not mask real gate failures."""
+        project = space_free_proj
+        make_code_project(project, "T10", passing_tests=False)
+        make_company(project, "T10")
+
+        tf = (project / ".company" / "departments" / ENGINEERING_DEPT
+              / "tickets" / "in-review" / "T10.json")
+        t = json.loads(tf.read_text())
+        t["skip_tdd_red"] = True
+        tf.write_text(json.dumps(t, indent=2))
+
+        result = run_gates(project, ENGINEERING_DEPT)
+        assert result.returncode == 2
+        # A failing gate bounced the ticket out of in-review.
+        ticket = json.loads((project / ".company" / "departments" / ENGINEERING_DEPT
+                             / "tickets" / "in-progress" / "T10.json").read_text())
+        assert ticket.get("gates_passed") is not True
+
     def test_already_gated_ticket_is_not_re_gated(self, space_free_proj):
         """Second run over an already-gates_passed ticket must be a no-op:
         no re-run of the test suite, no duplicate 'gates passed' comment."""

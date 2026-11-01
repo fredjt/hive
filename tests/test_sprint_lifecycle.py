@@ -236,6 +236,10 @@ def test_tester_loop_is_bounded_when_no_tdd_red_commit(tmp_path):
         "tdd_red_attempts never reached 3 - the counter writes went to a "
         "missing file (ticket not claimed into in-progress during TDD-RED)"
     )
+    assert not ticket.get("skip_tdd_red"), (
+        "the 3-strike fallback set the skip_tdd_red flag - that flag is "
+        "never cleared and zombie-ifies the ticket at the gates"
+    )
 
     # The tester ran exactly 3 times IN TOTAL (all on pass 1; later passes
     # skip it via the persisted state), and every pass spawned an engineer.
@@ -258,11 +262,19 @@ def test_tester_loop_is_bounded_when_no_tdd_red_commit(tmp_path):
     assert "--- STAGE: tdd-red" in testers[0][2]
     assert "--- STAGE: tdd-green" in engineers[0][2]
 
-    # The gate bounces are recorded on the ticket as comments; the
-    # safety-valve deferral (in-progress -> backlog) lands in the lifecycle
-    # log (ticket-move only appends comments for done / in-progress moves).
+    # The 3-strike comment and the gate bounces are recorded on the ticket
+    # as comments; the safety-valve deferral (in-progress -> backlog) lands
+    # in the lifecycle log (ticket-move only appends comments for done /
+    # in-progress moves).
     bodies = " ".join((c.get("body") or "") for c in ticket.get("comments", []))
+    assert "Skipping the tester from now on" in bodies, (
+        "no 3-strike tester-exhausted comment on the ticket"
+    )
     assert "GATE FAILURE" in bodies, "no GATE FAILURE comments on the ticket"
+    assert "no commits" in bodies.lower(), (
+        "the gate bounce did not cite the missing commits - it bounced on "
+        "the skip_tdd_red zombie gate instead of evaluating the branch"
+    )
     assert "safety valve" in r.stderr.lower(), (
         "no safety-valve deferral in the lifecycle log - the bounce loop "
         f"was not bounded\nstderr: {r.stderr}"

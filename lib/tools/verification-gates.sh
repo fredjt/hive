@@ -26,7 +26,7 @@ set -euo pipefail
 #
 # Return codes:
 #   0 — all gates passed
-#   1 — skip_tdd_red flag set (ticket should bounce to tdd-red)
+#   1 — usage error (bad arguments)
 #   2 — one or more gates failed (ticket bounced to in-progress)
 #
 # Configuration via env:
@@ -264,16 +264,16 @@ if [ "$IS_CODE" = false ]; then
   exit 0
 fi
 
-# ── Gate 0: skip_tdd_red flag ──────────────────────────────────────
-# If the engineer has set skip_tdd_red=true, it means the test needs
-# rework (not the implementation). Bounce to tdd-red instead of running
-# the remaining gates.
-SKIP_RED=$(jq -r '.skip_tdd_red // false' "$TICKET_FILE" 2>/dev/null)
-if [ "$SKIP_RED" = "true" ]; then
-  log "  skip_tdd_red=true set — bouncing to tdd-red (test needs rework)"
-  bounce_ticket "$TID" "skip_tdd_red: engineer flagged that the test needs rework"
-  exit 1
-fi
+# NOTE: skip_tdd_red=true is deliberately NOT a gate. The flag means
+# "skip the tester; the engineer works the ticket directly" (set by
+# ticket-bounce.sh --skip-tdd-red, the PR-merge-conflict rollback, and
+# the 3-strike tester fallback), and NOTHING clears it - it survives to
+# done. Bouncing every flagged ticket here made them permanent zombies:
+# engineer re-spawns, ticket bounces, repeat, until the loop safety
+# valve defers it, for every sprint, forever. The ticket is in in-review
+# because the engineer just exited 0, so the real gates below evaluate
+# its actual work; a branch with no test commit fails Gate 3a (TDD
+# order) for the right reason.
 
 # ── Gate 1: Worktree exists ─────────────────────────────────────────
 if [ ! -d "$WORKTREE" ]; then

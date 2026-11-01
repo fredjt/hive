@@ -315,10 +315,10 @@ run_ticket_lifecycle() {
   # ── Phase 1: TDD-RED (tester) ──
   # Bounded: each lifecycle pass gets at most MAX_TESTER_ITER tester spawns.
   # An unbounded `while true` here spun forever when the tester never
-  # produced a [TDD-RED] commit: skip_red was read ONCE before the loop,
-  # so the file-level skip_tdd_red=true written at strike 3 was invisible
-  # to the loop (stale local), and `continue` re-spawned the tester
-  # indefinitely — same for a persistently failing agent-spawn (EC!=0).
+  # produced a [TDD-RED] commit: the strike-3 marker was read ONCE before
+  # the loop, so the file-level write at strike 3 was invisible to the
+  # loop (stale local), and `continue` re-spawned the tester indefinitely
+  # — same for a persistently failing agent-spawn (EC!=0).
   local HAS_RED TITLE DESC FRESH_HINT PROMPT LOG_TO
   local TESTER_ITER=0
   local MAX_TESTER_ITER=3
@@ -335,8 +335,8 @@ run_ticket_lifecycle() {
       break
     fi
 
-    if [ "$skip_red" = "true" ]; then
-      log "$log_prefix: skip_tdd_red=true, skipping tester"
+    if [ "$skip_red" = "true" ] || [ "$tdd_red_attempts" -ge 3 ]; then
+      log "$log_prefix: skipping tester (skip_tdd_red=$skip_red, attempts=$tdd_red_attempts)"
       break
     fi
 
@@ -420,11 +420,15 @@ After committing the failing test, EXIT. The engineer will run next.$FRESH_HINT"
       jq --argjson n "$tdd_red_attempts" '.tdd_red_attempts = $n' "$TFILE" > "${TFILE}.tmp.$$" && mv "${TFILE}.tmp.$$" "$TFILE"
       log "$log_prefix: no [TDD-RED] commit (attempt $tdd_red_attempts)"
       if [ "$tdd_red_attempts" -ge 3 ]; then
-        jq '.skip_tdd_red = true' "$TFILE" > "${TFILE}.tmp.$$" && mv "${TFILE}.tmp.$$" "$TFILE"
+        # Do NOT set skip_tdd_red here: that flag means 'skip the tester,
+        # the engineer works it' and is never cleared, so it would also
+        # poison the verifier bounce / merge-conflict semantics later. The
+        # persisted tdd_red_attempts counter above is what makes later
+        # passes skip the tester.
         bash "$SKILL_DIR/lib/tools/ticket-comment.sh" "$dept" "$ticket" "sprint-lifecycle" \
-          "ic-tester ran $tdd_red_attempts times without producing a [TDD-RED] $ticket commit. Setting skip_tdd_red=true so the engineer writes both the test AND the implementation." \
+          "ic-tester ran $tdd_red_attempts times without producing a [TDD-RED] $ticket commit. Skipping the tester from now on; the engineer writes both the test AND the implementation." \
           >> "$LOG" 2>&1 || true
-        log "$log_prefix: skip_tdd_red=true after $tdd_red_attempts failed attempts"
+        log "$log_prefix: tester exhausted after $tdd_red_attempts failed attempts"
         break
       fi
       TESTER_ITER=$((TESTER_ITER + 1))
@@ -437,7 +441,7 @@ After committing the failing test, EXIT. The engineer will run next.$FRESH_HINT"
 
   # ── Phase 2: TDD-GREEN (engineer) ──
   log "$log_prefix: spawning ic-cycle-engineer"
-  local AGENT TYPE HAS_REJECTION REWORK_HINT CONFLICT_HINT LAST_REJECTION LAST_CONFLICT
+  local AGENT TYPE HAS_REJECTION REWORK_HINT CONFLICT_HINT LAST_REJECTION LAST_CONFLICT TDD_STATE
 
   TITLE=$(jq -r '.title // ""' "$TFILE" 2>/dev/null)
   DESC=$(jq -r '.description // ""' "$TFILE" 2>/dev/null)
@@ -446,6 +450,15 @@ After committing the failing test, EXIT. The engineer will run next.$FRESH_HINT"
     infra|infrastructure|chore-infra) AGENT="ic-infra" ;;
     *) AGENT="ic-engineer" ;;
   esac
+
+  # HAS_RED survived the TDD-RED loop: 1 = a [TDD-RED] commit is on the
+  # branch; 0 = the tester never produced one (skipped or exhausted), so
+  # the engineer must write the failing test itself.
+  if [ "$HAS_RED" = "1" ]; then
+    TDD_STATE="The branch has a [TDD-RED] commit (the failing test)."
+  else
+    TDD_STATE="The branch has NO [TDD-RED] commit - the tester could not produce one. Write the failing test first (commit prefix [TDD-RED] $ticket: <summary>), THEN the implementation. Both commits are required."
+  fi
 
   # Detect bounce-rework state
   HAS_REJECTION=$(jq -r '
@@ -506,7 +519,7 @@ $DESC
 Worktree: $PROJECT_ROOT/.worktrees/$ticket
 Branch:   $BRANCH
 
-The branch already has a [TDD-RED] commit (the failing test).
+$TDD_STATE
 
 ═══════════════════════════════════════════════════════════════════════════
 THINK BEFORE YOU EDIT
@@ -573,18 +586,14 @@ After exit 0, this script will:
   GATE_LOG="$GATE_LOG" bash "$SKILL_DIR/lib/tools/verification-gates.sh" \
     "$dept" "$PROJECT_ROOT" --ticket "$ticket" || GATES_RC=$?
 
-  if [ "$GATES_RC" -eq 1 ]; then
-    # skip_tdd_red flag set — bounce to tdd-red
-    log "$log_prefix: skip_tdd_red flag set — bouncing to tdd-red"
-    jq '.bounce_count = ((.bounce_count // 0) + 1)' "$TFILE" > "${TFILE}.tmp.$$" && mv "${TFILE}.tmp.$$" "$TFILE"
-    scripted_move "$dept" "$ticket" in-progress "Engineer flagged skip_tdd_red: test needs rework"
-    jq '.skip_tdd_red = true' "$TFILE" > "${TFILE}.tmp.$$" && mv "${TFILE}.tmp.$$" "$TFILE"
-    return 1
-  elif [ "$GATES_RC" -ne 0 ]; then
-    # Gates failed — bounce to tdd-green
+  if [ "$GATES_RC" -ne 0 ]; then
+    # Gates failed (rc=2) or usage error (rc=1) — bounce to tdd-green.
+    # On a real gate failure, verification-gates.sh's bounce_ticket has
+    # already moved the ticket back to in-progress, so TFILE exists and
+    # the counter write below lands.
     log "$log_prefix: gates failed (rc=$GATES_RC) — bouncing to tdd-green"
     jq '.bounce_count = ((.bounce_count // 0) + 1)' "$TFILE" > "${TFILE}.tmp.$$" && mv "${TFILE}.tmp.$$" "$TFILE"
-    scripted_move "$dept" "$ticket" in-progress "Gate failure"
+    scripted_move "$dept" "$ticket" in-progress "Gate failure (rc=$GATES_RC)"
     return 1
   fi
 
