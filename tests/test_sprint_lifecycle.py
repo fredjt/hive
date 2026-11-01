@@ -55,6 +55,37 @@ case "${STUB_MODE:-noop}" in
         >> "$AGENT_SPAWN_LOG" 2>&1
     fi
     ;;
+  go)
+    # Clean release: approve the ticket on verify; release-ic writes a GO
+    # verdict to the sprint-state verify log on release-verify.
+    if printf '%s' "$PROMPT" | grep -q -- "--- STAGE: verify"; then
+      bash "$SKILL_DIR/lib/tools/ticket-approve.sh" "$HIVE_DEPT" "$HIVE_TICKET" \
+        "stub-verifier" "Stub approval: every numbered acceptance criterion verified, edge cases from the ticket probed, deterministic gates already green." \
+        >> "$AGENT_SPAWN_LOG" 2>&1
+    elif printf '%s' "$PROMPT" | grep -q -- "--- STAGE: release-verify"; then
+      VLOG=$(jq -r '.release.verify_log // empty' "$COMPANY_DIR/sprints/current.json" 2>/dev/null)
+      if [ -n "$VLOG" ]; then
+        {
+          echo "VERDICT: GO"
+          echo "RATIONALE: Stub release verification: all release gates passed."
+        } >> "$VLOG" 2>> "$AGENT_SPAWN_LOG"
+      fi
+    fi
+    ;;
+  nogo)
+    # Release NO-GO: release-ic writes a NO-GO verdict with blockers.
+    if printf '%s' "$PROMPT" | grep -q -- "--- STAGE: release-verify"; then
+      VLOG=$(jq -r '.release.verify_log // empty' "$COMPANY_DIR/sprints/current.json" 2>/dev/null)
+      if [ -n "$VLOG" ]; then
+        {
+          echo "VERDICT: NO-GO"
+          echo "RATIONALE: Stub release verification: the release is not shippable."
+          echo "BLOCKERS:"
+          echo "- Stub blocker: release candidate failed its smoke check"
+        } >> "$VLOG" 2>> "$AGENT_SPAWN_LOG"
+      fi
+    fi
+    ;;
 esac
 exit 0
 '''
@@ -192,6 +223,13 @@ class LifecycleHarness:
         )
         self.result = r
         return r
+
+    @property
+    def sprint_archive(self):
+        """Most recent archived sprint JSON (Path; may not exist)."""
+        hist = self.project / ".company" / "sprints" / "history"
+        files = sorted(hist.glob("sprint-*.json"))
+        return files[-1] if files else hist / ".none"
 
     def ticket_at(self, *status):
         for s in status:
@@ -419,3 +457,110 @@ def test_gate_failure_bounce_hits_per_ticket_cap(tmp_path):
         f"expected exactly 2 gate bounces before cap deferral, saw "
         f"{n_gate_bounces}"
     )
+
+# ─────────────────────────────────────────────────────────────────────────────
+# A.3 — Release pipeline terminal paths
+#
+# The release pipeline (build-and-test → release-verify → publish →
+# vp-review → archive) is ~900 lines' worth of state machine that the
+# earlier tests only exercised incidentally (no verdict → NO-GO). These
+# scenario tests drive each terminal path end-to-end: clean GO release,
+# NO-GO retry, retry-cap → vp-review. (The safety-valve deferral path is
+# covered by the tester-loop / gate-bounce tests above.)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def test_clean_release_terminal_path(tmp_path):
+    """Release goal A.3: ticket work verified + approved, release
+    verdict GO, publish attempted, sprint archived and a new sprint
+    started. The whole terminal path, start to finish."""
+    h = LifecycleHarness(tmp_path, mode="go", with_code_branch=True)
+    ticket_file = (h.project / ".company" / "departments" / DEPT / "tickets"
+                   / "sprint-current" / f"{TICKET}.json")
+    ticket_file.write_text(_ticket_json("sprint-current"))
+
+    r = h.run()
+    assert r.returncode == 0, r.stderr
+
+    # The ticket reached done through the verifier's atomic approval; the
+    # sprint-end sweep (sprint-archive-done.sh) then moves done -> archive.
+    ticket = h.ticket_at("done", "archive")
+    assert ticket is not None, (
+        f"ticket did not reach done/archive\nstderr: {r.stderr[-800:]}"
+    )
+    assert ticket.get("status") == "done"
+    assert ticket.get("verified_by") == "stub-verifier"
+    assert ticket.get("gates_passed") is True
+
+    # GO was parsed and the sprint archived with the release record.
+    assert h.sprint_archive.exists(), (
+        f"sprint was not archived\nstderr: {r.stderr[-800:]}"
+    )
+    data = json.loads(h.sprint_archive.read_text())
+    assert data.get("stage") == "complete"
+    rel = data.get("release", {})
+    assert rel.get("verdict") == "GO"
+    # No tarball exists in the sandbox, so the publish attempt fails
+    # cleanly - the stage still records that it was attempted.
+    assert rel.get("publish_status") in ("published", "failed")
+    assert "release published" in r.stderr or "release-publish FAILED" in r.stderr
+
+    # A fresh sprint must have started for the next round.
+    current = json.loads(
+        (h.project / ".company" / "sprints" / "current.json").read_text()
+    )
+    assert current.get("stage") == "ceo-plan"
+    assert current.get("sprint_id") != data.get("sprint_id")
+
+
+def test_no_go_retry_terminal_path(tmp_path):
+    """Release goal A.3: a NO-GO verdict consumes one release retry and
+    re-enters the bugfix cycle (fresh planning + sprint-fill) instead of
+    archiving the sprint."""
+    h = LifecycleHarness(tmp_path, mode="nogo")  # no tickets: pure release path
+
+    r = h.run()
+    assert r.returncode == 0, r.stderr
+
+    # NO-GO was parsed and the bugfix cycle re-entered.
+    assert "release-verify NO-GO" in r.stderr, (
+        f"NO-GO verdict not processed\nstderr: {r.stderr[-800:]}"
+    )
+    assert "running bugfix cycle (attempt 1)" in r.stderr
+
+    # The retry was counted and the sprint re-armed for another pass.
+    state = json.loads((h.project / ".company" / "sprints" / "current.json").read_text())
+    assert state.get("release_retry_count") == 1
+    assert state.get("stage") == "tdd-red"
+    assert not h.sprint_archive.exists(), (
+        "a NO-GO sprint must not be archived on the first retry"
+    )
+
+
+def test_retry_cap_terminal_path(tmp_path):
+    """Release goal A.3: once the release retry cap is exceeded the
+    lifecycle stops retrying and defers to vp-review with the failure
+    recorded (publish_status=failed) - the operator / VPs surface the
+    blocker instead of the loop churning forever."""
+    h = LifecycleHarness(tmp_path, mode="nogo", preset_release_retries=3)
+    # HIVE_MAX_RELEASE_RETRIES defaults to 3; the next retry would be 4.
+
+    r = h.run()
+    assert r.returncode == 0, r.stderr
+
+    assert "retry cap exceeded" in r.stderr, (
+        f"retry cap not enforced\nstderr: {r.stderr[-800:]}"
+    )
+    # After the cap the run still finishes through vp-review and the
+    # sprint is archived with the failure recorded; a fresh sprint starts.
+    assert h.sprint_archive.exists(), (
+        f"sprint was not archived\nstderr: {r.stderr[-800:]}"
+    )
+    data = json.loads(h.sprint_archive.read_text())
+    assert data.get("release_retry_count") == 4
+    assert data.get("release", {}).get("publish_status") == "failed"
+    assert data.get("release", {}).get("verdict") == "NO-GO"
+    current = json.loads(
+        (h.project / ".company" / "sprints" / "current.json").read_text()
+    )
+    assert current.get("stage") == "ceo-plan"
+    assert current.get("sprint_id") != data.get("sprint_id")

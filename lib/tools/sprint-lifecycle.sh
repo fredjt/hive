@@ -711,9 +711,13 @@ After approve or bounce, EXIT. This script handles the status move."
   fi
 
   # Check verifier result: approved → done; bounced → in-progress
-  CURRENT_STATUS=$(jq -r '.status // "unknown"' \
-    "$TFILE" 2>/dev/null)
-  if [ "$CURRENT_STATUS" = "unknown" ]; then
+  # jq on a missing file prints NOTHING (the // fallback only covers a
+  # null value), so an approved ticket (moved to done, TFILE gone) used to
+  # read as empty status and fall into the "bounced" branch below - wrong
+  # log line, and the done-path check never ran. Treat empty as
+  # "file gone; look at the done location".
+  CURRENT_STATUS=$(jq -r '.status // empty' "$TFILE" 2>/dev/null)
+  if [ -z "$CURRENT_STATUS" ]; then
     CURRENT_STATUS=$(jq -r '.status // "unknown"' \
       "$COMPANY_DIR/departments/$dept/tickets/done/${ticket}.json" 2>/dev/null)
   fi
@@ -878,8 +882,10 @@ VERDICT=$(grep -m1 -E '^VERDICT:' "$VERIFY_LOG_PATH" 2>/dev/null | awk -F: '{gsu
 
 if [ "$VERDICT" = "GO" ]; then
   log "release-verify GO"
+  ss_set_release_field verdict GO
 else
   log "release-verify NO-GO (verdict=$VERDICT)"
+  ss_set_release_field verdict NO-GO
   ss_inc_release_retry
   RETRY=$(ss_get_field .release_retry_count)
   if [ "$RETRY" -gt "$MAX_RELEASE_RETRIES" ]; then
@@ -904,8 +910,10 @@ fi
 # Release-publish
 log "release-publish: running"
 if bash "$SKILL_DIR/lib/tools/release-publish-runner.sh" "$PROJECT_ROOT"; then
+  ss_set_release_field publish_status published
   log "release-publish OK"
 else
+  ss_set_release_field publish_status failed
   log "release-publish FAILED — proceeding to vp-review anyway"
 fi
 
