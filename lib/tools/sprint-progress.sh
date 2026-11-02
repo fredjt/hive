@@ -24,13 +24,15 @@ done
 DEPT_DIR="$COMPANY_DIR/departments"
 
 if [ "$JSON" = true ]; then
-  python3 -c "
+  # env + quoted heredoc: a $DEPT_DIR spliced into python source broke on
+  # any path with an apostrophe (goal 8 - no python3 -c "..." with bash vars).
+  DEPT_DIR="$DEPT_DIR" python3 - <<'PYEOF'
 import json, os, glob
 
 result = {'departments': {}, 'totals': {'backlog': 0, 'sprint-current': 0, 'in-progress': 0, 'in-review': 0, 'done': 0, 'archive': 0}}
 
-for dept in sorted(os.listdir('$DEPT_DIR')):
-    tdir = os.path.join('$DEPT_DIR', dept, 'tickets')
+for dept in sorted(os.listdir(os.environ['DEPT_DIR'])):
+    tdir = os.path.join(os.environ['DEPT_DIR'], dept, 'tickets')
     if not os.path.isdir(tdir):
         continue
     counts = {}
@@ -43,7 +45,7 @@ for dept in sorted(os.listdir('$DEPT_DIR')):
     result['departments'][dept] = counts
 
 print(json.dumps(result, indent=2))
-"
+PYEOF
 else
   printf "%-30s %7s %7s %7s %7s %7s %7s\n" "Department" "Backlog" "Sprint" "Active" "Review" "Done" "Archive"
   printf "%-30s %7s %7s %7s %7s %7s %7s\n" "------------------------------" "-------" "-------" "-------" "-------" "-------" "-------"

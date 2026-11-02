@@ -270,16 +270,19 @@ fi
 
 # Block moving to in-review unless the ticket has an assignee
 if [ "$NEW_STATUS" = "in-review" ]; then
-  HAS_ASSIGNEE=$(python3 -c "
-import json
-t=json.load(open('$FOUND'))
+  # env + quoted heredoc: $FOUND spliced into python source broke on any
+  # path with an apostrophe (goal 8 - no python3 -c "..." with bash vars).
+  HAS_ASSIGNEE=$(FOUND="$FOUND" python3 - <<'PYEOF'
+import json, os
+t=json.load(open(os.environ['FOUND']))
 a=t.get('assignee',{})
 name=a.get('name','') if isinstance(a,dict) else str(a) if a else ''
 if name and name not in ('Unassigned','Unassigned - will be claimed by IC','unassigned',''):
     print('yes')
 else:
     print('no')
-" 2>/dev/null)
+PYEOF
+)
   if [ "$HAS_ASSIGNEE" != "yes" ] && [ "$HIVE_SCRIPTED_MOVE_ENV" != "1" ]; then
     echo "ERROR: $TICKET_ID — agents do not move tickets to in-review directly." >&2
     echo "" >&2

@@ -1,5 +1,6 @@
 """Tests for hive bash scripts — invoke and check exit codes/output."""
 import sys
+import re
 import json
 import os
 import subprocess
@@ -311,6 +312,56 @@ class TestQuotedProjectPaths:
         assert data["count"] == 1, f"expected 1 message, got: {r.stdout[:200]}"
         assert data["messages"][0]["message"] == "Hello world"
 
+    def test_sprint_progress_json(self, quoted_company_dir):
+        """Regression (goal 8): sprint-progress.sh --json spliced $DEPT_DIR
+        into python3 -c source (os.listdir('$DEPT_DIR')). An apostrophe in
+        the path raised SyntaxError on stderr, stdout was empty, and the
+        dashboard got no data. The JSON must parse and count the ticket."""
+        env = {"COMPANY_DIR": str(quoted_company_dir)}
+        r = run_script(
+            f"{SCRIPTS_DIR}/ticket-create.sh",
+            ["it", "feature", "medium", "Progress check", "desc"], env=env,
+        )
+        assert r.returncode == 0, r.stderr
+
+        r = run_script(f"{SCRIPTS_DIR}/sprint-progress.sh", ["--json"], env=env)
+        assert r.returncode == 0, r.stderr
+        data = json.loads(r.stdout)
+        assert data["totals"]["backlog"] == 1, (
+            f"no ticket counted for quoted path; stdout: {r.stdout[:200]}"
+        )
+        assert data["departments"]["it"]["backlog"] == 1
+
+    def test_ticket_move_in_review_with_assignee(self, quoted_company_dir):
+        """Regression (goal 8): ticket-move.sh's in-review assignee check
+        spliced $FOUND into python3 -c source (open('$FOUND')). An
+        apostrophe in the path raised SyntaxError (stderr discarded via
+        2>/dev/null), HAS_ASSIGNEE came back empty, and EVERY in-review
+        move was blocked — even tickets with a valid assignee. The check
+        must actually read the ticket file."""
+        env = {"COMPANY_DIR": str(quoted_company_dir)}
+        r = run_script(
+            f"{SCRIPTS_DIR}/ticket-create.sh",
+            ["it", "feature", "medium", "Review check", "desc"], env=env,
+        )
+        assert r.returncode == 0, r.stderr
+        tid = r.stdout.strip()
+        tf = quoted_company_dir / "departments" / "it" / "tickets" / "backlog" / f"{tid}.json"
+        data = json.loads(tf.read_text())
+        data["assignee"] = {"name": "IC-Engineer", "id": "ic-eng-1"}
+        tf.write_text(json.dumps(data, indent=2))
+
+        r = run_script(
+            f"{SCRIPTS_DIR}/ticket-move.sh",
+            ["it", tid, "in-review", "work done", "IC-Engineer"],
+            env={**env, "HIVE_ROLE": "IC"},
+        )
+        assert r.returncode == 0, (
+            f"in-review move was blocked for a quoted path: {r.stderr[:300]}"
+        )
+        assert (quoted_company_dir / "departments" / "it" / "tickets"
+                / "in-review" / f"{tid}.json").exists()
+
 
 class TestGitWorktreeCreate:
     """git-worktree.sh create must be non-destructive for existing worktrees.
@@ -503,6 +554,90 @@ class TestTicketMoveScript:
             "skip_tdd_red survived the done move"
         )
         assert data["resolution"]["status"] == "implemented"
+
+
+# python3 -c with a DOUBLE-quoted program: a literal quote, then any run of
+# (non-quote, non-backslash char) or (backslash + any char), then the
+# closing quote. A $ anywhere inside means bash interpolated into python
+# source — the bug class this guard closes. Single-quoted programs and
+# env-var + quoted-heredoc forms do not match.
+_PYC_INTERP_RE = re.compile(r'python3?\s+-c\s+"((?:[^"\\]|\\.)*)"')
+
+
+def _find_python_c_interpolation(text):
+    """Return [(line, code)] for every double-quoted python3 -c program in
+    shell source that contains a $ — i.e. a bash variable or
+    command substitution spliced into python source. Single-quoted programs
+    (no interpolation happens) and env-var + quoted-heredoc patterns are
+    safe and do not match."""
+    return [
+        (text.count("\n", 0, m.start()) + 1, m.group(1))
+        for m in _PYC_INTERP_RE.finditer(text)
+        if "$" in m.group(1)
+    ]
+
+
+class TestNoPythonCInterpolation:
+    """Goal 8 lint guard: keep the double-quoted python3 -c interpolation
+    class closed for good.
+
+    A path or title containing an apostrophe breaks the quoting of a
+    double-quoted -c program (SyntaxError), and the usual `2>/dev/null`
+    makes the failure silent — empty reads, lost writes, phantom success.
+    The safe pattern is env vars + a quoted heredoc:
+
+        FOUND="$FOUND" python3 - <<'PYEOF'
+        import json, os
+        t = json.load(open(os.environ['FOUND']))
+        PYEOF
+    """
+
+    SH_DIRS = ("bin", "lib", "packaging")
+
+    @property
+    def _root(self):
+        return Path(__file__).resolve().parent.parent
+
+    def _shell_scripts(self):
+        root = self._root
+        files = []
+        for d in self.SH_DIRS:
+            base = root / d
+            if base.is_dir():
+                files.extend(sorted(base.rglob("*.sh")))
+        files.extend(sorted(root.glob("*.sh")))
+        hive = root / "bin" / "hive"
+        if hive.is_file():
+            files.append(hive)
+        return files
+
+    def test_no_bash_vars_in_double_quoted_python_c(self):
+        offenders = []
+        for sh in self._shell_scripts():
+            for line, code in _find_python_c_interpolation(sh.read_text()):
+                rel = sh.relative_to(self._root)
+                first = code.splitlines()[0][:60] if code.splitlines() else ""
+                offenders.append(f"{rel}:{line}: {first!r}")
+        assert not offenders, (
+            "python3 -c with bash interpolation (pass vars via environment "
+            "and use a quoted heredoc instead):\n  " + "\n  ".join(offenders)
+        )
+
+    def test_guard_detects_the_interpolation_pattern(self):
+        """The lint must actually see the pattern it guards against —
+        multi-line double-quoted programs included."""
+        sample = 'X=$(python3 -c "\nimport os\nprint(os.listdir(\'\'\'$D\'\'\'))\n")'
+        hits = _find_python_c_interpolation(sample)
+        assert len(hits) == 1, hits
+        assert "$D" in hits[0][1]
+        # Safe forms must NOT be flagged.
+        assert _find_python_c_interpolation(
+            "python3 -c 'import json,sys; print(json.dumps(sys.stdin.read()))'"
+        ) == []
+        assert _find_python_c_interpolation(
+            'FOUND="$FOUND" python3 - <<\'PYEOF\'\n'
+            "import os\nopen(os.environ['FOUND'])\nPYEOF"
+        ) == []
 
 
 class TestTicketCommentScript:
