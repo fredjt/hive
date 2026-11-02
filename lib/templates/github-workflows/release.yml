@@ -1,7 +1,15 @@
 # Auto-installed by hive's gh-init.sh. Fires when a tag of the form vX.Y.Z
 # is pushed (release-runner.sh does that after release-gates.sh passes).
-# Re-builds the tarball deterministically on a clean runner, validates the
-# sha256, and uploads the artifacts to the GitHub release page.
+# Re-builds the tarball deterministically on a clean runner and verifies it
+# against the .sha256 sidecar that was COMMITTED WITH THE TAG (the original
+# published checksum — not the sidecar the rebuild just generated, which
+# would be a self-referential check that can never detect drift), then
+# uploads the artifacts to the GitHub release page.
+#
+# RELEASE PRE-REQUISITE: after running packaging/build-package.sh locally,
+# `git add dist/hive-X.Y.Z.sha256` and include the sidecar in the tag commit.
+# Without it this workflow fails loudly rather than shipping an unverified
+# rebuild.
 name: Release
 
 on:
@@ -29,21 +37,32 @@ jobs:
             exit 1
           fi
 
-      - name: Re-build deterministically
-        run: |
-          if [ -x packaging/build-package.sh ]; then
-            bash packaging/build-package.sh
-          else
-            echo "::warning::no packaging/build-package.sh — skipping deterministic rebuild"
-          fi
-
-      - name: Verify sha256 sidecar
+      - name: Require committed checksum sidecar
         run: |
           ver="${GITHUB_REF##*/v}"
-          if [ -f "dist/hive-${ver}.sha256" ]; then
-            (cd dist && sha256sum -c "hive-${ver}.sha256")
-          else
-            echo "::warning::no dist/hive-${ver}.sha256 to verify"
+          if [ ! -f "dist/hive-${ver}.sha256" ]; then
+            echo "::error::dist/hive-${ver}.sha256 is not committed. Commit the .sha256 sidecar with the release tag so the rebuilt tarball can be verified against the published checksum."
+            exit 1
+          fi
+          # Stash it: the rebuild below regenerates BOTH the tarball and the
+          # sidecar, so verifying the freshly generated pair would be
+          # self-referential and could never detect drift.
+          cp "dist/hive-${ver}.sha256" "/tmp/hive-${ver}.sha256.committed"
+
+      - name: Re-build deterministically
+        run: |
+          if [ ! -f packaging/build-package.sh ]; then
+            echo "::error::packaging/build-package.sh missing — cannot rebuild for verification"
+            exit 1
+          fi
+          bash packaging/build-package.sh
+
+      - name: Verify rebuilt tarball against the committed checksum
+        run: |
+          ver="${GITHUB_REF##*/v}"
+          if ! (cd dist && sha256sum -c "/tmp/hive-${ver}.sha256.committed"); then
+            echo "::error::rebuilt tarball does not match the committed checksum — the build is not reproducible or the tag tree differs from what was built locally. Refusing to upload."
+            exit 1
           fi
 
       - name: Upload to GitHub Release
@@ -52,8 +71,8 @@ jobs:
         run: |
           tag="${GITHUB_REF##*/}"
           ver="${tag#v}"
-          if [ -f "dist/hive-${ver}.tar.gz" ]; then
-            gh release upload "$tag" "dist/hive-${ver}.tar.gz" "dist/hive-${ver}.sha256" --clobber
-          else
-            echo "::warning::no tarball at dist/hive-${ver}.tar.gz to upload"
+          if [ ! -f "dist/hive-${ver}.tar.gz" ]; then
+            echo "::error::no tarball at dist/hive-${ver}.tar.gz — the rebuild step did not produce it"
+            exit 1
           fi
+          gh release upload "$tag" "dist/hive-${ver}.tar.gz" "dist/hive-${ver}.sha256" --clobber

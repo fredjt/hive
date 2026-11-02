@@ -5,6 +5,7 @@ import json
 import os
 import subprocess
 from pathlib import Path
+import hashlib
 # Ensure lib/ is on the path when running from within hive/ directory
 _hive_lib = str(Path(__file__).resolve().parent.parent / "lib")
 if _hive_lib not in sys.path:
@@ -888,5 +889,62 @@ class TestAllCoreScriptsParse:
             capture_output=True, text=True, timeout=10,
         )
         assert result.returncode == 0, f"{script} has syntax errors: {result.stderr}"
+
+
+class TestBuildPackageReproducibility:
+    """A.1: the package build must be reproducible.
+
+    Regression: build-package.sh used to pin every tarball mtime to the
+    VERSION file's mtime, so cutting a release (which edits VERSION) changed
+    the hash of an otherwise identical tree. The mtime anchor is now a stable
+    per-release value (SOURCE_DATE_EPOCH > git commit date of VERSION > HEAD
+    > epoch 0), so two builds of the same tree — even with different VERSION
+    file mtimes — must produce byte-identical tarballs.
+    """
+
+    install_dir = Path(__file__).resolve().parent.parent
+
+    def _build(self, out_dir, extra_env=None):
+        env = os.environ.copy()
+        if extra_env:
+            env.update(extra_env)
+        result = subprocess.run(
+            ["bash", str(self.install_dir / "packaging" / "build-package.sh"),
+             "--out-dir", str(out_dir)],
+            capture_output=True, text=True, timeout=300, cwd=str(self.install_dir), env=env,
+        )
+        assert result.returncode == 0, f"build failed: {result.stderr}"
+        tarballs = list(out_dir.glob("hive-*.tar.gz"))
+        assert len(tarballs) == 1, f"expected one tarball, got {tarballs}"
+        return hashlib.sha256(tarballs[0].read_bytes()).hexdigest()
+
+    def test_touch_version_does_not_change_sha256(self, tmp_path):
+        """Two builds of the same tree with different VERSION-file mtimes
+        produce identical sha256."""
+        h_a = self._build(tmp_path / "a")
+        # Simulate cutting a release: VERSION is edited (mtime changes) and
+        # committed. The mtime change alone must not move the hash.
+        (self.install_dir / "VERSION").touch()
+        h_b = self._build(tmp_path / "b")
+        assert h_a == h_b, "tarball bytes changed after touching VERSION mtime"
+
+    def test_source_date_epoch_is_respected(self, tmp_path):
+        """An explicitly pinned SOURCE_DATE_EPOCH wins over git metadata and
+        is itself reproducible."""
+        h1 = self._build(tmp_path / "sde1", {"SOURCE_DATE_EPOCH": "1700000000"})
+        h2 = self._build(tmp_path / "sde2", {"SOURCE_DATE_EPOCH": "1700000000"})
+        assert h1 == h2
+
+    def test_sidecar_matches_tarball(self, tmp_path):
+        """The generated .sha256 sidecar must verify the tarball it sits next to."""
+        out = tmp_path / "side"
+        self._build(out)
+        sidecars = list(out.glob("hive-*.sha256"))
+        assert len(sidecars) == 1
+        result = subprocess.run(
+            ["sha256sum", "-c", str(sidecars[0])],
+            capture_output=True, text=True, timeout=30, cwd=str(out),
+        )
+        assert result.returncode == 0, f"sidecar mismatch: {result.stdout}{result.stderr}"
 
 

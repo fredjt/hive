@@ -14,8 +14,36 @@ bash ~/.local/share/hive/packaging/build-package.sh
 The version is read from `VERSION` in the source root. Override with `--version`.
 Output dir overridable with `--out-dir`.
 
-The build is deterministic where possible (sorted file list, fixed mtimes) so
-two builds from the same source produce byte-identical tarballs.
+The build is fully deterministic: sorted file list, owner/group zeroed, and
+file mtimes pinned to a **stable per-release anchor** resolved in this order
+(SOURCE_DATE_EPOCH convention):
+
+1. `$SOURCE_DATE_EPOCH`, if set — pin it explicitly for a release.
+2. The last git commit that touched `VERSION` — stable across rebuilds of the
+   same tree. Cutting a release edits (and commits) `VERSION`; rebuilding the
+   same tag reproduces the bytes exactly. `touch VERSION` does not change the
+   hash.
+3. The HEAD commit date (shallow clones where `VERSION`'s history is absent).
+4. Fixed epoch 0 for trees outside git.
+
+### Committing the checksum sidecar with a release tag
+
+The `release.yml` workflow (installed by `gh-init.sh`) re-builds the tarball
+on a clean runner when a `vX.Y.Z` tag is pushed and verifies the rebuild
+**against the `dist/hive-X.Y.Z.sha256` sidecar committed with the tag** — the
+original published checksum, not the sidecar the rebuild just generated (that
+would be a self-referential check that can never detect drift). So when
+cutting a release:
+
+```bash
+bash packaging/build-package.sh
+git add dist/hive-X.Y.Z.sha256   # the sidecar must be in the tag commit
+git commit -m "release: X.Y.Z"
+```
+
+If the sidecar is missing the workflow fails loudly instead of shipping an
+unverified rebuild; if the rebuilt tarball's sha256 differs from the committed
+one, the upload is refused.
 
 ## Install on a target machine — three options
 

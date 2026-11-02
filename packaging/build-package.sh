@@ -110,12 +110,37 @@ chmod +x "$STAGE/$PKG_NAME/lib/core/"*.sh
 chmod +x "$STAGE/$PKG_NAME/lib/tools/"*.sh
 chmod +x "$STAGE/$PKG_NAME/packaging/"*.sh
 
-# Build deterministic tarball (sorted file list, fixed mtimes from VERSION file)
-echo "Creating tarball..."
+# Build deterministic tarball (sorted file list, owner/group zeroed, mtimes
+# pinned to a STABLE per-release anchor). Anchoring to the VERSION file's
+# mtime was broken: cutting a release edits VERSION, which changes the mtime,
+# which changed every rebuild's bytes for an otherwise identical tree.
+#
+# Anchor resolution (SOURCE_DATE_EPOCH convention):
+#   1. $SOURCE_DATE_EPOCH, if set — the operator/CI pins it per release
+#   2. the last git commit that touched VERSION — stable across rebuilds of
+#      the same tree (a release cut commits the new VERSION; rebuilding the
+#      same tag reproduces the bytes exactly, and `touch VERSION` no longer
+#      changes the hash)
+#   3. the HEAD commit date (shallow clones where VERSION's history is
+#      missing)
+#   4. fixed epoch 0 for trees outside git
+if [ -n "${SOURCE_DATE_EPOCH:-}" ]; then
+  MTIME_ANCHOR="$SOURCE_DATE_EPOCH"
+  MTIME_SOURCE="SOURCE_DATE_EPOCH"
+elif MTIME_ANCHOR="$(git -C "$SOURCE_DIR" log -1 --format=%ct -- VERSION 2>/dev/null)" && [ -n "$MTIME_ANCHOR" ]; then
+  MTIME_SOURCE="git commit date of VERSION"
+elif MTIME_ANCHOR="$(git -C "$SOURCE_DIR" log -1 --format=%ct HEAD 2>/dev/null)" && [ -n "$MTIME_ANCHOR" ]; then
+  MTIME_SOURCE="git HEAD commit date"
+else
+  MTIME_ANCHOR=0
+  MTIME_SOURCE="fixed epoch (not a git tree)"
+fi
+
+echo "Creating tarball... (mtime anchor: @$MTIME_ANCHOR — $MTIME_SOURCE)"
 tar --create --gzip \
   --owner=0 --group=0 \
   --sort=name \
-  --mtime="@$(stat -c %Y "$SOURCE_DIR/VERSION")" \
+  --mtime="@$MTIME_ANCHOR" \
   -f "$TARBALL" \
   -C "$STAGE" "$PKG_NAME"
 
