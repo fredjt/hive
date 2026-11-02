@@ -297,6 +297,46 @@ class TestVerificationToolModule:
             else:
                 os.environ.pop("PYTHONPATH", None)
 
+    def test_gates_run_ticket_id_optional(self, install_dir):
+        """B.9: the verification-queue 'Run gates' button scopes a run to
+        ONE ticket; the tool must accept an optional ticket_id."""
+        import inspect
+        sys_path = str(install_dir / "lib")
+        old_path = os.environ.get("PYTHONPATH", "")
+        if sys_path not in old_path:
+            os.environ["PYTHONPATH"] = sys_path + (":" + old_path if old_path else "")
+        try:
+            from hive_mcp.server import build_server
+            server = build_server()
+            sig = inspect.signature(server._tool_manager._tools["gates_run"].fn)
+            assert "ticket_id" in sig.parameters
+            assert sig.parameters["ticket_id"].default is not inspect.Parameter.empty
+        finally:
+            if old_path:
+                os.environ["PYTHONPATH"] = old_path
+            else:
+                os.environ.pop("PYTHONPATH", None)
+
+    def test_gates_run_project_root_optional(self, install_dir):
+        """C.10: project_root is derivable (parent of the company dir, or
+        CWD) so clients no longer have to guess the path."""
+        import inspect
+        sys_path = str(install_dir / "lib")
+        old_path = os.environ.get("PYTHONPATH", "")
+        if sys_path not in old_path:
+            os.environ["PYTHONPATH"] = sys_path + (":" + old_path if old_path else "")
+        try:
+            from hive_mcp.server import build_server
+            server = build_server()
+            sig = inspect.signature(server._tool_manager._tools["gates_run"].fn)
+            assert "project_root" in sig.parameters
+            assert sig.parameters["project_root"].default is not inspect.Parameter.empty
+        finally:
+            if old_path:
+                os.environ["PYTHONPATH"] = old_path
+            else:
+                os.environ.pop("PYTHONPATH", None)
+
 
 @pytest.mark.skipif(not _HAS_FASTMCP, reason='mcp.server.fastmcp not available')
 class TestCompanyToolModule:

@@ -14,7 +14,7 @@ def register(server: Server) -> None:
     @server.tool()
     def gates_run(
         dept: str,
-        project_root: str,
+        project_root: str | None = None,
         ticket_id: str | None = None,
         company_dir: str | None = None,
     ) -> dict:
@@ -26,7 +26,14 @@ def register(server: Server) -> None:
         Gates that fail bounce tickets back to in-progress with a comment.
         Gates that pass mark `gates_passed=true` on the ticket — the verification
         IC must still call `ticket_approve` before the ticket can move to done.
+
+        `project_root` may be omitted: it is then derived from the company
+        dir (its parent) or, failing that, from CWD.
         """
+        from os import environ
+        cd = company_dir or environ.get("COMPANY_DIR") or str(Path.cwd() / ".company")
+        if not project_root:
+            project_root = str(Path(cd).parent)
         args = [dept, project_root, "--quiet"]
         if ticket_id:
             args += ["--ticket", ticket_id]
