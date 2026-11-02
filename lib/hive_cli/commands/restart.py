@@ -72,9 +72,23 @@ def handle(args) -> int:
     company_dir = project_dir / ".company"
     dash_port = args.port
 
-    # 1. Find and kill the existing dashboard.
+    # 0. A restart is only meaningful if a dashboard was recorded. No
+    #    company-board entry in processes.json means the company was never
+    #    started (or no dashboard was launched) — starting one anyway would
+    #    leave a half-started state, so fail cleanly instead.
     pid = _find_dashboard_pid(company_dir)
-    if pid and _kill_pid(pid):
+    if not pid:
+        print(
+            f"ERROR: no dashboard recorded in {company_dir / 'processes.json'} — "
+            "nothing to restart. Start the company first (hive start); "
+            "to launch only the dashboard use: hive dashboard",
+            file=sys.stderr,
+        )
+        return 1
+
+    # 1. Find and kill the existing dashboard (the recorded pid may already
+    #    be dead — in that case skip the kill and start a fresh one).
+    if _kill_pid(pid):
         print(f"Stopping dashboard (PID={pid}) ...")
         # Wait for it to exit + port to free.
         for _ in range(50):

@@ -302,6 +302,45 @@ class TestStatusDaemonSection:
         assert "sprint-lifecycle" in captured.out
 
 
+class TestRestartDashboardMissing:
+    """B.4: `hive restart` fails cleanly with a useful message when no
+    dashboard is recorded in processes.json — a restart implies there was
+    a running dashboard, and starting one from a never-started company
+    would leave a half-started state."""
+
+    @staticmethod
+    def _args(project_dir, port=49777):
+        import argparse
+        return argparse.Namespace(project_dir=str(project_dir), port=port)
+
+    def test_restart_without_processes_json_fails_cleanly(self, tmp_path, capsys):
+        from hive_cli.commands import restart
+        rc = restart.handle(self._args(tmp_path))
+        out = capsys.readouterr()
+        assert rc == 1
+        assert "no dashboard" in out.err.lower()
+        assert "hive start" in out.err
+        # Must not create company state or launch node as a side effect.
+        assert not (tmp_path / ".company").exists()
+
+    def test_restart_with_no_dashboard_entry_fails_cleanly(self, tmp_path, capsys):
+        from hive_cli.commands import restart
+        company = tmp_path / ".company"
+        company.mkdir()
+        (company / "processes.json").write_text(json.dumps({
+            "processes": [
+                {"pid": os.getpid(), "role": "hive-mcp",
+                 "department": "infrastructure", "interval": "continuous"},
+            ],
+        }))
+        rc = restart.handle(self._args(tmp_path))
+        out = capsys.readouterr()
+        assert rc == 1
+        assert "no dashboard" in out.err.lower()
+        assert "hive start" in out.err
+        assert "hive dashboard" in out.err
+
+
 class TestDoctorDaemonHealth:
     """B.3: `hive doctor` reports supervisor-managed daemon health. A
     daemon marked dead (restart budget exhausted) fails the run; a live

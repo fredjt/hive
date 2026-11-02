@@ -1032,3 +1032,158 @@ class TestCompanyHealthRestartPolicy:
             health.wait(timeout=10)
 
 
+class TestGatesRunSerialization:
+    """B.4: per-ticket gate runs are flock-serialized. While a first run
+    holds the ticket's lock, a second run on the SAME ticket skips
+    (daemon mode, exit 0) or blocks (--wait, lifecycle mode). Uses an
+    admin-dept ticket: its gate run auto-passes in milliseconds, so the
+    serialization is what's under test — not gate evaluation."""
+
+    TID = "TICKET-LOCK-1"
+
+    @classmethod
+    def _scratch(cls, tmp_path):
+        proj = tmp_path / "proj"
+        review = proj / ".company" / "departments" / "it" / "tickets" / "in-review"
+        review.mkdir(parents=True)
+        (proj / ".company" / "logs").mkdir(parents=True, exist_ok=True)
+        (review / f"{cls.TID}.json").write_text(json.dumps({
+            "id": cls.TID, "dept": "it", "type": "feature",
+            "priority": "medium", "title": "t", "status": "in-review",
+        }))
+        return proj
+
+    def _ticket(self, proj):
+        return json.loads(
+            (proj / ".company" / "departments" / "it" / "tickets" / "in-review"
+             / f"{self.TID}.json").read_text())
+
+    def _hold_lock(self, proj, secs=8):
+        lock = proj / ".company" / "gate-runs" / f"it-{self.TID}.lock"
+        lock.parent.mkdir(parents=True, exist_ok=True)
+        return lock, subprocess.Popen(
+            ["flock", str(lock), "-c", f"sleep {secs}"],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
+
+    def test_second_run_skips_while_first_holds_lock(self, tmp_path):
+        proj = self._scratch(tmp_path)
+        lock, holder = self._hold_lock(proj)
+        try:
+            t0 = time.time()
+            r = run_script(
+                f"{SCRIPTS_DIR}/verification-gates.sh",
+                ["it", str(proj), "--ticket", self.TID, "--quiet"],
+                timeout=30,
+            )
+            elapsed = time.time() - t0
+            assert r.returncode == 0, r.stderr
+            assert elapsed < 4, f"skip should be immediate, took {elapsed:.1f}s"
+            assert "another gate run is in progress" in r.stderr, r.stderr
+            # A skipped run must not stamp the ticket.
+            assert not self._ticket(proj).get("gates_passed")
+        finally:
+            holder.kill()
+            holder.wait(timeout=10)
+
+    def test_wait_mode_blocks_until_first_run_releases(self, tmp_path):
+        proj = self._scratch(tmp_path)
+        lock, holder = self._hold_lock(proj, secs=3)
+        try:
+            t0 = time.time()
+            r = run_script(
+                f"{SCRIPTS_DIR}/verification-gates.sh",
+                ["it", str(proj), "--ticket", self.TID, "--wait", "--quiet"],
+                timeout=30,
+            )
+            elapsed = time.time() - t0
+            assert r.returncode == 0, r.stderr
+            assert elapsed >= 2.0, \
+                f"--wait run should have blocked ~3s, took {elapsed:.1f}s"
+            # After the lock frees, the admin ticket auto-passes.
+            assert self._ticket(proj).get("gates_passed") is True
+        finally:
+            holder.kill()
+            holder.wait(timeout=10)
+
+
+class TestCompanyStopReapsSupervisor:
+    """B.4: `company stop` reaps the supervisor loop it started. Spawns
+    the company-health wrapper exactly as company-start.sh does (a
+    (while true; do ...; done) background subshell recorded in
+    processes.json), plus one worker daemon, then runs the real
+    company-stop.sh and asserts both are gone and processes.json is
+    marked stopped."""
+
+    @staticmethod
+    def _is_dead(pid, timeout=10):
+        """Dead = gone OR a zombie (terminated, awaiting reap). kill(0)
+        succeeds on zombies, so the state must come from /proc."""
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            try:
+                # comm may contain spaces — the state field follows the
+                # last ')' in the "pid (comm) state ..." layout.
+                state = Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()[0]
+            except FileNotFoundError:
+                return True
+            except OSError:
+                return False  # can't tell — don't declare death
+            if state == "Z":
+                return True
+            time.sleep(0.1)
+        return False
+
+    def test_stop_kills_supervisor_loop_and_recorded_daemons(self, tmp_path):
+        proj = tmp_path / "proj"
+        company = proj / ".company"
+        (company / "logs").mkdir(parents=True)
+        # Mirror company-start.sh's supervisor spawn (1s cadence so the
+        # wrapper visibly loops during the test window).
+        launcher = tmp_path / "launcher.sh"
+        launcher.write_text(f'#!/usr/bin/env bash\n'
+                            f'(while true; do\n'
+                            f'  bash "{SCRIPTS_DIR}/company-health.sh" "{proj}" '
+                            f'>> "{company}/logs/health.log" 2>&1\n'
+                            f'  sleep 1\n'
+                            f'done) &\n'
+                            f'echo $!\n'
+                            f'wait\n')
+        launcher.chmod(0o755)
+        env = os.environ.copy()
+        env["HIVE_INSTALL_DIR"] = str(Path(__file__).resolve().parent.parent)
+        launcher_proc = subprocess.Popen(
+            [str(launcher)], stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL, env=env,
+        )
+        wrapper_pid = int(launcher_proc.stdout.readline().strip())
+        worker = subprocess.Popen(["sleep", "300"])
+        try:
+            time.sleep(0.5)  # let the wrapper start its first cycle
+            (company / "processes.json").write_text(json.dumps({
+                "started_at": "2026-01-01T00:00:00Z",
+                "project_root": str(proj),
+                "processes": [
+                    {"pid": wrapper_pid, "role": "company-health",
+                     "department": "infrastructure", "interval": "30s"},
+                    {"pid": worker.pid, "role": "status-rebuild",
+                     "department": "infrastructure", "interval": "continuous"},
+                ],
+            }))
+            r = run_script(f"{SCRIPTS_DIR}/company-stop.sh", [str(proj)], timeout=60)
+            assert r.returncode == 0, r.stderr
+            assert self._is_dead(worker.pid), \
+                f"recorded worker daemon survived company stop: {r.stdout}"
+            assert self._is_dead(wrapper_pid), \
+                f"supervisor loop survived company stop: {r.stdout}"
+            data = json.loads((company / "processes.json").read_text())
+            assert data["processes"] == []
+            assert "stopped_at" in data
+            m = re.search(r"Stopped (\d+) processes", r.stdout)
+            assert m and int(m.group(1)) >= 2, r.stdout
+        finally:
+            for p in (worker, launcher_proc):
+                p.kill()
+                p.wait(timeout=10)
+
+

@@ -26,16 +26,23 @@ def _project_root(args) -> str:
 
 
 def _pid_alive(pid) -> bool:
-    """Signal-0 liveness check (mirrors company-health.sh / server.js)."""
+    """Liveness check: signal 0, with a refinement — kill(0) also succeeds
+    for zombies (terminated but unreaped), which are NOT running."""
     if not isinstance(pid, int) or pid <= 0:
         return False
     try:
         os.kill(pid, 0)
-        return True
     except ProcessLookupError:
         return False
     except PermissionError:
         return True
+    try:
+        # comm may contain spaces — the state field follows the last ')'
+        # in the "pid (comm) state ..." layout.
+        state = Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()[0]
+    except OSError:
+        return True  # no /proc (non-Linux) — trust the signal-0 answer
+    return state != "Z"
 
 
 def _daemon_table(company_dir: str) -> list[dict]:
