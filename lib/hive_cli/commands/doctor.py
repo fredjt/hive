@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -23,6 +24,109 @@ def _check(name: str, ok: bool, detail: str = "") -> bool:
     sym = "✓" if ok else "✗"
     color = "\033[32m" if ok else "\033[31m"
     print(f" {color}{sym}\033[0m {name:<35} {detail}")
+    return ok
+
+
+def _publisher_from_config(text: str) -> str:
+    """Extract publisher_script the same way release-publish-runner.sh does
+    (first `publisher_script = "..."` line; value trimmed, surrounding
+    double quotes stripped). Returns "" when unset/empty."""
+    for line in text.splitlines():
+        s = line.strip()
+        if not s.startswith("publisher_script") or s.startswith("#"):
+            continue
+        if "=" not in s:
+            continue
+        val = s.split("=", 1)[1].strip()
+        if len(val) >= 2 and val.startswith('"') and val.endswith('"'):
+            val = val[1:-1]
+        return val
+    return ""
+
+
+def resolve_publisher(config_path, default_publisher):
+    """Resolve the release publisher script, mirroring
+    release-publish-runner.sh: a non-empty [release].publisher_script in the
+    config TOML wins; otherwise the built-in default (github.sh).
+
+    Returns (publisher_path, source) where source is "config override" or
+    "built-in default"."""
+    config_path = Path(config_path)
+    if config_path.is_file():
+        try:
+            val = _publisher_from_config(config_path.read_text())
+        except OSError:
+            val = ""
+        if val:
+            return Path(val), "config override"
+    return Path(default_publisher), "built-in default"
+
+
+def _pyproject_version(pyproject_path) -> str | None:
+    """Read the top-level [project] version field from a pyproject.toml
+    (naive line scan — the format is ours). None if absent/unreadable."""
+    try:
+        text = Path(pyproject_path).read_text()
+    except OSError:
+        return None
+    m = re.search(r'(?m)^\s*version\s*=\s*"([^"]+)"', text)
+    return m.group(1) if m else None
+
+
+def _release_checks() -> bool:
+    """C.6: doctor checks for the release path. Doctor previously stopped at
+    venv/binaries, but the publish stage can still fail on a missing gh CLI
+    or a non-executable publisher (release-publish-runner.sh exit 3), and a
+    VERSION-file-vs-tree drift mislabels releases. Returns True iff all
+    release-path checks pass."""
+    ok = True
+    print("\nRelease path:")
+
+    # VERSION file — source of truth for hive --version and the release
+    # build. Missing → builds fall back to 0.0.0-dev and --version lies.
+    version_file = HIVE_INSTALL_DIR / "VERSION"
+    version = ""
+    if version_file.is_file():
+        version = version_file.read_text().strip()
+    ok &= _check("VERSION file", bool(version),
+                 version if version else f"missing: {version_file}")
+
+    # Resolved publisher script (config override or built-in default) must
+    # exist AND be executable — the exact requirement the publish stage
+    # enforces at release time (exit 3 otherwise).
+    cfg_path = Path(os.environ.get("HIVE_CONFIG",
+                                   Path.home() / ".config" / "hive" / "config.toml"))
+    default_pub = HIVE_ROOT / "lib" / "templates" / "publishers" / "github.sh"
+    publisher, pub_source = resolve_publisher(cfg_path, default_pub)
+    pub_ok = publisher.is_file() and os.access(publisher, os.X_OK)
+    detail = str(publisher)
+    if pub_source == "config override":
+        detail += " (config override)"
+    if not pub_ok:
+        detail += " — missing or not executable"
+    ok &= _check("publisher script", pub_ok, detail)
+
+    # gh CLI — required by the built-in github publisher; a custom
+    # publisher is responsible for its own dependencies.
+    if publisher.resolve() == default_pub.resolve():
+        ok &= _check("gh CLI (default publisher)", shutil.which("gh") is not None)
+    else:
+        print(f" \033[33m·\033[0m {'gh CLI':<35} not required (custom publisher in effect)")
+
+    # VERSION-file-vs-installed-tree consistency: packaging/pyproject.toml
+    # ships in the install tree and carries its own version field — when it
+    # drifts from VERSION, pip-installed metadata mislabels the release.
+    pyproject = HIVE_INSTALL_DIR / "packaging" / "pyproject.toml"
+    if version and pyproject.is_file():
+        tree_version = _pyproject_version(pyproject)
+        if tree_version is None:
+            print(f" \033[33m⚠\033[0m {'VERSION vs pyproject':<35} "
+                  f"no version field in {pyproject}")
+        else:
+            match = version == tree_version
+            ok &= _check("VERSION matches pyproject", match,
+                         f"VERSION={version} pyproject={tree_version}"
+                         + ("" if match else " — STALE"))
     return ok
 
 
@@ -97,6 +201,9 @@ def handle(args) -> int:
               "roster-rebuild.sh", "status-rebuild.sh", "company-start.sh"):
         p = HIVE_ROOT / "lib" / "tools" / s
         all_ok &= _check(f"  {s}", p.is_file())
+
+    # Release path (VERSION, publisher script, gh CLI, metadata drift).
+    all_ok &= _release_checks()
 
     # Company daemon health — only when we're in a project with a .company
     # workspace. A daemon marked dead by the supervisor (restart budget

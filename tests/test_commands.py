@@ -384,4 +384,176 @@ class TestDoctorDaemonHealth:
         assert "Daemon health" not in out
 
 
+class TestDoctorReleasePath:
+    """C.6: `hive doctor` covers the release path — VERSION file, the
+    *resolved* publisher script (config override or built-in default)
+    existing and executable, gh CLI for the default publisher, and
+    VERSION-file-vs-installed-tree (pyproject metadata) consistency.
+    Each branch is exercised against a stubbed install tree."""
+
+    def _stub_install(self, tmp_path, version="9.9.9",
+                      pyproject_version="9.9.9", publisher_exec=True,
+                      write_pyproject=True):
+        install = tmp_path / "install"
+        (install / "lib" / "templates" / "publishers").mkdir(parents=True)
+        pub = install / "lib" / "templates" / "publishers" / "github.sh"
+        pub.write_text("#!/bin/bash\necho publish\n")
+        pub.chmod(0o755 if publisher_exec else 0o644)
+        (install / "VERSION").write_text(version + "\n")
+        if write_pyproject:
+            (install / "packaging").mkdir()
+            (install / "packaging" / "pyproject.toml").write_text(
+                f'[project]\nname = "hive-os"\nversion = "{pyproject_version}"\n'
+            )
+        return install
+
+    def _run_release_checks(self, tmp_path, monkeypatch, capsys,
+                            install, gh_available=True):
+        from hive_cli.commands import doctor
+        monkeypatch.setattr(doctor, "HIVE_INSTALL_DIR", install)
+        monkeypatch.setattr(doctor, "HIVE_ROOT", install)
+        monkeypatch.setenv("HIVE_CONFIG", str(tmp_path / "no-such-config.toml"))
+        import shutil
+        monkeypatch.setattr(shutil, "which",
+                            lambda name: "/usr/bin/stub" if name == "gh" and gh_available else None)
+        ok = doctor._release_checks()
+        return ok, capsys.readouterr().out
+
+    # -- resolver unit tests -------------------------------------------------
+
+    def test_resolve_publisher_default_when_no_config(self, tmp_path):
+        from hive_cli.commands import doctor
+        pub, source = doctor.resolve_publisher(
+            tmp_path / "nope.toml", tmp_path / "default.sh")
+        assert pub == tmp_path / "default.sh"
+        assert source == "built-in default"
+
+    def test_resolve_publisher_config_override(self, tmp_path):
+        from hive_cli.commands import doctor
+        cfg = tmp_path / "config.toml"
+        cfg.write_text('[release]\npublisher_script = "/opt/my-pub.sh"\n')
+        pub, source = doctor.resolve_publisher(cfg, tmp_path / "default.sh")
+        assert pub == Path("/opt/my-pub.sh")
+        assert source == "config override"
+
+    def test_resolve_publisher_empty_override_falls_back(self, tmp_path):
+        """publisher_script = "" must fall back to the default — the runner's
+        awk treats an empty value as unset."""
+        from hive_cli.commands import doctor
+        cfg = tmp_path / "config.toml"
+        cfg.write_text('[release]\npublisher_script = ""\n')
+        pub, source = doctor.resolve_publisher(cfg, tmp_path / "default.sh")
+        assert pub == tmp_path / "default.sh"
+        assert source == "built-in default"
+
+    # -- _release_checks branches -------------------------------------------
+
+    def test_all_green(self, tmp_path, monkeypatch, capsys):
+        install = self._stub_install(tmp_path)
+        ok, out = self._run_release_checks(tmp_path, monkeypatch, capsys, install)
+        assert ok is True, out
+        assert "VERSION file" in out and "9.9.9" in out
+        assert "publisher script" in out
+        assert "gh CLI (default publisher)" in out
+
+    def test_version_file_missing(self, tmp_path, monkeypatch, capsys):
+        install = self._stub_install(tmp_path)
+        (install / "VERSION").unlink()
+        ok, out = self._run_release_checks(tmp_path, monkeypatch, capsys, install)
+        assert ok is False
+        assert "missing" in out
+
+    def test_publisher_not_executable(self, tmp_path, monkeypatch, capsys):
+        install = self._stub_install(tmp_path, publisher_exec=False)
+        ok, out = self._run_release_checks(tmp_path, monkeypatch, capsys, install)
+        assert ok is False
+        assert "missing or not executable" in out
+
+    def test_publisher_missing(self, tmp_path, monkeypatch, capsys):
+        install = self._stub_install(tmp_path)
+        (install / "lib" / "templates" / "publishers" / "github.sh").unlink()
+        ok, out = self._run_release_checks(tmp_path, monkeypatch, capsys, install)
+        assert ok is False
+        assert "missing or not executable" in out
+
+    def test_gh_missing_fails_with_default_publisher(self, tmp_path, monkeypatch, capsys):
+        install = self._stub_install(tmp_path)
+        ok, out = self._run_release_checks(tmp_path, monkeypatch, capsys,
+                                           install, gh_available=False)
+        assert ok is False
+        assert "gh CLI (default publisher)" in out
+
+    def test_custom_publisher_skips_gh_requirement(self, tmp_path, monkeypatch, capsys):
+        """A config override to a working custom publisher must be honored
+        (and gh must not be demanded for it — even when gh is absent)."""
+        install = self._stub_install(tmp_path)
+        custom = tmp_path / "my-pub.sh"
+        custom.write_text("#!/bin/bash\necho local publish\n")
+        custom.chmod(0o755)
+        cfg = tmp_path / "config.toml"
+        cfg.write_text(f'[release]\npublisher_script = "{custom}"\n')
+        from hive_cli.commands import doctor
+        monkeypatch.setattr(doctor, "HIVE_INSTALL_DIR", install)
+        monkeypatch.setattr(doctor, "HIVE_ROOT", install)
+        monkeypatch.setenv("HIVE_CONFIG", str(cfg))
+        import shutil
+        monkeypatch.setattr(shutil, "which", lambda name: None)  # no gh at all
+        ok = doctor._release_checks()
+        out = capsys.readouterr().out
+        assert ok is True, out
+        assert "config override" in out
+        assert str(custom) in out
+        assert "not required (custom publisher in effect)" in out
+        assert "gh CLI (default publisher)" not in out
+
+    def test_custom_publisher_missing_fails(self, tmp_path, monkeypatch, capsys):
+        install = self._stub_install(tmp_path)
+        cfg = tmp_path / "config.toml"
+        cfg.write_text('[release]\npublisher_script = "/no/such/publisher.sh"\n')
+        from hive_cli.commands import doctor
+        monkeypatch.setattr(doctor, "HIVE_INSTALL_DIR", install)
+        monkeypatch.setattr(doctor, "HIVE_ROOT", install)
+        monkeypatch.setenv("HIVE_CONFIG", str(cfg))
+        ok = doctor._release_checks()
+        out = capsys.readouterr().out
+        assert ok is False
+        assert "/no/such/publisher.sh" in out
+
+    def test_pyproject_version_stale_fails(self, tmp_path, monkeypatch, capsys):
+        """The exact drift this round ships with: VERSION bumped, the
+        installed tree's pyproject metadata left behind."""
+        install = self._stub_install(tmp_path, version="0.5.17",
+                                     pyproject_version="0.5.16")
+        ok, out = self._run_release_checks(tmp_path, monkeypatch, capsys, install)
+        assert ok is False
+        assert "STALE" in out
+        assert "VERSION=0.5.17 pyproject=0.5.16" in out
+
+    def test_pyproject_missing_is_tolerated(self, tmp_path, monkeypatch, capsys):
+        install = self._stub_install(tmp_path, write_pyproject=False)
+        ok, out = self._run_release_checks(tmp_path, monkeypatch, capsys, install)
+        assert ok is True, out
+
+    def test_pyproject_without_version_field_warns(self, tmp_path, monkeypatch, capsys):
+        install = self._stub_install(tmp_path, write_pyproject=False)
+        (install / "packaging").mkdir()
+        (install / "packaging" / "pyproject.toml").write_text('[project]\nname = "hive-os"\n')
+        ok, out = self._run_release_checks(tmp_path, monkeypatch, capsys, install)
+        assert ok is True, out  # warning, not a failure
+        assert "no version field" in out
+
+    # -- integration: section wired into handle() ---------------------------
+
+    def test_handle_prints_release_section(self, tmp_path, monkeypatch, capsys):
+        """Full doctor run includes the release-path section (against the
+        real install dir — same pattern as the B.3 daemon-health tests)."""
+        import argparse
+        from hive_cli.commands import doctor
+        monkeypatch.chdir(tmp_path)
+        doctor.handle(argparse.Namespace(project_dir="."))
+        out = capsys.readouterr().out
+        assert "Release path:" in out
+        assert "publisher script" in out
+
+
 
