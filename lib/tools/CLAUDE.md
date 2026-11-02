@@ -41,7 +41,7 @@ These scripts are the **runtime core** of Hive. They are called by the MCP serve
 | `gh-pr-open.sh` | Opens a PR for a feature branch. |
 | `gh-pr-merge.sh` | Merges a PR. Exit 5 = conflict (caller rolls back). |
 | `gh-pr-close.sh` | Closes a PR (on rejection). |
-| `gh-pr-reject.sh` | Rejects a PR. |
+| `gh-pr-reject.sh` | **Deprecation shim** — unconditionally exits 4. PR close now happens via `gh-pr-close.sh` as a scripted side-effect of ticket rejection (see `lib/hive_mcp/tools/github.py`). |
 | `gh-push-branch.sh` | Pushes a feature branch. |
 | `gh-issue-*.sh` | Poll, comment, close GitHub issues linked to tickets. |
 | `gh-init.sh` | One-time GitHub repo setup. |

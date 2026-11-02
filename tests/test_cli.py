@@ -157,14 +157,21 @@ class TestBuildParser:
 
     def test_parser_has_gh_pr(self):
         p = _make_parser()
-        for pr_action in ["open", "merge", "reject"]:
+        for pr_action in ["open", "merge"]:
             if pr_action == "open":
                 args = p.parse_args(["gh", "pr", pr_action, "feature-branch", "TICKET-001"])
             elif pr_action == "merge":
                 args = p.parse_args(["gh", "pr", pr_action, "feature-branch"])
-            elif pr_action == "reject":
-                args = p.parse_args(["gh", "pr", pr_action, "feature-branch", "TICKET-001", "--reason", "Rejected"])
             assert args.pr_action == pr_action
+
+    def test_parser_gh_pr_reject_removed(self):
+        """C.9: `gh pr reject` was dead on arrival — gh-pr-reject.sh is a
+        deprecation shim (unconditional exit 4). PR close is now a scripted
+        side-effect of rejecting the ticket, so the subcommand is gone."""
+        p = _make_parser()
+        with pytest.raises(SystemExit):
+            p.parse_args(["gh", "pr", "reject", "feature-branch", "TICKET-001",
+                          "--reason", "Rejected"])
 
     def test_parser_has_release(self):
         p = _make_parser()

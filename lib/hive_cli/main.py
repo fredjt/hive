@@ -212,8 +212,9 @@ def _add_gh(sub) -> None:
     po.add_argument("branch"); po.add_argument("ticket")
     pm = pr_sp.add_parser("merge",  help="Merge an open PR (verification IC GO path)")
     pm.add_argument("branch"); pm.add_argument("--method", default="merge", choices=["merge","squash","rebase"])
-    pj = pr_sp.add_parser("reject", help="Comment + close a PR (verification IC NO-GO path)")
-    pj.add_argument("branch"); pj.add_argument("ticket"); pj.add_argument("--reason", required=True)
+    # No `reject`: PR close is a scripted side-effect of rejecting the
+    # ticket (ticket-move ... done rejected -> gh-pr-close.sh). The old
+    # gh-pr-reject.sh is a deprecation shim.
     p.set_defaults(_handler=gh_cmd.handle)
 
 

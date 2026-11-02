@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from hive_mcp.server_compat import Server
 
-from hive_mcp.shell import run
+from hive_mcp.shell import run, project_root_from_company_dir
 
 
 def register(server: Server) -> None:
@@ -85,4 +85,11 @@ def register(server: Server) -> None:
 
         Normally invoked automatically by sprint-lifecycle at sprint boundaries.
         """
-        return run("round-promote", company_dir=company_dir).to_dict()
+        # round-promote.sh takes <project-root> positionally and re-derives
+        # COMPANY_DIR from it (overriding the env). Without the arg it falls
+        # back to CWD and would promote the wrong project whenever the MCP
+        # server's CWD is not the project root.
+        args = []
+        if company_dir:
+            args.append(project_root_from_company_dir(company_dir))
+        return run("round-promote", *args, company_dir=company_dir).to_dict()

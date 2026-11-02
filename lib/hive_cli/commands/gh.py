@@ -25,15 +25,6 @@ def handle(args) -> int:
         _print(mcp_client.call_tool("gh_status", base))
         return 0
 
-    if args.action == "issues":
-        _print(mcp_client.call_tool("gh_issues", base))
-        return 0
-
-    if args.action == "mirror":
-        _print(mcp_client.call_tool("gh_issue_mirror_now",
-            {**base, "project_root": str(Path.cwd().resolve())}))
-        return 0
-
     if args.action == "pr":
         sub = args.pr_action
         if sub == "open":
@@ -46,12 +37,6 @@ def handle(args) -> int:
                 **base, "branch": args.branch,
                 "project_root": str(Path.cwd().resolve()),
                 "method": getattr(args, "method", "merge"),
-            }))
-        elif sub == "reject":
-            _print(mcp_client.call_tool("gh_pr_reject", {
-                **base, "branch": args.branch, "ticket_id": args.ticket,
-                "project_root": str(Path.cwd().resolve()),
-                "reason": args.reason,
             }))
         else:
             print(f"unknown pr action: {sub}")

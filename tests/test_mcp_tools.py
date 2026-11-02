@@ -1,5 +1,6 @@
 """Tests for hive_mcp.tools — MCP tool registration and behavior."""
 import sys
+import re
 import json
 import os
 from pathlib import Path
@@ -86,7 +87,12 @@ class TestToolRegistration:
             #   - company_start / company_stop: agents kept invoking them
             #     mid-cycle (see lib/hive_cli/commands/company.py and
             #     lib/dashboard/server.js).
-            for removed in ("agent_verify", "company_start", "company_stop"):
+            #   - gh_pr_reject (C.9): gh-pr-reject.sh is a deprecation shim
+            #     that unconditionally exits 4; the NO-GO PR path no longer
+            #     exists (bounce keeps PRs open, ticket rejection closes the
+            #     PR automatically via gh-pr-close.sh).
+            for removed in ("agent_verify", "company_start", "company_stop",
+                            "gh_pr_reject"):
                 assert removed not in tools, (
                     f"tool '{removed}' was intentionally removed but is registered again"
                 )
@@ -589,6 +595,205 @@ class TestTicketRouteExpeditedTool:
             data = json.loads(tickets[0].read_text())
             assert data["title"] == "DB connection pool exhausted"
             assert data["source"] == "expedited-routing"
+        finally:
+            if old_path:
+                os.environ["PYTHONPATH"] = old_path
+            else:
+                os.environ.pop("PYTHONPATH", None)
+def _is_pure_shim(text):
+    """A deprecation shim: a straight-line script that echoes a notice and
+    exits non-zero — no conditionals, no arg reading, no real work. Any
+    caller of such a script fails unconditionally, so an MCP tool that
+    targets one is dead on arrival."""
+    code = []
+    for line in text.splitlines():
+        s = line.strip()
+        if (not s or s.startswith("#") or s.startswith("set ")
+                or s.startswith("source ") or s.startswith(". ")):
+            continue
+        if s.startswith("echo ") or s.startswith("echo\t"):
+            continue
+        code.append(s)
+    if not code:
+        return False
+    return all(re.match(r"^exit\s+\d+\s*$", s) for s in code)
+
+
+def _single_line_required_args(sh_text):
+    """Required positional count from a single-line Usage: form, or None
+    when the usage is multi-line / subcommand-style (undecidable → skip).
+    <required> inside [optional] groups does not count."""
+    for line in sh_text.splitlines():
+        s = line.strip().lstrip("#").strip()
+        if not s.startswith("Usage:"):
+            continue
+        u = s.split("Usage:", 1)[1]
+        if "|" in u:
+            return None
+        return len(re.findall(r"<[^>]+>", re.sub(r"\[[^\]]*\]", "", u)))
+    return None
+
+
+def _mcp_run_calls(tools_dir):
+    """Yield a description of each run("script", ...) call in the MCP tool
+    modules: dict(module, line, script, pos, conds, flags). `pos` counts
+    positional args in the base args list (and direct positional args),
+    `conds` counts args.append(...) calls (conditional positionals),
+    `flags` collects literal --flag args."""
+    import ast
+
+    for py in sorted(tools_dir.glob("*.py")):
+        tree = ast.parse(py.read_text())
+        funcs = [n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)]
+        seen = set()
+        for call in ast.walk(tree):
+            if not (isinstance(call, ast.Call) and isinstance(call.func, ast.Name)
+                    and call.func.id == "run" and call.args
+                    and isinstance(call.args[0], ast.Constant)
+                    and isinstance(call.args[0].value, str)):
+                continue
+            fn = None
+            for f in funcs:
+                if f.lineno <= call.lineno <= f.end_lineno:
+                    if fn is None or f.lineno > fn.lineno:
+                        fn = f
+            key = (fn.name if fn else "?", call.lineno)
+            if key in seen:
+                continue
+            seen.add(key)
+            pos, flags, conds = 0, [], 0
+            for a in call.args[1:]:
+                if isinstance(a, ast.Constant) and isinstance(a.value, str):
+                    if a.value.startswith("--"):
+                        flags.append(a.value[2:])
+                    else:
+                        pos += 1
+                elif isinstance(a, ast.Name):
+                    pos += 1
+                elif isinstance(a, ast.Starred) and fn is not None:
+                    name = a.value.id if isinstance(a.value, ast.Name) else None
+                    if not name:
+                        continue
+                    for node in ast.walk(fn):
+                        if (isinstance(node, ast.Assign)
+                                and any(isinstance(t, ast.Name) and t.id == name
+                                        for t in node.targets)
+                                and isinstance(node.value, ast.List)):
+                            for e in node.value.elts:
+                                if (isinstance(e, ast.Constant)
+                                        and isinstance(e.value, str)):
+                                    if e.value.startswith("--"):
+                                        flags.append(e.value[2:])
+                                    else:
+                                        pos += 1
+                                elif isinstance(e, ast.Name):
+                                    pos += 1
+                        if (isinstance(node, ast.Call)
+                                and isinstance(node.func, ast.Attribute)
+                                and node.func.attr == "append"
+                                and isinstance(node.func.value, ast.Name)
+                                and node.func.value.id == name):
+                            conds += 1
+            yield {
+                "module": py.name, "line": call.lineno,
+                "script": call.args[0].value,
+                "pos": pos, "conds": conds, "flags": flags,
+            }
+
+
+@pytest.mark.skipif(not _HAS_FASTMCP, reason="mcp not available")
+class TestMCPToolScriptContract:
+    """C.9 audit guard: no MCP tool may be dead on arrival.
+
+    ticket_route_expedited had a wrapper/signature mismatch (wrong arg
+    order) plus a wrong SKILLS_DIR default. This class systematically
+    diffs every run("script", ...) call in lib/hive_mcp/tools/ against the
+    underlying lib/tools/*.sh contract:
+      1. the target script exists and is not a deprecation shim;
+      2. every --flag the wrapper passes is accepted by the script;
+      3. for single-line-Usage scripts, the wrapper can supply at least the
+         required positionals (base list + conditional appends).
+    """
+
+    @pytest.fixture()
+    def tools_dir(self, install_dir):
+        return install_dir / "lib" / "hive_mcp" / "tools"
+
+    def test_run_targets_exist_and_are_not_shims(self, tools_dir, install_dir):
+        problems = []
+        for c in _mcp_run_calls(tools_dir):
+            sh = install_dir / "lib" / "tools" / (c["script"] + ".sh")
+            if not sh.is_file():
+                problems.append(f"{c['module']}:{c['line']} -> missing {sh}")
+            elif _is_pure_shim(sh.read_text()):
+                problems.append(f"{c['module']}:{c['line']} -> {c['script']}.sh "
+                                "is a deprecation shim (always exits non-zero)")
+        assert not problems, "dead-on-arrival MCP tools:\n" + "\n".join(problems)
+
+    def test_flags_passed_are_accepted_by_scripts(self, tools_dir, install_dir):
+        problems = []
+        for c in _mcp_run_calls(tools_dir):
+            sh = install_dir / "lib" / "tools" / (c["script"] + ".sh")
+            if not sh.is_file():
+                continue  # covered by the existence test
+            src = sh.read_text()
+            for fl in c["flags"]:
+                if f"--{fl}" not in src:
+                    problems.append(f"{c['module']}:{c['line']} passes --{fl} "
+                                    f"but {c['script']}.sh never mentions it")
+        assert not problems, "unaccepted flags:\n" + "\n".join(problems)
+
+    def test_required_positionals_covered(self, tools_dir, install_dir):
+        problems = []
+        for c in _mcp_run_calls(tools_dir):
+            sh = install_dir / "lib" / "tools" / (c["script"] + ".sh")
+            if not sh.is_file():
+                continue
+            req = _single_line_required_args(sh.read_text())
+            if req is None or req == 0:
+                continue  # multi-line / subcommand usage: undecidable
+            if c["pos"] + c["conds"] < req:
+                problems.append(f"{c['module']}:{c['line']} -> {c['script']}.sh "
+                                f"requires {req} positionals, wrapper supplies "
+                                f"at most {c['pos'] + c['conds']}")
+        assert not problems, "missing required args:\n" + "\n".join(problems)
+
+    def test_round_promote_next_passes_project_root(self, install_dir, tmp_path, monkeypatch):
+        """C.9: round_promote_next called round-promote.sh with no args; the
+        script defaults PROJECT_ROOT to CWD and re-derives COMPANY_DIR from
+        it (overriding the env), so the company_dir parameter was silently
+        ignored and the promote would hit the MCP server's CWD project
+        instead of the target. The wrapper must pass the project root."""
+        proj = tmp_path / "proj"
+        rounds = proj / ".company" / "rounds"
+        (rounds / "history").mkdir(parents=True)
+        (rounds / "current-round.json").write_text(json.dumps({
+            "round_id": "round-old-1", "sprint_id": None, "started_at": "t",
+            "ended_at": None, "source": "pending", "cursor": 0, "entries": [],
+        }))
+        # CWD must NOT be the project root, or the buggy no-arg path works.
+        elsewhere = tmp_path / "elsewhere"
+        elsewhere.mkdir()
+        monkeypatch.chdir(elsewhere)
+
+        sys_path = str(install_dir / "lib")
+        old_path = os.environ.get("PYTHONPATH", "")
+        if sys_path not in old_path:
+            os.environ["PYTHONPATH"] = sys_path + (":" + old_path if old_path else "")
+        try:
+            from hive_mcp.server import build_server
+            server = build_server()
+            fn = server._tool_manager._tools["round_promote_next"].fn
+            result = fn(company_dir=str(proj / ".company"))
+            assert result.get("ok") is True, result
+            # The old round was archived in the TARGET project ...
+            assert (rounds / "history" / "round-old-1.json").exists(), (
+                "round was not promoted in the target project "
+                f"(stderr: {result.get('stderr', '')[:200]})"
+            )
+            # ... and a fresh shell round replaced it there.
+            cur = json.loads((rounds / "current-round.json").read_text())
+            assert cur["round_id"] != "round-old-1"
         finally:
             if old_path:
                 os.environ["PYTHONPATH"] = old_path

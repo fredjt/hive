@@ -62,11 +62,3 @@ def register(server: Server) -> None:
         return run("gh-pr-merge", branch, project_root, "--method", method,
                    company_dir=company_dir).to_dict()
 
-    @server.tool()
-    def gh_pr_reject(branch: str, ticket_id: str, project_root: str,
-                     reason: str, keep_open: bool = False,
-                     company_dir: str | None = None) -> dict:
-        """Comment + close a PR (verification IC's NO-GO path)."""
-        args = [branch, ticket_id, project_root, "--reason", reason]
-        if keep_open: args.append("--keep-open")
-        return run("gh-pr-reject", *args, company_dir=company_dir).to_dict()
