@@ -1,65 +1,62 @@
-# Hive — claude-in-a-box Docker image
+# Hive — agent-in-a-box Docker image
 #
-# Runs the Claude Code CLI inside a container that only sees its assigned
-# worktree.  .company/, the host filesystem, and everything else are
-# inaccessible.
+# Runs the built-in agent harness (lib/core/agent-harness.py: plain
+# python3 + provider APIs + the MCP HTTP tool surface) inside a container
+# that only sees its assigned worktree.  .company/, the host filesystem,
+# and everything else are inaccessible.
 #
 # Build:
-#   docker build -t hive-claude .
+#   docker build -t hive-agent .
 #
 # Run (agent spawn):
 #   docker run --rm \
-#     -e ANTHROPIC_API_KEY="$ANTHROPIC_API_KEY" \
-#     -e ANTHROPIC_BASE_URL="$ANTHROPIC_BASE_URL" \
-#     -v "$HIVE_ROOT/.claude:/host-claude:ro" \
+#     -e HIVE_MODEL="$HIVE_MODEL" \
+#     -e HIVE_API_BASE="$HIVE_API_BASE" \
+#     -e HIVE_API_KEY="$HIVE_API_KEY" \
+#     -e MCP_URL="http://127.0.0.1:7891/mcp" \
 #     -v "$WORKTREE_DIR:/work:rw" \
 #     -w /work \
-#     --tmpfs /root/.claude:noexec,nosuid,size=100m \
-#     -v "$MCP_CONFIG:/mcp-config:ro" \
+#     --tmpfs /root:noexec,nosuid,size=100m \
 #     --network host \
-#     hive-claude \
+#     hive-agent \
 #     /entrypoint.sh "<prompt>"
 #
 # Security model:
 #   • The container has NO access to .company/ or the host filesystem.
 #     Only the worktree is mounted (read-write).
 #   • The API key lives only in the container's environment — never on disk.
-#   • The claude cache (/root/.claude) is a tmpfs — ephemeral, no host leakage.
+#   • /root (the agent's HOME / state dir) is a tmpfs — ephemeral, no host
+#     leakage.
 #   • --network host gives the agent access to the MCP server on port 7891
-#     (for hive tool calls) and the Anthropic API (internet).
+#     (for hive tool calls) and the LLM provider API (internet).
 #
 # Notes:
-#   • The claude binary is ~245 MB. Total image size after build: ~320 MB.
-#   • The binary is dynamically linked against glibc. Base image must provide
-#     a compatible glibc (debian:trixie-slim has glibc 2.40).
+#   • The harness's only runtime dependency is httpx, installed into a
+#     throwaway venv at /opt/hive/venv.
 #   • No useradd/sudo needed — the container runs as root inside the
 #     isolated filesystem, which is sufficient for sandboxing.
 
 FROM debian:trixie-slim
 
-# ca-certificates for HTTPS to Anthropic API.
-# curl for the installer and diagnostic use.
+# ca-certificates for HTTPS to the LLM provider API.
+# python3 + python3-venv for the harness and its venv.
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates \
-        curl \
+        python3 \
+        python3-venv \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Claude Code CLI from the official installer.
-# The installer downloads the binary, verifies its SHA256 checksum against
-# the signed manifest, and sets up the launcher in ~/.local/bin.
-RUN curl -fsSL https://claude.ai/install.sh | bash
+# The harness, plus a venv holding its single runtime dependency (httpx).
+COPY lib/core/agent-harness.py /opt/hive/lib/core/agent-harness.py
+RUN python3 -m venv /opt/hive/venv \
+    && /opt/hive/venv/bin/pip install --no-cache-dir --quiet httpx
 
 # Environment
-ENV CLAUDE_HOME=/root/.claude
 ENV HOME=/root
-ENV PATH="/root/.local/bin:$PATH"
-
-# The project's .claude/ directory (settings, permissions, etc.) is mounted
-# read-only at /host-claude at runtime. An entrypoint script copies config
-# files into the ephemeral /root/.claude tmpfs so Claude Code sees them.
+ENV PATH="/opt/hive/venv/bin:$PATH"
 
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
-# Default: show help so the image is inspectable without an API key
-CMD ["claude", "--help"]
+# Default: show harness help so the image is inspectable without an API key
+CMD ["/opt/hive/venv/bin/python", "/opt/hive/lib/core/agent-harness.py", "--help"]

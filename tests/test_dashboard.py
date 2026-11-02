@@ -625,13 +625,14 @@ class TestGitignoreBuildLitter:
         )
 
 
-class TestDockerClaudeInABox:
-    """D.8: the Dockerfile + entrypoint.sh ship the claude-in-a-box image
-    with zero coverage. Build the image (skipif docker is unavailable) and
-    assert the isolation model the Dockerfile promises: the mounted worktree
-    is visible and writable; .company/ and the rest of the host filesystem
-    are NOT visible; /root/.claude is a fresh tmpfs seeded from the ro
-    /host-claude mount (stale cache not copied); and a trivial prompt runs.
+class TestDockerAgentInABox:
+    """A.3: the Dockerfile + entrypoint.sh ship the agent-in-a-box image
+    (built-in harness, no external CLI). Build the image (skipif docker is
+    unavailable) and assert the isolation model the Dockerfile promises:
+    the mounted worktree is visible and writable; .company/ and the rest
+    of the host filesystem are NOT visible; /root is a fresh tmpfs; and a
+    trivial prompt round-trips against a stubbed LLM endpoint on the
+    host's loopback (container runs with --network host).
 
     Runs for real wherever the docker daemon is reachable (CI); skipped
     locally when only the CLI is present or the socket is not accessible."""
@@ -651,9 +652,9 @@ class TestDockerClaudeInABox:
 
     @pytest.fixture(scope="module")
     def hive_image(self, docker_cli):
-        """Build the claude-in-a-box image once per worker. A failed build is
+        """Build the agent-in-a-box image once per worker. A failed build is
         a real Dockerfile regression — fail, don't skip."""
-        image = f"hive-claude-box-test-{uuid.uuid4().hex[:8]}"
+        image = f"hive-agent-box-test-{uuid.uuid4().hex[:8]}"
         repo_root = Path(__file__).resolve().parent.parent
         r = subprocess.run(
             ["docker", "build", "-q", "-t", image, "."],
@@ -661,7 +662,7 @@ class TestDockerClaudeInABox:
         )
         if r.returncode != 0:
             pytest.fail(
-                "docker build of the claude-in-a-box image failed:"
+                "docker build of the agent-in-a-box image failed:"
                 f"\n{(r.stderr or r.stdout)[-800:]}"
             )
         yield image
@@ -670,33 +671,31 @@ class TestDockerClaudeInABox:
     @staticmethod
     def _run(hive_image, run_opts=(), *cmd, timeout=300):
         """Run a container the way the Dockerfile documents: worktree rw at
-        /work, /root/.claude as an ephemeral tmpfs.
+        /work, /root as an ephemeral tmpfs.
 
         run_opts = `docker run` flags (must precede the image: -v/-w/-e...);
         cmd      = the command executed inside the container (after the
         image — anything after the image name is a command, not a flag)."""
         args = (["docker", "run", "--rm",
-                 "--tmpfs", "/root/.claude:noexec,nosuid,size=100m"]
+                 "--tmpfs", "/root:noexec,nosuid,size=100m"]
                 + list(run_opts) + [hive_image] + list(cmd))
         return subprocess.run(args, capture_output=True, text=True,
                               timeout=timeout)
 
-    def test_claude_binary_smoke(self, hive_image):
-        """Default CMD is `claude --help` — the binary is installed and runs
-        without an API key or network."""
+    def test_harness_help_smoke(self, hive_image):
+        """Default CMD is `agent-harness.py --help` — the harness is installed
+        and runs without an API key or network."""
         r = self._run(hive_image)
         assert r.returncode == 0, (r.stderr or r.stdout)[-500:]
-        assert (r.stdout + r.stderr).strip(), "claude --help printed nothing"
+        assert (r.stdout + r.stderr).strip(), "harness --help printed nothing"
+        assert "usage" in (r.stdout + r.stderr).lower()
 
     def test_worktree_visible_and_writable(self, hive_image, tmp_path):
         wt = tmp_path / "worktree"
         wt.mkdir()
         (wt / "marker.txt").write_text("worktree-visible")
-        host_claude = tmp_path / "host-claude"
-        host_claude.mkdir()
         r = self._run(hive_image,
-                      ["-v", f"{wt}:/work:rw", "-w", "/work",
-                       "-v", f"{host_claude}:/host-claude:ro"],
+                      ["-v", f"{wt}:/work:rw", "-w", "/work"],
                       "/entrypoint.sh", "bash", "-c",
                       "cat /work/marker.txt && echo from-container > /work/created.txt"
                       " && cat /work/created.txt")
@@ -740,47 +739,67 @@ class TestDockerClaudeInABox:
         assert secret_marker not in out
         assert host_marker not in out
 
-    def test_root_claude_fresh_tmpfs_seeded_from_host_mount(self, hive_image,
-                                                            tmp_path):
-        """entrypoint.sh: config from the ro /host-claude mount is copied into
-        the tmpfs; cache/ is NOT copied (fresh tmpfs wins); /root/.claude is
-        actually a tmpfs."""
-        wt = tmp_path / "worktree"
-        wt.mkdir()
-        host_claude = tmp_path / "host-claude"
-        (host_claude / "cache").mkdir(parents=True)
-        stale = f"stale-cache-{uuid.uuid4().hex}"
-        (host_claude / "cache" / stale).write_text("stale cache entry")
-        cfg_marker = f"hive-cfg-{uuid.uuid4().hex}"
-        (host_claude / "settings.json").write_text(cfg_marker)
-
+    def test_root_fresh_tmpfs(self, hive_image):
+        """/root (agent HOME / state dir) must be a tmpfs: ephemeral, no host
+        leakage, nothing carried between runs."""
         r = self._run(hive_image,
-                      ["-v", f"{wt}:/work:rw", "-w", "/work",
-                       "-v", f"{host_claude}:/host-claude:ro"],
+                      ["-w", "/root"],
                       "/entrypoint.sh", "bash", "-c",
-                      f"cat /root/.claude/settings.json; "
-                      f"test ! -e /root/.claude/cache/{stale} && echo NO_STALE_CACHE; "
-                      "test -d /root/.claude/cache && echo CACHE_DIR_FRESH; "
-                      "df -T /root/.claude | tail -1")
+                      "df -T /root | tail -1 && echo touch-$$ > /root/probe.txt "
+                      "&& cat /root/probe.txt")
         assert r.returncode == 0, (r.stderr or r.stdout)[-500:]
-        assert cfg_marker in r.stdout, "host settings.json was not seeded into /root/.claude"
-        assert "NO_STALE_CACHE" in r.stdout, "stale host cache leaked into the tmpfs"
-        assert "CACHE_DIR_FRESH" in r.stdout
-        assert "tmpfs" in r.stdout, "/root/.claude is not a tmpfs"
+        assert "tmpfs" in r.stdout, f"/root is not a tmpfs: {r.stdout[:200]}"
 
-    def test_trivial_prompt(self, hive_image, tmp_path):
-        """Full path: a real (trivial) prompt through the entrypoint. Needs an
-        API key — skip when not available."""
-        api_key = os.environ.get("ANTHROPIC_API_KEY", "")
-        if not api_key:
-            pytest.skip("ANTHROPIC_API_KEY not set — cannot run a live prompt")
-        wt = tmp_path / "worktree"
-        wt.mkdir()
-        r = self._run(hive_image,
-                      ["-e", "ANTHROPIC_API_KEY",
-                       "-v", f"{wt}:/work:rw", "-w", "/work"],
-                      "/entrypoint.sh", "claude", "-p",
-                      "Reply with exactly: OK",
-                      timeout=600)
+    def test_trivial_prompt_round_trip_against_stub(self, hive_image, tmp_path):
+        """Full path: a trivial prompt through the entrypoint + harness,
+        answered by a stubbed LLM endpoint on the host's loopback (the
+        container runs with --network host). No live provider, no API key:
+        the stub returns one canned OpenAI-style completion with no tool
+        blocks, so the harness ends the loop and reports the answer."""
+        import json as _json
+        import threading
+        from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+        class _Stub(BaseHTTPRequestHandler):
+            def log_message(self, *a):
+                pass
+
+            def do_POST(self):
+                assert self.path.endswith("/chat/completions"), self.path
+                body = self.rfile.read(int(self.headers.get("Content-Length", 0)))
+                _json.loads(body)  # must be valid JSON
+                resp = _json.dumps({
+                    "id": "chatcmpl-stub", "object": "chat.completion",
+                    "model": "stub-model",
+                    "choices": [{"index": 0,
+                                 "message": {"role": "assistant", "content": "OK"},
+                                 "finish_reason": "stop"}],
+                    "usage": {"prompt_tokens": 1, "completion_tokens": 1,
+                              "total_tokens": 2},
+                }).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(resp)))
+                self.end_headers()
+                self.wfile.write(resp)
+
+        server = ThreadingHTTPServer(("127.0.0.1", 0), _Stub)
+        port = server.server_address[1]
+        t = threading.Thread(target=server.serve_forever, daemon=True)
+        t.start()
+        try:
+            wt = tmp_path / "worktree"
+            wt.mkdir()
+            r = self._run(hive_image,
+                          ["--network", "host",
+                           "-e", f"HIVE_API_BASE=http://127.0.0.1:{port}/v1",
+                           "-e", "HIVE_API_KEY=stub-key",
+                           "-e", "HIVE_MODEL=stub-model",
+                           "-v", f"{wt}:/work:rw", "-w", "/work"],
+                          "/entrypoint.sh", "Reply with exactly: OK",
+                          timeout=300)
+        finally:
+            server.shutdown()
+            server.server_close()
         assert r.returncode == 0, (r.stderr or r.stdout)[-500:]
-        assert r.stdout.strip(), "claude -p produced no output"
+        assert "OK" in r.stdout, f"stub answer missing from output: {r.stdout[:300]}"

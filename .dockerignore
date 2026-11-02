@@ -24,6 +24,16 @@ unsloth-tmp/
 **/__pycache__/
 node_modules/
 
+# Local tooling state + dev scratch (keep the build context small and
+# credential-free)
+.cache/
+.config/
+.docker/
+.local/
+.gitconfig
+dbg3-proj/
+dbg4-proj/
+
 # IDE
 .vscode/
 .idea/
