@@ -1,7 +1,10 @@
 """Tests for hive dashboard — structure and server."""
 import re
+import shutil
+import subprocess
 import sys
 import os
+import uuid
 from pathlib import Path
 # Ensure lib/ is on the path when running from within hive/ directory
 _hive_lib = str(Path(__file__).resolve().parent.parent / "lib")
@@ -620,3 +623,160 @@ class TestGitignoreBuildLitter:
         assert not missing, (
             f".gitignore does not cover build/test litter: {missing}"
         )
+
+
+class TestDockerClaudeInABox:
+    """D.8: the Dockerfile + entrypoint.sh ship the claude-in-a-box image
+    with zero coverage. Build the image (skipif docker is unavailable) and
+    assert the isolation model the Dockerfile promises: the mounted worktree
+    is visible and writable; .company/ and the rest of the host filesystem
+    are NOT visible; /root/.claude is a fresh tmpfs seeded from the ro
+    /host-claude mount (stale cache not copied); and a trivial prompt runs.
+
+    Runs for real wherever the docker daemon is reachable (CI); skipped
+    locally when only the CLI is present or the socket is not accessible."""
+
+    @pytest.fixture(scope="module")
+    def docker_cli(self):
+        if shutil.which("docker") is None:
+            pytest.skip("docker CLI not available")
+        r = subprocess.run(["docker", "info"], capture_output=True, text=True,
+                           timeout=30)
+        if r.returncode != 0:
+            pytest.skip(
+                "docker daemon not reachable "
+                f"({r.stderr.strip().splitlines()[-1] if r.stderr.strip() else 'rc=%d' % r.returncode})"
+            )
+        yield "docker"
+
+    @pytest.fixture(scope="module")
+    def hive_image(self, docker_cli):
+        """Build the claude-in-a-box image once per worker. A failed build is
+        a real Dockerfile regression — fail, don't skip."""
+        image = f"hive-claude-box-test-{uuid.uuid4().hex[:8]}"
+        repo_root = Path(__file__).resolve().parent.parent
+        r = subprocess.run(
+            ["docker", "build", "-q", "-t", image, "."],
+            capture_output=True, text=True, timeout=1800, cwd=str(repo_root),
+        )
+        if r.returncode != 0:
+            pytest.fail(
+                "docker build of the claude-in-a-box image failed:"
+                f"\n{(r.stderr or r.stdout)[-800:]}"
+            )
+        yield image
+        subprocess.run(["docker", "rmi", "-f", image], capture_output=True)
+
+    @staticmethod
+    def _run(hive_image, *args, timeout=300):
+        """Run a container the way the Dockerfile documents: worktree rw at
+        /work, /root/.claude as an ephemeral tmpfs."""
+        cmd = (["docker", "run", "--rm",
+                "--tmpfs", "/root/.claude:noexec,nosuid,size=100m",
+                hive_image] + list(args))
+        return subprocess.run(cmd, capture_output=True, text=True,
+                              timeout=timeout)
+
+    def test_claude_binary_smoke(self, hive_image):
+        """Default CMD is `claude --help` — the binary is installed and runs
+        without an API key or network."""
+        r = self._run(hive_image)
+        assert r.returncode == 0, (r.stderr or r.stdout)[-500:]
+        assert (r.stdout + r.stderr).strip(), "claude --help printed nothing"
+
+    def test_worktree_visible_and_writable(self, hive_image, tmp_path):
+        wt = tmp_path / "worktree"
+        wt.mkdir()
+        (wt / "marker.txt").write_text("worktree-visible")
+        host_claude = tmp_path / "host-claude"
+        host_claude.mkdir()
+        r = self._run(hive_image,
+                      "-v", f"{wt}:/work:rw", "-w", "/work",
+                      "-v", f"{host_claude}:/host-claude:ro",
+                      "/entrypoint.sh", "bash", "-c",
+                      "cat /work/marker.txt && echo from-container > /work/created.txt"
+                      " && cat /work/created.txt")
+        assert r.returncode == 0, (r.stderr or r.stdout)[-500:]
+        assert "worktree-visible" in r.stdout
+        assert "from-container" in r.stdout
+        # The write landed back on the host worktree (rw mount).
+        assert (wt / "created.txt").is_file()
+
+    def test_company_and_host_fs_not_visible(self, hive_image, tmp_path):
+        """The core promise: the container sees ONLY the worktree. A secret in
+        the host's .company/ and an unmounted host file must be unreachable.
+        Unique markers make false positives impossible."""
+        wt = tmp_path / "worktree"
+        wt.mkdir()
+        (wt / "visible.txt").write_text("ok")
+
+        company = tmp_path / ".company"
+        (company / "secrets").mkdir(parents=True)
+        secret_marker = f"hive-company-secret-{uuid.uuid4().hex}"
+        (company / "secrets" / "state.json").write_text(secret_marker)
+
+        host_marker = f"hive-host-file-{uuid.uuid4().hex}"
+        (tmp_path / host_marker).write_text("host fs file")
+
+        r = self._run(hive_image,
+                      "-v", f"{wt}:/work:rw", "-w", "/work",
+                      "/entrypoint.sh", "bash", "-c",
+                      "echo SECRET_COUNT=$(find / -xdev -name {secret_marker} 2>/dev/null | wc -l)"
+                      " && echo HOST_COUNT=$(find / -xdev -name {host_marker} 2>/dev/null | wc -l)"
+                      " && test ! -e /.company && test ! -e /work/.company"
+                      " && echo NO_COMPANY_DIR".format(
+                          secret_marker=secret_marker, host_marker=host_marker))
+        assert r.returncode == 0, (r.stderr or r.stdout)[-500:]
+        out = r.stdout
+        assert "SECRET_COUNT=0" in out, (
+            f"host .company secret is reachable inside the container: {out[:300]}")
+        assert "HOST_COUNT=0" in out, (
+            f"unmounted host file is reachable inside the container: {out[:300]}")
+        assert "NO_COMPANY_DIR" in out
+        assert secret_marker not in out
+        assert host_marker not in out
+
+    def test_root_claude_fresh_tmpfs_seeded_from_host_mount(self, hive_image,
+                                                            tmp_path):
+        """entrypoint.sh: config from the ro /host-claude mount is copied into
+        the tmpfs; cache/ is NOT copied (fresh tmpfs wins); /root/.claude is
+        actually a tmpfs."""
+        wt = tmp_path / "worktree"
+        wt.mkdir()
+        host_claude = tmp_path / "host-claude"
+        (host_claude / "cache").mkdir(parents=True)
+        stale = f"stale-cache-{uuid.uuid4().hex}"
+        (host_claude / "cache" / stale).write_text("stale cache entry")
+        cfg_marker = f"hive-cfg-{uuid.uuid4().hex}"
+        (host_claude / "settings.json").write_text(cfg_marker)
+
+        r = self._run(hive_image,
+                      "-v", f"{wt}:/work:rw", "-w", "/work",
+                      "-v", f"{host_claude}:/host-claude:ro",
+                      "/entrypoint.sh", "bash", "-c",
+                      f"cat /root/.claude/settings.json; "
+                      f"test ! -e /root/.claude/cache/{stale} && echo NO_STALE_CACHE; "
+                      "test -d /root/.claude/cache && echo CACHE_DIR_FRESH; "
+                      "df -T /root/.claude | tail -1")
+        assert r.returncode == 0, (r.stderr or r.stdout)[-500:]
+        assert cfg_marker in r.stdout, "host settings.json was not seeded into /root/.claude"
+        assert "NO_STALE_CACHE" in r.stdout, "stale host cache leaked into the tmpfs"
+        assert "CACHE_DIR_FRESH" in r.stdout
+        assert "tmpfs" in r.stdout, "/root/.claude is not a tmpfs"
+
+    def test_trivial_prompt(self, hive_image, tmp_path):
+        """Full path: a real (trivial) prompt through the entrypoint. Needs an
+        API key — skip when not available."""
+        api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+        if not api_key:
+            pytest.skip("ANTHROPIC_API_KEY not set — cannot run a live prompt")
+        wt = tmp_path / "worktree"
+        wt.mkdir()
+        r = self._run(hive_image,
+                      "-e", "ANTHROPIC_API_KEY",
+                      "-v", f"{wt}:/work:rw", "-w", "/work",
+                      "/entrypoint.sh", "claude", "-p",
+                      "Reply with exactly: OK",
+                      timeout=600)
+        assert r.returncode == 0, (r.stderr or r.stdout)[-500:]
+        assert r.stdout.strip(), "claude -p produced no output"

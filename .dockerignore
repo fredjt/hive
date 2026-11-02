@@ -16,6 +16,14 @@ LICENSE
 README.md
 VERSION
 
+# Build & test litter (mirrors .gitignore — keep the build context small)
+dist/
+.coverage
+.pytest_cache/
+unsloth-tmp/
+**/__pycache__/
+node_modules/
+
 # IDE
 .vscode/
 .idea/
