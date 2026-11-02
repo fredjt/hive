@@ -8,7 +8,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ```
 lib/
-  hive_mcp/              MCP server — ~50 tools wrapping bash scripts (Python/FastMCP)
+  hive_mcp/              MCP server — ~55 tools wrapping bash scripts (Python/FastMCP)
     shell.py             Subprocess bridge — env setup, path resolution, JSON parsing
     tools/               17 domain modules (init, tickets, chat, verification, ...)
   hive_cli/              CLI dispatcher — argparse → handler modules → MCP client (Python)

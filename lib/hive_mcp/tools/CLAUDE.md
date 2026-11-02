@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working within 
 
 ## Role
 
-This directory contains the MCP tool modules for the Hive framework — a collection of Python modules that expose ~50 tools via the Hive MCP server (`server.py`). Each tool is a thin Python wrapper around a bash script in `<scaffold>/lib/tools/*.sh`. The tools are grouped by domain.
+This directory contains the MCP tool modules for the Hive framework — a collection of Python modules that expose ~55 tools via the Hive MCP server (`server.py`). Each tool is a thin Python wrapper around a bash script in `<scaffold>/lib/tools/*.sh`. The tools are grouped by domain.
 
 ## Structure
 
