@@ -1,8 +1,12 @@
 """Tests for hive_mcp.tools — MCP tool registration and behavior."""
+import socket
+import subprocess
 import sys
 import re
 import json
 import os
+import tempfile
+import time
 from pathlib import Path
 # Ensure lib/ is on the path when running from within hive/ directory
 _hive_lib = str(Path(__file__).resolve().parent.parent / "lib")
@@ -869,3 +873,153 @@ class TestMCPToolScriptContract:
                 os.environ["PYTHONPATH"] = old_path
             else:
                 os.environ.pop("PYTHONPATH", None)
+
+
+# ---------------------------------------------------------------------------
+# C.5: streamable-http wire path (server.py --transport http + mcp_client)
+# ---------------------------------------------------------------------------
+
+def _free_local_port() -> int:
+    """Ask the kernel for a currently-free loopback port (xdist-safe: each
+    worker/test asks for its own port, so parallel workers never collide)."""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.bind(("127.0.0.1", 0))
+        return s.getsockname()[1]
+
+
+def _wait_for_port(port: int, timeout: float = 30.0) -> bool:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        try:
+            with socket.create_connection(("127.0.0.1", port), timeout=0.5):
+                return True
+        except OSError:
+            time.sleep(0.2)
+    return False
+
+
+@pytest.fixture(scope="module")
+def http_mcp_server():
+    """Boot the REAL MCP server (`server.py --transport http`) on an ephemeral
+    port — the same command `hive start` / `hive dashboard` run — and yield
+    the port. Terminates the server on teardown."""
+    install_dir = Path(__file__).resolve().parent.parent
+    port = _free_local_port()
+    env = {
+        **os.environ,
+        "PYTHONPATH": str(install_dir / "lib"),
+        "HIVE_ROOT": str(install_dir),
+        "HIVE_INSTALL_DIR": str(install_dir),
+    }
+    log_path = tempfile.mktemp(prefix="hive-mcp-test-", suffix=".log")
+    log_file = open(log_path, "w")
+    proc = subprocess.Popen(
+        [sys.executable, str(install_dir / "lib" / "hive_mcp" / "server.py"),
+         "--transport", "http", "--host", "127.0.0.1", "--port", str(port)],
+        env=env, cwd=str(install_dir),
+        stdout=log_file, stderr=subprocess.STDOUT,
+    )
+    try:
+        if not _wait_for_port(port, timeout=30.0):
+            proc.kill()
+            log_file.close()
+            try:
+                log = Path(log_path).read_text()
+            except OSError:
+                log = "(log unreadable)"
+            pytest.fail(f"MCP HTTP server did not open port {port}; log:\n{log}")
+        yield port
+    finally:
+        proc.terminate()
+        try:
+            proc.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+        log_file.close()
+        try:
+            os.unlink(log_path)
+        except OSError:
+            pass
+
+
+def _mcp_client_on_port(port: int, monkeypatch):
+    """Point the module-level mcp_client (host/port are read at call time)
+    at the given loopback port."""
+    from hive_cli import mcp_client
+    monkeypatch.setattr(mcp_client, "MCP_HOST", "127.0.0.1")
+    monkeypatch.setattr(mcp_client, "MCP_PORT", port)
+    return mcp_client
+
+
+@pytest.mark.skipif(not _HAS_FASTMCP, reason="mcp server/client not available")
+class TestHttpTransportWire:
+    """C.5: the streamable-http path every operator actually uses. The CLI and
+    the dashboard both reach the MCP server over `--transport http` (default
+    port 7891); the suite previously only exercised in-process tool
+    registration, so this class boots the real server and round-trips tools
+    over the wire."""
+
+    def test_write_then_read_roundtrip(self, http_mcp_server, tmp_company_dir,
+                                       monkeypatch):
+        """A write tool (ticket_create) and a read tool (ticket_get) both
+        round-trip over HTTP, and the write really landed on disk."""
+        mcp_client = _mcp_client_on_port(http_mcp_server, monkeypatch)
+        company_dir = str(tmp_company_dir)
+        title = "wire round-trip ticket"
+
+        created = mcp_client.call_tool("ticket_create", {
+            "dept": "it", "type": "chore", "priority": "low",
+            "title": title,
+            "description": "Created over the streamable-http wire",
+            "company_dir": company_dir,
+        })
+        assert created.get("ok") is True, created
+        # ticket-create.sh prints the bare ticket id to stdout.
+        ticket_id = (created.get("stdout") or "").strip() or (
+            (created.get("data") or {}).get("id", ""))
+        assert ticket_id, f"no ticket id in create response: {created}"
+
+        got = mcp_client.call_tool("ticket_get", {
+            "dept": "it", "ticket_id": ticket_id, "company_dir": company_dir,
+        })
+        assert got.get("ok") is True, got
+        data = got.get("data") or {}
+        assert data.get("id") == ticket_id
+        assert data.get("title") == title
+
+        # The write really landed in the tmp company dir (not some CWD).
+        tickets_root = Path(company_dir) / "departments" / "it" / "tickets"
+        found = list(tickets_root.rglob(f"{ticket_id}.json"))
+        assert found, f"{ticket_id}.json not found under {tickets_root}"
+        assert json.loads(found[0].read_text())["title"] == title
+
+    def test_list_tools_over_http(self, http_mcp_server, monkeypatch):
+        mcp_client = _mcp_client_on_port(http_mcp_server, monkeypatch)
+        tools = mcp_client.list_tools()
+        assert "ticket_create" in tools
+        assert "ticket_get" in tools
+        assert len(tools) >= 40, (
+            f"expected >= 40 tools over the wire, got {len(tools)}")
+
+    def test_error_when_server_down_and_no_stdio_fallback(self, tmp_path,
+                                                          tmp_company_dir,
+                                                          monkeypatch):
+        """With no HTTP server listening AND the stdio fallback broken, a tool
+        call must fail fast with a clean error dict — not hang, not raise,
+        and not silently succeed."""
+        dead_port = _free_local_port()  # nothing listens here
+        mcp_client = _mcp_client_on_port(dead_port, monkeypatch)
+        assert mcp_client._is_http_server_up() is False
+
+        # Break the stdio fallback (its venv path is derived from this), so a
+        # down server must surface as an error rather than a second transport
+        # quietly taking over.
+        monkeypatch.setattr(mcp_client, "HIVE_INSTALL_DIR",
+                            tmp_path / "no-such-install")
+
+        res = mcp_client.call_tool("ticket_get", {
+            "dept": "it", "ticket_id": "TICKET-001",
+            "company_dir": str(tmp_company_dir),
+        })
+        assert res.get("ok") is False, res
+        assert res.get("error"), f"expected a non-empty error message: {res}"

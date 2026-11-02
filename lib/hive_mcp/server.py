@@ -18,7 +18,7 @@ import os
 import sys
 from pathlib import Path
 
-from hive_mcp.server_compat import Server
+from hive_mcp.server_compat import Server, run_http
 
 
 HIVE_ROOT = Path(os.environ.get("HIVE_ROOT", Path(__file__).resolve().parents[2]))
@@ -88,10 +88,9 @@ def main() -> None:
     if args.transport == "stdio":
         server.run(transport="stdio")
     else:
-        # FastMCP's HTTP runner picks up host/port from settings before .run()
-        server.settings.host = args.host
-        server.settings.port = args.port
-        server.run(transport="streamable-http")
+        # run_http() handles the host/port handoff across mcp 1.x (settings
+        # fields) and mcp 2.x (run() kwargs) — see server_compat.run_http.
+        run_http(server, args.host, args.port)
 
 
 if __name__ == "__main__":

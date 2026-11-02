@@ -46,8 +46,12 @@ def _is_http_server_up() -> bool:
 @asynccontextmanager
 async def _http_session():
     """Open an MCP ClientSession over Streamable HTTP."""
-    async with streamable_http_client(_http_endpoint()) as (read_stream, write_stream, _):
-        async with ClientSession(read_stream, write_stream) as session:
+    # mcp 1.x yields (read_stream, write_stream, session_manager);
+    # mcp 2.x yields just (read_stream, write_stream). Index into the tuple
+    # so both SDK generations work — unpacking 3 names on 2.x raises
+    # ValueError inside the TaskGroup and kills every HTTP tool call.
+    async with streamable_http_client(_http_endpoint()) as streams:
+        async with ClientSession(streams[0], streams[1]) as session:
             await session.initialize()
             yield session
 
