@@ -186,8 +186,13 @@ file_release_blocker() {
 }
 
 # ── CEO planning ────────────────────────────────────────────────────
+# $1: the stage to record while the CEO plans (ceo-plan for a new sprint,
+# ceo-bugfix-plan for a release bugfix cycle). The stage is the dispatch
+# contract: ticket-move.sh keys VP rejection windows off it, and startup
+# decides whether a relaunch re-plans or resumes.
 run_ceo_plan() {
   log "CEO planning stage"
+  ss_set_stage "${1:-ceo-plan}"
   local CEO_AGENT_FILE="$SKILL_DIR/lib/agents/ceo.md"
   [ -f "$CEO_AGENT_FILE" ] || { log "missing ceo.md"; return 1; }
 
@@ -250,8 +255,12 @@ runs next automatically."
 }
 
 # ── VP planning ─────────────────────────────────────────────────────
+# $1: vp-plan (new sprint) or vp-bugfix-plan (release bugfix cycle).
+# Must be recorded BEFORE the VPs spawn: their rejection window is exactly
+# these stages (enforced by ticket-move.sh).
 run_vp_plan() {
   log "VP planning stage"
+  ss_set_stage "${1:-vp-plan}"
   local DIRECTION
   DIRECTION=$(ss_get_field .ceo_direction_path)
   [ -z "$DIRECTION" ] && DIRECTION="(no direction document was written by CEO; act on prior sprint context)"
@@ -322,6 +331,7 @@ run_sprint_fill() {
     | while read -r f; do basename "$f" .json; done | jq -R . | jq -s -c .)
   ss_set_tickets_in_sprint "$TICKETS_JSON"
   ss_reset_loop_iteration
+  ss_set_stage tdd-red
 }
 
 # ── Ticket lifecycle ────────────────────────────────────────────────
@@ -769,11 +779,22 @@ After approve or bounce, EXIT. This script handles the status move."
 log "starting sprint lifecycle (project=$PROJECT_ROOT)"
 
 # ── Sprint initialization (CEO + VP planning) ──
-run_ceo_plan
-run_vp_plan
-run_sprint_fill
+# Dispatch on the recorded stage: a fresh sprint (ceo-plan) plans; a
+# relaunch on an in-progress sprint (crash, or the bugfix-cycle exit 0 —
+# which already re-planned inline) resumes the ticket loop instead of
+# re-running planning. Re-planning a live sprint double-spends the CEO +
+# every VP and risks duplicate ticket filings.
+START_STAGE=$(ss_get_stage)
+if [ "$START_STAGE" = "ceo-plan" ]; then
+  run_ceo_plan
+  run_vp_plan
+  run_sprint_fill
+  ss_set_stage tdd-red
+else
+  log "stage=$START_STAGE — sprint already planned; resuming at the ticket loop (no re-planning)"
+fi
 
-log "sprint-fill complete, entering ticket processing loop"
+log "entering ticket processing loop"
 
 LOOP_ITERATION=0
 SAFETY_DEPT=""
@@ -857,8 +878,8 @@ else
     RELEASE_BLOCKED=1
   else
     log "running bugfix cycle (attempt $RETRY)"
-    run_ceo_plan
-    run_vp_plan
+    run_ceo_plan ceo-bugfix-plan
+    run_vp_plan vp-bugfix-plan
     run_sprint_fill
     LOOP_ITERATION=0
     ss_set_stage tdd-red
@@ -870,6 +891,7 @@ fi
 # (and the verify stage itself, on a build that never happened) can be
 # skipped when the release is already ruled unshippable.
 run_release_verify() {
+  ss_set_stage release-verify
   log "release-verify: spawning release IC"
   VERSION=$(ss_get_field .release.version)
   TEST_LOG=$(ss_get_field .release.test_log)
@@ -944,8 +966,8 @@ run_release_verify() {
         RELEASE_BLOCKED=1
       else
         log "running bugfix cycle (attempt $RETRY)"
-        run_ceo_plan
-        run_vp_plan
+        run_ceo_plan ceo-bugfix-plan
+        run_vp_plan vp-bugfix-plan
         run_sprint_fill
         LOOP_ITERATION=0
         ss_set_stage tdd-red
@@ -980,6 +1002,7 @@ fi
 # publisher (a successful publish would flip publish_status back to
 # 'published').
 run_release_publish() {
+  ss_set_stage release-publish
   log "release-publish: running"
   if bash "$SKILL_DIR/lib/tools/release-publish-runner.sh" "$PROJECT_ROOT"; then
     ss_set_release_field publish_status published
@@ -997,6 +1020,7 @@ else
 fi
 
 # VP-review
+ss_set_stage vp-review
 log "vp-review: spawning VPs"
 SPRINT_ID=$(ss_get_field .sprint_id)
 PUBLISH_STATUS=$(ss_get_field .release.publish_status)

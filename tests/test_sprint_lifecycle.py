@@ -870,6 +870,59 @@ def test_build_failure_retry_cap_skips_release_verify(tmp_path):
     assert len(_blocker_tickets_in_it_backlog(h)) == 1
 
 
+def test_stage_machine_tracks_each_stage(tmp_path):
+    """sprint-state's .stage is the dispatch contract: ticket-move.sh keys
+    the VP rejection window off it (vp-plan/vp-review only), and startup
+    uses it to decide re-plan vs resume. The lifecycle used to leave the
+    stage at 'ceo-plan' through the whole first pass — so VP rejections
+    during their own planning stage were denied, and every relaunch
+    re-ran CEO + VP planning on an already-planned sprint. Each stage must
+    be recorded as it runs."""
+    h = LifecycleHarness(tmp_path, mode="noop")  # no tickets: plan -> build -> release
+    r = h.run()
+    assert r.returncode == 0, r.stderr
+    spawns = h.spawn_blocks()
+    by_agent = {}
+    for agent, stage, _ in spawns:
+        by_agent.setdefault(agent, []).append(stage)
+
+    assert by_agent.get("ceo", ["?"])[0] == "ceo-plan", by_agent.get("ceo")
+    vp_stages = [s for a, ss in by_agent.items() if a.startswith("vp-") for s in ss]
+    assert "vp-plan" in vp_stages, (
+        f"VPs did not spawn at stage vp-plan (rejection window is broken): {vp_stages}"
+    )
+    assert "vp-review" in vp_stages, vp_stages
+    rel = by_agent.get("release-ic")
+    assert rel and rel[0] == "release-verify", rel
+
+
+def test_relance_on_planned_sprint_skips_planning(tmp_path):
+    """A relaunch on an in-progress sprint (stage != ceo-plan — e.g. after
+    the bugfix cycle's exit 0, which already re-planned inline, or after a
+    crash) must resume the ticket loop, NOT re-run CEO + VP planning: the
+    old code double-spent the CEO and every VP on every bugfix cycle and
+    risked duplicate ticket filings."""
+    h = LifecycleHarness(tmp_path, mode="noop")
+    _seed_current_state(h, retries=0)
+    f = h.project / ".company" / "sprints" / "current.json"
+    state = json.loads(f.read_text())
+    state["stage"] = "tdd-red"  # as a crash-relaunch / bugfix relaunch would see it
+    f.write_text(json.dumps(state, indent=2))
+
+    r = h.run()
+    assert r.returncode == 0, r.stderr
+    spawns = h.spawn_blocks()
+    assert not any(a == "ceo" for a, _, _ in spawns), (
+        "CEO re-planned an already-planned sprint on relaunch"
+    )
+    assert not any(a.startswith("vp-") and s == "vp-plan"
+                   for a, s, _ in spawns), (
+        "VPs re-ran planning on an already-planned sprint"
+    )
+    # The release path still ran to completion and the sprint archived.
+    assert h.sprint_archive.exists()
+
+
 def test_full_happy_path_forward_flow(tmp_path):
     """Release goal 7: one green-path run that drives a full ticket
     forward — create -> claim -> TDD-RED (tester writes the failing test
