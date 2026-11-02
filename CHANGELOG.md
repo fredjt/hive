@@ -1,5 +1,52 @@
 # Changelog
 
+## 0.5.16
+
+Second bugfix round. Three lifecycle correctness fixes, each shipped with a
+failing-then-passing regression test.
+
+### Release pipeline
+- A retry-capped release (build failure or NO-GO past the retry cap) and a
+  release with an unparseable verdict no longer fall through to
+  release-publish: with a real tarball present the publisher would run and a
+  successful publish flipped `publish_status` back to `published`, shipping
+  an unshippable or unverifiable release. Blocked releases now skip
+  release-verify (when the build never happened) and release-publish
+  entirely and land at vp-review with the failure recorded.
+- The release blockage is now a real ticket: a `RELEASE-BLOCKER` ticket is
+  filed in the `it` backlog (the old code *moved* a ticket id that no code
+  path ever creates, so it always failed and the blockage was only visible
+  in sprint state).
+
+### Verification gates
+- Per-ticket gate runs are serialized with a flock: the 90s gate daemon and
+  the lifecycle's synchronous run could gate the same ticket concurrently,
+  which corrupted both the shared fixed-name `.tmp` files (one process's mv
+  stole the other's, the loser crashed with a rc the lifecycle read as a
+  spurious gate failure) and the worktree itself (concurrent pytest in one
+  worktree hits assertion-rewrite cache collisions and surfaces as a
+  spurious "tests failed" bounce). The daemon now skips a busy ticket and
+  retries next cycle; the lifecycle blocks on the lock (15-minute timeout).
+  tmp files are per-process as defense in depth.
+
+### Sprint state machine
+- The lifecycle now maintains `sprint-state`'s `.stage` as it runs
+  (ceo/vp planning, tdd-red, build-and-test, release-verify/publish,
+  vp-review; bugfix cycles use the ceo/vp-bugfix-plan stages). Previously
+  the stage sat at `ceo-plan` for the whole first pass, so VP ticket
+  rejections during their own vp-plan stage were denied by ticket-move's
+  stage check, and every relaunch (bugfix-cycle exit, crash restart via the
+  health supervisor) re-ran CEO + VP planning on an already-planned sprint.
+  Startup now dispatches on the stage: `ceo-plan` plans a fresh sprint, any
+  later stage resumes the ticket loop without re-planning.
+
+### Tests
+- 6 new behavioral tests: fake-publisher harness proving a blocked release
+  never reaches the publisher and files exactly one blocker ticket, the
+  unparseable-verdict publish guard, the build-failure cap skipping
+  release-verify, the concurrent-gate-runs race (deterministic via an mv
+  shim), the per-stage dispatch contract, and the no-replan relaunch.
+
 ## 0.5.15
 
 Bug-fix, hardening, and developer-experience release. Closes the round tracked in
