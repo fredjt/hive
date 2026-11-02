@@ -8,6 +8,15 @@ etc/config.toml
 # Node
 node_modules/
 
+# Build & test litter — a normal build-and-test cycle never leaves untracked noise
+# dist/ = build-package.sh output (hive-<version>.tar.gz + .sha256 sidecars)
+# .coverage = pytest --cov, .pytest_cache = pytest cache dir
+# unsloth-tmp/ = TMPDIR redirect target (pytest tmp dirs land here)
+dist/
+.coverage
+.pytest_cache/
+unsloth-tmp/
+
 # Python
 __pycache__/
 *.pyc

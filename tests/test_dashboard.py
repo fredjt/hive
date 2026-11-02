@@ -1,4 +1,5 @@
 """Tests for hive dashboard — structure and server."""
+import re
 import sys
 import os
 from pathlib import Path
@@ -517,3 +518,105 @@ class TestTicketBoardWritePath:
             "showBoard does not catch the first-fetch failure"
         )
         assert "Failed to load tickets" in seg
+
+
+class TestLayoutDocsMatchTree:
+    """D.7: the AGENTS.md / CLAUDE.md project-structure blocks must describe
+    the actual tree. A stale layout entry (e.g. a top-level `templates/`
+    that really lives at `lib/templates/`) misleads every new contributor
+    and every AI agent that reads the docs. These tests parse the fenced
+    structure block and assert every listed path exists on disk."""
+
+    DOC_BLOCKS = [("AGENTS.md", "lib"), ("CLAUDE.md", "lib")]
+
+    @staticmethod
+    def _structure_block(doc: str) -> list[str]:
+        text = Path(doc).read_text()
+        # Find fenced code blocks; the structure block contains bin/hive
+        for m in re.finditer(r"```[a-zA-Z]*\n(.*?)```", text, re.DOTALL):
+            if "bin/hive" in m.group(1):
+                return m.group(1).splitlines()
+        raise AssertionError(f"no structure block (with bin/hive) found in {doc}")
+
+    @classmethod
+    def _entries(cls, doc: str) -> list[tuple[str, str]]:
+        """Parse the indented structure block into (indent, name) pairs.
+        Indent 0 = top-level, indent 2 = under lib/, indent 4 = nested."""
+        out = []
+        for line in cls._structure_block(doc):
+            m = re.match(r"^(\s*)(\S+)\s{2,}\S", line)
+            if not m:
+                continue
+            out.append((len(m.group(1)), m.group(2)))
+        return out
+
+    @pytest.mark.parametrize("doc", [d for d, _ in DOC_BLOCKS])
+    def test_structure_block_lists_only_real_paths(self, doc):
+        """Every path listed in the structure block must exist in the tree.
+        Catches stale layout docs where a listed directory has moved or
+        been renamed (e.g. top-level templates/ vs lib/templates/)."""
+        entries = self._entries(doc)
+        assert entries, f"structure block in {doc} parsed to no entries"
+        # Track the current top-level dir to resolve relative sub-paths
+        top = ""
+        missing = []
+        for indent, name in entries:
+            if indent == 0:
+                top = name
+            # Build the full relative path from the indent stack
+            if indent == 0:
+                full = name
+            elif indent == 2:
+                full = f"{top[:-1]}/{name}" if top.endswith("/") else f"{top}/{name}"
+            else:
+                # Nested deeper; check the name exists somewhere reasonable.
+                # We only strictly validate indent-0 and indent-2 paths.
+                continue
+            if not Path(full).exists():
+                missing.append(full)
+        assert not missing, (
+            f"{doc} structure block lists paths that do not exist: {missing}"
+        )
+
+    def test_no_stale_top_level_templates(self):
+        """The specific D.7 regression: templates live at lib/templates/,
+        NOT at a top-level templates/. Assert the docs do not list a
+        top-level templates/ (indent 0), and that lib/templates/ is real."""
+        assert Path("lib/templates").is_dir(), "lib/templates/ must exist"
+        assert not Path("templates").is_dir(), "a top-level templates/ must NOT exist"
+        for doc, _ in self.DOC_BLOCKS:
+            entries = self._entries(doc)
+            top_level_templates = [
+                n for i, n in entries if i == 0 and n.rstrip("/") == "templates"
+            ]
+            assert not top_level_templates, (
+                f"{doc} lists a top-level 'templates/' — the real path is lib/templates/"
+            )
+
+
+class TestGitignoreBuildLitter:
+    """D.7: a normal build-and-test cycle must not leave untracked noise.
+    build-package.sh → dist/, coverage → .coverage, pytest's basetemp
+    (redirected by TMPDIR) → unsloth-tmp/, and pytest's own cache dir.
+    All must be gitignored so `git status` stays clean after a dev session."""
+
+    REQUIRED_IGNORES = ["dist/", ".coverage", "unsloth-tmp/", ".pytest_cache/"]
+
+    def test_gitignore_covers_build_and_test_litter(self):
+        gi = Path(".gitignore")
+        assert gi.is_file(), ".gitignore must exist"
+        text = gi.read_text()
+        # Collect the ignore patterns (strip comments/blank lines, trim)
+        patterns = set()
+        for line in text.splitlines():
+            s = line.strip()
+            if not s or s.startswith("#"):
+                continue
+            patterns.add(s)
+            # A bare "dist" ignores both file and dir; normalize trailing slash
+            patterns.add(s.rstrip("/"))
+        missing = [p for p in self.REQUIRED_IGNORES
+                   if p not in patterns and p.rstrip("/") not in patterns]
+        assert not missing, (
+            f".gitignore does not cover build/test litter: {missing}"
+        )
