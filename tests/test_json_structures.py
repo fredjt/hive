@@ -1,6 +1,7 @@
 """Tests for hive JSON structures — validate schemas and required fields."""
 import sys
 import json
+import subprocess
 from pathlib import Path
 # Ensure lib/ is on the path when running from within hive/ directory
 _hive_lib = str(Path(__file__).resolve().parent.parent / "lib")
@@ -256,6 +257,47 @@ class TestConfigDefaults:
     def test_config_file_is_not_empty(self):
         content = Path("etc/config.defaults.toml").read_text().strip()
         assert len(content) > 0
+
+    def _load(self) -> dict:
+        try:
+            import tomllib
+        except ImportError:
+            import tomli as tomllib
+        return tomllib.loads(Path("etc/config.defaults.toml").read_text())
+
+    def test_config_parses_as_toml(self):
+        config = self._load()
+        assert isinstance(config, dict) and config
+
+    def test_config_has_no_claude_section(self):
+        """A.2: the [claude] config section (bin/flags/verification_model)
+        is gone — the agent runtime is the built-in harness and has no
+        external CLI to point at."""
+        config = self._load()
+        assert "claude" not in config, "etc/config.defaults.toml still has a [claude] section"
+
+    def test_config_sections_match_schema(self):
+        """A.2: pin the config surface so a section sneaks back in loudly."""
+        config = self._load()
+        expected = {
+            "paths", "mcp", "dashboard", "logs", "github", "release",
+            "sprint", "worktree", "health", "tdd",
+        }
+        missing = expected - set(config)
+        extra = set(config) - expected
+        assert not missing, f"config sections missing: {sorted(missing)}"
+        assert not extra, f"unexpected config sections: {sorted(extra)}"
+
+    def test_no_claude_section_anywhere_in_runtime_tree(self):
+        """A.2: no tracked runtime file (etc/, lib/, bin/, packaging/, share/)
+        may define or reference a [claude] config section."""
+        r = subprocess.run(
+            ["git", "grep", "-l", "-E", "^\\s*\\[claude\\]|claude\\.(bin|flags|verification_model)"],
+            capture_output=True, text=True, timeout=30,
+        )
+        offending = [l for l in r.stdout.splitlines()
+                     if not l.startswith("tests/") and "RELEASE_GOALS" not in l]
+        assert not offending, f"[claude] config references remain: {offending}"
 
 
 class TestInstallFile:

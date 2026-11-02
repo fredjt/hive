@@ -4,28 +4,12 @@
 # Root of the hive install. Auto-detected; only override if running from a non-standard location.
 hive_root = "~/.local/share/hive"
 
-[claude]
-# Path to the Claude Code CLI binary. Defaults to whatever is on PATH.
-bin = "claude"
-# Flags appended to every spawn. --dangerously-skip-permissions because spawned
-# agents can't interact with a permission prompt. --output-format json because
-# downstream parsers expect machine-readable output.
-flags = ["--dangerously-skip-permissions", "--output-format", "json"]
-# Model used for verification agents (stage 5: verify).
-# When set, verification spawns use --model "$verification_model" to use a
-# stronger model than the default. This is important because verification is
-# the most cognitively demanding stage — reviewing diffs, checking logic,
-# assessing correctness — and a weak model produces high failure rates.
-# The default model (from ANTHROPIC_MODEL or Claude Code config) is used
-# for all other agents (CEO, VPs, ICs). Set this to a stronger model
-# (e.g. "claude-sonnet-5", "claude-opus-4-8") for better verification.
-verification_model = ""
-
 [mcp]
 # HTTP transport for the dashboard, the CLI, and parallel-spawned agents.
 host = "127.0.0.1"
 port = 7891
-# stdio is also available; used when an agent is spawned with --mcp-config pointing here.
+# stdio is also available for plain programmatic consumers (local scripts,
+# interactive sessions, tests); spawned agents always use the HTTP transport.
 
 [dashboard]
 host = "127.0.0.1"

@@ -174,6 +174,49 @@ class TestLegacyHookCleanup:
             "install created the legacy agent settings file — hook wiring is supposed to be gone")
 
 
+class TestSpawnPathNoClaudeSection:
+    """A.2: a full init + spawn path works with no [claude] section anywhere.
+    The spawn path (agent-spawn.sh -> agent-harness.py) must run cleanly
+    against a scratch company dir even with no LLM provider configured —
+    no external CLI binary is invoked, no [claude] config is read."""
+
+    def test_spawn_path_runs_cleanly_without_provider(self, tmp_company_dir):
+        repo = _repo_root()
+        env = {
+            **os.environ,
+            "HIVE_ROOT": str(repo),
+            "COMPANY_DIR": str(tmp_company_dir),
+            "HIVE_AGENT": "test-agent",
+            "HIVE_DEPT": "it",
+            "HIVE_ROLE": "IC",
+            "MCP_URL": "http://127.0.0.1:1/mcp",  # nothing listens here; no-mcp path
+        }
+        env.pop("HIVE_API_BASE", None)
+        env.pop("HIVE_API_KEY", None)
+        env.pop("HIVE_MODEL", None)
+        env.pop("HIVE_VERIFICATION_MODEL", None)
+        r = subprocess.run(
+            ["bash", str(repo / "lib" / "core" / "agent-spawn.sh"), "--no-mcp", "--", "say hello"],
+            capture_output=True, text=True, timeout=60,
+            cwd=str(tmp_company_dir.parent), env=env,
+        )
+        assert r.returncode == 0, f"spawn path failed: {r.stdout[-500:]} {r.stderr[-500:]}"
+        streams = list((tmp_company_dir / "logs" / "streams").glob("*.jsonl"))
+        assert streams, "agent-spawn.sh did not write a stream file"
+        last = streams[0].read_text().strip().splitlines()[-1]
+        result = json.loads(last)
+        assert result.get("type") == "result"
+
+    def test_agent_spawn_does_not_read_claude_config(self):
+        """Static guard: the spawn path must not reference the retired
+        [claude] config keys or an external CLI binary."""
+        repo = _repo_root()
+        spawn = (repo / "lib" / "core" / "agent-spawn.sh").read_text()
+        harness = (repo / "lib" / "core" / "agent-harness.py").read_text()
+        for key in ("claude.bin", "claude.flags", "[claude]"):
+            assert key not in spawn and key not in harness
+
+
 class TestFullInitFlow:
     def test_project_dir_created(self, tmp_project_dir):
         """Project directory should exist."""
@@ -312,7 +355,8 @@ class TestPythonSyntax:
 class TestScriptCount:
     def test_script_count(self):
         scripts = list(Path("lib/tools").glob("*.sh"))
-        assert len(scripts) >= 80, f"Expected >= 80 scripts in tools/, got {len(scripts)}"
+        # (was >= 80; the deprecated migrate-agents.sh shim was deleted in 0.6.0)
+        assert len(scripts) >= 75, f"Expected >= 75 scripts in tools/, got {len(scripts)}"
 
 class TestAgentCount:
     def test_agent_count(self):

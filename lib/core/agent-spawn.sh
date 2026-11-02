@@ -7,7 +7,7 @@ set -uo pipefail
 # agent prompt that needs to spawn an agent must go through here.
 #
 # Responsibilities:
-#   1. Inject an MCP config so the spawned agent sees the hive MCP server.
+#   1. Point the harness at the hive MCP server over localhost HTTP.
 #   2. Apply HIVE_AGENT, HIVE_DEPT, HIVE_ROLE, HIVE_TICKET identity vars.
 #   3. If HIVE_ROLE contains "verification" and $HIVE_VERIFICATION_MODEL is
 #      set, inject --model "$HIVE_VERIFICATION_MODEL".
@@ -100,12 +100,6 @@ fi
 if [ -z "$PROMPT" ]; then
   echo "agent-spawn: prompt required (pipe to stdin or pass as argument)" >&2
   exit 1
-fi
-
-# Build MCP config if enabled
-MCP_CONFIG=""
-if [ "$NO_MCP" != "1" ]; then
-  MCP_CONFIG="$HIVE_ROOT/lib/hive_mcp/server.py"
 fi
 
 # Build model override for verification agents

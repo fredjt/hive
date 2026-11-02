@@ -1,10 +1,12 @@
 """Hive MCP server — exposes ~50 tools that wrap the bash tool scripts.
 
 Two transports are supported:
-  - stdio:  used when an agent is spawned with --mcp-config pointing
-            at this file as a stdio MCP server.
-  - http:   used by the dashboard (Node.js) and the CLI to invoke tools over
-            localhost. Started by `hive start` or `hive dashboard`.
+  - stdio:  a plain programmatic transport — run the server as a child
+            process from a script, test, or interactive session and talk
+            JSON-RPC over its stdin/stdout.
+  - http:   used by the dashboard (Node.js), the CLI, and spawned agents
+            (the built-in harness calls tools over localhost HTTP). Started
+            by `hive start` or `hive dashboard`.
 
 Tools are registered in lib/mcp/tools/<group>.py modules. Each module exposes
 a `register(server)` function that adds tools via @server.tool().
@@ -78,7 +80,7 @@ def main() -> None:
         "--transport",
         choices=["stdio", "http"],
         default="stdio",
-        help="Transport: stdio (for spawned agents) or http (for dashboard/CLI)",
+        help="Transport: stdio (programmatic consumers) or http (dashboard/CLI/spawned agents)",
     )
     parser.add_argument("--host", default="127.0.0.1", help="HTTP bind host")
     parser.add_argument("--port", type=int, default=7891, help="HTTP bind port")
