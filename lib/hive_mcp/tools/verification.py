@@ -15,17 +15,22 @@ def register(server: Server) -> None:
     def gates_run(
         dept: str,
         project_root: str,
+        ticket_id: str | None = None,
         company_dir: str | None = None,
     ) -> dict:
         """Run deterministic verification gates against in-review tickets in `dept`.
+
+        With `ticket_id`, gates exactly that ticket (--ticket); without it,
+        the first in-review ticket in the dept is gated.
 
         Gates that fail bounce tickets back to in-progress with a comment.
         Gates that pass mark `gates_passed=true` on the ticket — the verification
         IC must still call `ticket_approve` before the ticket can move to done.
         """
-        return run(
-            "verification-gates", dept, project_root, "--quiet", company_dir=company_dir
-        ).to_dict()
+        args = [dept, project_root, "--quiet"]
+        if ticket_id:
+            args += ["--ticket", ticket_id]
+        return run("verification-gates", *args, company_dir=company_dir).to_dict()
 
     @server.tool()
     def gates_check(

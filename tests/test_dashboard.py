@@ -392,3 +392,16 @@ class TestDashboardServerRobustness:
                 proc.wait(timeout=5)
             except subprocess.TimeoutExpired:
                 proc.kill()
+
+    def test_gate_view_passes_dept_context(self):
+        """B.9: per-ticket gate buttons must carry dept context - the gate
+        report lives under departments/<dept>/components/<ticket>/, so a
+        ticket id alone can address the wrong dept's report (or 404)."""
+        content = Path(f"{DASHBOARD_DIR}/server.js").read_text()
+        assert "async function openGateOutput(dept,ticket)" in content
+        assert "gates/'+encodeURIComponent(dept)" in content
+        assert "+encodeURIComponent(ticket)" in content
+        assert 'class="vbtn-watch" data-dept="' in content
+        assert 'data-ticket="' in content
+        assert "runGates(b.dataset.dept,b.dataset.ticket)" in content
+        assert "openGateOutput(b.dataset.dept,b.dataset.ticket)" in content
