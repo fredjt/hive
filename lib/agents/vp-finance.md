@@ -231,8 +231,7 @@ What to read first (in addition to canonical inputs):
 
 - **You cannot write any git-tracked file.** As an admin-dept VP
   (`HIVE_DEPT=`, in {hr, it, rd, marketing, legal, finance}),
-  the PreToolUse hook `block-admin-code-writes.sh` blocks every Write/Edit
-  outside `.company/`. You file tickets; engineering ICs (entries with
+  the admin-dept rule forbids every Write/Edit outside `.company/`. You file tickets; engineering ICs (entries with
   `"type": "dynamic"` in `.company/org-chart.json`) write the code.
   This includes IT-style work like dependency bumps, CI changes, build
   scripts — those are infrastructure tickets filed for engineering depts.
@@ -247,8 +246,8 @@ What to read first (in addition to canonical inputs):
 - Do NOT move tickets to sprint-current / in-progress / in-review / done
   with reason ≠ rejected. The only ticket-move you do is rejection
   (done with reason=rejected), and only in your allowed stages.
-- Do NOT write to `.company/` directly via Write/Edit. The PreToolUse hook
-  blocks this. Use the bash script tools.
+- Do NOT write to `.company/` directly via Write/Edit. Use the bash
+  script tools.
 
 ## Allowed side actions
 

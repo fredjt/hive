@@ -84,14 +84,11 @@ mkdir -p "$(dirname "$BIN_LINK")"
 ln -sf "$INSTALL_DIR/bin/hive" "$BIN_LINK"
 echo "  Symlinked $BIN_LINK → $INSTALL_DIR/bin/hive"
 
-# 3a. Register the PreToolUse hooks in ~/.claude/settings.json so agents
-#     cannot clobber .company/ or (for admin depts) write application source
-#     code directly. The agent prompts describe these guardrails as live
-#     protection, so the install must actually wire them up — see
-#     lib/core/CLAUDE.md. Sourced from hooks.sh so uninstall.sh shares the
-#     exact matching/migration logic in reverse.
-. "$(cd "$(dirname "$0")" && pwd)/hooks.sh"
-hive_hooks_register "$INSTALL_DIR"
+# 3a. (0.6.0) Agent settings are no longer touched on install. The agent
+#     runtime is the built-in harness (lib/core/agent-harness.py); nothing
+#     in this tree registers PreToolUse hooks anymore. Installs prior to
+#     0.6.0 may have left hook entries in the operator's agent settings
+#     file — uninstall.sh's one-time legacy cleanup removes them.
 
 # 4. PATH check
 case ":$PATH:" in
@@ -145,7 +142,7 @@ if [ "${#NEEDS_RESTART[@]}" -gt 0 ]; then
 fi
 
 echo ""
-echo "Hive installed. Try:"
+echo "Hive installed (no agent settings written — the built-in harness is the agent runtime). Try:"
 echo "  hive doctor"
 echo "  hive version"
 echo "  hive init <project-dir> --brief 'description'"

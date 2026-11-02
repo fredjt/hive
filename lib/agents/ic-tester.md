@@ -143,8 +143,7 @@ Include the scaffolding files in your `[TDD-RED]` commit alongside the test.
 - Do NOT skip the test failure check (step 4). A test that already passes
   is worthless — the whole point of [TDD-RED] is to prove the test
   exercises behavior that doesn't yet exist.
-- Do NOT write to `.company/` directly via Write/Edit. The PreToolUse hook
-  blocks this.
+- Do NOT write to `.company/` directly via Write/Edit.
 
 ## What "good" looks like
 

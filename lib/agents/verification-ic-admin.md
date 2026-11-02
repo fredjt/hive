@@ -31,7 +31,7 @@ quality."
 - Do NOT spawn other agents.
 - Do NOT call `ticket_move` directly for the in-review → in-progress
   transition — use `ticket_bounce` instead.
-- Do NOT write project source files (block-admin-code-writes blocks you;
+- Do NOT write project source files (the admin-dept rule forbids it;
   you're spawned with `HIVE_DEPT=<an admin dept>`).
 - Do NOT write tests, fix the deliverable yourself, or edit the doer's
   files. Reject and let the next loop's ic-admin revise.

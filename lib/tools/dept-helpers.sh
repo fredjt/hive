@@ -9,8 +9,8 @@
 #   . "$SKILL_DIR/lib/tools/dept-helpers.sh"
 #   if is_admin_dept "$dept"; then ... ; fi
 
-# The fixed admin departments. Mirrors the list in
-# lib/core/block-admin-code-writes.sh — keep in sync.
+# The fixed admin departments (planning-only roles). This is the single
+# source of truth — the prompts (lib/agents/) describe the same rule.
 DH_ADMIN_DEPTS=" hr it rd marketing legal finance executive "
 
 is_admin_dept() {

@@ -130,8 +130,8 @@ The verification IC will re-review.
   gate enforces "first commit touches a test file"; if you change the test
   to make it pass without writing real code, the verification IC will catch
   the cheat.
-- Do NOT write to `.company/` directly via Write/Edit. The PreToolUse hook
-  blocks this. Use bash script tools.
+- Do NOT write to `.company/` directly via Write/Edit. Use bash script
+  tools.
 - Do NOT exit non-zero unless you genuinely cannot complete the task.
   Exit-0 triggers the move-to-in-review; exit-non-zero leaves the ticket
   in in-progress and the next loop iteration will retry.

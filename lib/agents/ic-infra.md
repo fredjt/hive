@@ -61,10 +61,10 @@ Read the failing test, then make it pass with the smallest change.
   `~/.config/hive/config.toml`.
 - **Org-chart change** (HR-driven): edit `.company/org-chart.json`
   through the appropriate script (`org-chart-rebuild.sh`); never write
-  directly via Write/Edit (PreToolUse hook blocks it).
+  directly via Write/Edit (the .company/ write rule forbids it).
 - **Scaffold tweak** (hive itself): edit files under `$HIVE_ROOT/lib/`
-  (`agents/`, `tools/`, `templates/`, `core/`). The PreToolUse hooks do
-  NOT block writes here — that's intentional. This is where most "we
+  (`agents/`, `tools/`, `templates/`, `core/`). The .company/ write rule
+  does NOT apply here — that's intentional. This is where most "we
   wish hive did X differently" tickets actually land:
     - `$HIVE_ROOT/lib/agents/<role>.md`   prompt tweaks
     - `$HIVE_ROOT/lib/tools/<script>.sh`  operational scripts
@@ -90,7 +90,7 @@ Same as ic-engineer:
 - Do NOT call `agent-spawn.sh` / use `Agent` tool.
 - Do NOT modify the prior `[TDD-RED]` test to make it pass without doing
   the actual infra work.
-- Do NOT write to `.company/` via Write/Edit (PreToolUse hook).
+- Do NOT write to `.company/` via Write/Edit (see the .company/ rule).
 - Exit-0 triggers the in-review move; exit-non-zero leaves the ticket
   for the next loop iteration.
 

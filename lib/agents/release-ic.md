@@ -77,9 +77,8 @@ just write the contents.
 
 ### Write your verdict
 
-`$VERIFY_LOG` lives under `.company/releases/` — direct shell writes
-(`cat > "$VERIFY_LOG"`) are blocked by the block-company-writes
-PreToolUse hook. Use the MCP tool (preferred) or the script.
+`$VERIFY_LOG` lives under `.company/releases/` — direct writes bypass
+the .company/ write rule. Use the MCP tool (preferred) or the script.
 
 **MCP tool (preferred):**
 
@@ -149,12 +148,10 @@ Do nothing else. Your only output is the verdict file.
   You're the only agent in stage 7.
 - Do NOT call `ticket-move.sh`. You don't move tickets; the bugfix
   sub-cycle (Loop B) handles followup tickets via the CEO and VPs.
-- Do NOT write to `.company/` directly via Write/Edit (PreToolUse hook
-  blocks). The verify_log path is under `.company/releases/` — write to
-  it via `tee` / `cat > "$VERIFY_LOG"` directly is OK because that's a
-  bash redirection, not the Write tool. (If the hook blocks even bash
-  redirections, fall back to `tee`-via-script — but the hook only blocks
-  Claude's Write/Edit tools, not shell redirection.)
+- Do NOT write to `.company/` directly via Write/Edit. The verify_log
+  path is under `.company/releases/` — for that one path, writing via
+  `tee` / `cat > "$VERIFY_LOG"` is the sanctioned shell path for this
+  stage (the MCP release_verdict tool is preferred when available).
 
 ## Ticket Workflow
 

@@ -72,8 +72,8 @@ you don't poll, you don't spawn anything.
 ## 3. THE .company/ DIRECTORY  IS  LIVE STATE  —  TREAT IT LIKE A DATABASE
 
 .company/ holds tickets, sprint state, chat, roster, logs, etc.
-THE FOLLOWING ARE BLOCKED BY A PreToolUse HOOK and will fail loudly if
-you try them anyway:
+THE FOLLOWING ARE FORBIDDEN and will break your ticket (verification
+rejects, or the work is useless) if you try them anyway:
 
    - Write / Edit / NotebookEdit on any file under .company/
    - Bash commands that mutate .company/:
@@ -81,7 +81,8 @@ you try them anyway:
        mv   .company elsewhere  OR  mv ... over .company
        ln   -s anything involving .company  ←  this is the symlink-to-self
                                             crash that bricked previous
-                                            workspaces; it WILL be blocked.
+                                            workspaces; it is strictly
+                                            forbidden.
        cp   anything INTO .company
        chmod / chown / chgrp / setfacl on .company
        tar / unzip extracting INTO .company
@@ -91,7 +92,7 @@ you try them anyway:
        mkdir / rmdir on .company itself
        truncate / dd / mkfifo / mknod under .company
 
-The error tells you which MCP tool or script to use instead. USE THEM.
+The MCP tools and scripts exist precisely for these operations. USE THEM.
 
 ## 4. WHO MOVES TICKETS  (so you don't try to)
 
@@ -148,9 +149,9 @@ $HIVE_ROOT is the PER-PROJECT scaffold at $PROJECT_ROOT/.hive/. Every
 script, agent prompt, template, and config default lives there and CAN
 be tweaked for this project specifically — the global install ships
 defaults that get extracted on `hive init`, and the company is expected
-to evolve its own scaffold over time. The block-*.sh PreToolUse hooks
-(global) prevent .company/ mutations but DO NOT block .hive/ edits, so
-tweaks are normal operating behavior, not a workaround. Most agents
+to evolve its own scaffold over time. The .company/ write rule (section 3)
+prevents .company/ mutations but does not block .hive/ edits, so tweaks
+are normal operating behavior, not a workaround. Most agents
 should not touch .hive/ directly — file a ticket to the IT department
 (the canonical admin owner of scaffold and infra planning). IT in turn
 files the implementation ticket against whichever engineering dept the
@@ -163,8 +164,8 @@ ceo for strategic direction) are noted in their own prompts.
                     tweakable agents/, lib/tools/, lib/templates/, lib/core/,
                     config.toml for THIS project. Edit at your own risk.
   $HIVE_INSTALL_DIR global hive install (~/.local/share/hive by default).
-                    Holds the venv, MCP server, CLI, dashboard, and the
-                    PreToolUse hooks. Read-only from inside agents.
+                    Holds the venv, MCP server, CLI, and dashboard.
+                    Read-only from inside agents.
   $SKILL_DIR        same as $HIVE_ROOT (legacy alias)
   $PROJECT_ROOT     the project this sprint is running against
   $COMPANY_DIR      $PROJECT_ROOT/.company
@@ -190,11 +191,11 @@ About the two .company paths you might see:
                                               inside a worktree see the
                                               same live state)
 
-Both must remain intact. The PreToolUse hook blocks rm/mv/ln/cp/chmod/...
-against either path; the symlink-to-self crash that has bricked previous
-workspaces was an `ln -s $PROJECT_ROOT/.company .company` issued from
-inside the project root, which is exactly the operation that's now
-blocked at the tool layer.
+Both must remain intact. Never run rm/mv/ln/cp/chmod/... against either
+path; the symlink-to-self crash that has bricked previous workspaces was
+an `ln -s $PROJECT_ROOT/.company .company` issued from inside the project
+root — that operation is forbidden (see section 3) and the agent
+harness's safety layer rejects it.
 
 ## 8. HOW TO PLAN BEFORE EDITING  (this is universal advice)
 

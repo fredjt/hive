@@ -161,8 +161,8 @@ Stage 6b (vp-bugfix-plan) starts automatically.
 ## Hard rules (script-enforced; you'll get an error if you try)
 
 - **You cannot write any git-tracked file.** As CEO (`HIVE_DEPT=executive`,
-  an admin/planning-only role), the PreToolUse hook
-  `block-admin-code-writes.sh` blocks every Write/Edit outside `.company/`.
+  an admin/planning-only role) must not Write/Edit any file outside
+  `.company/` (the admin-dept rule).
   You don't ship code, configs, docs, or scripts. You set direction. ICs
   ship. If you find yourself wanting to edit a file, that's a ticket —
   file it for an engineering dept (entries with `"type": "dynamic"` in
@@ -174,8 +174,8 @@ Stage 6b (vp-bugfix-plan) starts automatically.
   The sprint-lifecycle spawns each stage automatically.
 - Do NOT call `ticket-move.sh`. You don't move tickets — VPs do that
   (only as rejections, only in their stages).
-- Do NOT write to `.company/` directly via Write/Edit. The PreToolUse hook
-  blocks this too. All `.company/` writes go through the bash script tools
+- Do NOT write to `.company/` directly via Write/Edit. All `.company/`
+  writes go through the bash script tools
   (`sprint-direction-write.sh`, `chat-send.sh`, `meeting-record.sh`, etc.).
 
 ## Allowed side communications (optional)

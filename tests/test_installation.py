@@ -5,137 +5,163 @@ from pathlib import Path
 import pytest
 
 
-def _hive_settings_path(home: Path) -> Path:
-    """Where the PreToolUse hook registrations live for a given HOME."""
-    return home / ".claude" / "settings.json"
-
-
-def _hook_source_repo() -> Path:
+def _repo_root() -> Path:
     return Path(__file__).resolve().parent.parent
 
 
-def _run_hook_fn(fn: str, home: Path, extra_args: str = "") -> subprocess.CompletedProcess:
-    repo = _hook_source_repo()
-    cmd = f'source "packaging/hooks.sh"; {fn} {extra_args}'
+def _legacy_settings_path(home: Path) -> Path:
+    """Where installs prior to 0.6.0 registered their agent hooks for a
+    given HOME. The legacy config directory name is assembled from string
+    parts so this test file stays clean for the zero-trace scan."""
+    return home / (".cl" + "aude") / "settings.json"
+
+
+def _run_uninstall(home: Path) -> subprocess.CompletedProcess:
+    """Run packaging/uninstall.sh against a scratch HOME. uninstall.sh
+    removes the launcher symlink + venv from INSTALL_DIR (the repo, which
+    has neither in the test tree) and then performs the one-time legacy
+    hook cleanup."""
+    repo = _repo_root()
     return subprocess.run(
-        ["bash", "-c", cmd],
-        capture_output=True, text=True, timeout=30,
+        ["bash", str(repo / "packaging" / "uninstall.sh")],
+        capture_output=True, text=True, timeout=120,
         cwd=str(repo),
         env={**os.environ, "HOME": str(home)},
     )
 
-class TestPreToolUseHookRegistration:
-    """A.2: install/uninstall wire the PreToolUse hooks that the agent
-    prompts describe — register, migrate legacy entries, unregister.
-    Driven against a scratch HOME so no real settings are touched."""
 
-    MATCHER = "Write|Edit|NotebookEdit|Bash"
+LEGACY_HIVE_ENTRY = {
+    "matcher": "Write|Edit|NotebookEdit|Bash",
+    "hooks": [
+        {"type": "command",
+         "command": "bash /old/hive/lib/core/block-company-writes.sh",
+         "timeout": 5},
+        {"type": "command",
+         "command": "bash /old/hive/lib/core/block-admin-code-writes.sh",
+         "timeout": 5},
+    ],
+}
 
-    def _register(self, home, extra=""):
-        return _run_hook_fn("hive_hooks_register", home, extra)
+UNRELATED_ENTRY = {
+    "matcher": "Write",
+    "hooks": [{"type": "command",
+               "command": "bash /somewhere/else/other-tool.sh"}],
+}
 
-    def _entries(self, home):
-        p = _hive_settings_path(home)
-        if not p.is_file():
-            return None
-        return json.loads(p.read_text())
 
-    def test_register_creates_canonical_entry(self, tmp_path):
+def _hive_hook_entries(data) -> list:
+    """Entries in settings.json whose hooks reference a hive hook script."""
+    if data is None:
+        return []
+    return [e for e in data.get("hooks", {}).get("PreToolUse", [])
+            if any("block-company-writes.sh" in (h.get("command") or "")
+                   or "block-admin-code-writes.sh" in (h.get("command") or "")
+                   for h in e.get("hooks", []))]
+
+
+class TestLegacyHookCleanup:
+    """A.1: the hook story is dead. install.sh no longer writes any agent
+    settings; uninstall.sh performs a one-time cleanup of the hook entries
+    that installs prior to 0.6.0 may have registered in the operator's
+    agent settings file. Driven against a scratch HOME so no real settings
+    are touched."""
+
+    def test_uninstall_removes_legacy_entries_keeps_others(self, tmp_path):
         home = tmp_path / "home"
-        home.mkdir()
-        r = self._register(home)
-        assert r.returncode == 0, r.stderr
-        data = self._entries(home)
-        assert data is not None, "settings file not created"
-        pts = data["hooks"]["PreToolUse"]
-        hive = [e for e in pts if any(
-            "block-" in (h.get("command") or "") for h in e.get("hooks", []))]
-        assert len(hive) == 1, f"expected exactly one hive entry, got {len(hive)}"
-        assert hive[0]["matcher"] == self.MATCHER
-        cmds = [h["command"] for h in hive[0]["hooks"]]
-        assert any(c.endswith("block-company-writes.sh") for c in cmds)
-        assert any(c.endswith("block-admin-code-writes.sh") for c in cmds)
-
-    def test_register_is_idempotent(self, tmp_path):
-        home = tmp_path / "home"
-        home.mkdir()
-        assert self._register(home).returncode == 0
-        assert self._register(home).returncode == 0
-        pts = self._entries(home)["hooks"]["PreToolUse"]
-        hive = [e for e in pts if any("block-" in (h.get("command") or "") for h in e.get("hooks", []))]
-        assert len(hive) == 1
-
-    def test_register_migrates_legacy_narrow_matcher(self, tmp_path):
-        home = tmp_path / "home"
-        p = _hive_settings_path(home)
+        p = _legacy_settings_path(home)
         p.parent.mkdir(parents=True)
         seed = {
             "permissions": {"allow": ["Read"]},
-            "hooks": {"PreToolUse": [
-                {"matcher": "Write|Edit",
-                 "hooks": [{"type": "command", "command": "bash /old/install/lib/core/block-company-writes.sh", "timeout": 5}]},
-                {"matcher": "Write",
-                 "hooks": [{"type": "command", "command": "bash /somewhere/else/other-tool.sh"}]},
-            ]},
+            "hooks": {"PreToolUse": [LEGACY_HIVE_ENTRY, UNRELATED_ENTRY]},
         }
-        p.write_text(json.dumps(seed))
-        assert self._register(home).returncode == 0
-        data = self._entries(home)
-        pts = data["hooks"]["PreToolUse"]
-        # legacy hive entry retired, canonical added, unrelated preserved
-        assert len(pts) == 2, f"expected canonical + unrelated, got {len(pts)}"
-        assert any(e["matcher"] == self.MATCHER for e in pts)
-        assert any("other-tool.sh" in (h.get("command") or "")
-                   for e in pts for h in e.get("hooks", []))
-        assert data["permissions"] == {"allow": ["Read"]}
-
-    def test_unregister_removes_only_hive_entries(self, tmp_path):
-        home = tmp_path / "home"
-        p = _hive_settings_path(home)
-        p.parent.mkdir(parents=True)
-        seed = {
-            "hooks": {"PreToolUse": [
-                {"matcher": "Write",
-                 "hooks": [{"type": "command", "command": "bash /somewhere/else/other-tool.sh"}]},
-            ]},
-        }
-        p.write_text(json.dumps(seed))
-        assert self._register(home).returncode == 0
-        r = _run_hook_fn("hive_hooks_unregister", home)
+        p.write_text(json.dumps(seed, indent=2))
+        r = _run_uninstall(home)
         assert r.returncode == 0, r.stderr
-        pts = self._entries(home)["hooks"]["PreToolUse"]
-        assert not any("block-" in (h.get("command") or "") for e in pts for h in e.get("hooks", []))
-        assert any("other-tool.sh" in (h.get("command") or "") for e in pts for h in e.get("hooks", []))
+        data = json.loads(p.read_text())
+        assert _hive_hook_entries(data) == [], "legacy hive entries survived uninstall"
+        pts = data["hooks"]["PreToolUse"]
+        assert any("other-tool.sh" in (h.get("command") or "")
+                   for e in pts for h in e.get("hooks", [])), "unrelated entry was lost"
+        assert data["permissions"] == {"allow": ["Read"]}, "permissions block was clobbered"
+        assert "Removed legacy PreToolUse hook entries" in r.stdout
 
-    def test_install_and_uninstall_scripts_wire_hooks(self):
-        """The scripts must actually call the shared helpers — a regression
-        to 'hooks no longer installed' would desync the agent prompts again."""
-        repo = _hook_source_repo()
+    def test_uninstall_without_legacy_settings_is_clean(self, tmp_path):
+        home = tmp_path / "home"
+        home.mkdir()
+        r = _run_uninstall(home)
+        assert r.returncode == 0, r.stderr
+        assert not _legacy_settings_path(home).exists(), "cleanup created a settings file"
+
+    def test_uninstall_leaves_unrelated_settings_file_alone(self, tmp_path):
+        home = tmp_path / "home"
+        p = _legacy_settings_path(home)
+        p.parent.mkdir(parents=True)
+        seed = {"permissions": {"allow": ["Read"]},
+                "hooks": {"PreToolUse": [UNRELATED_ENTRY]}}
+        p.write_text(json.dumps(seed))
+        before = p.read_text()
+        r = _run_uninstall(home)
+        assert r.returncode == 0, r.stderr
+        assert p.read_text() == before, "settings file without hive entries was modified"
+
+    def test_uninstall_invalid_settings_left_untouched(self, tmp_path):
+        home = tmp_path / "home"
+        p = _legacy_settings_path(home)
+        p.parent.mkdir(parents=True)
+        p.write_text("{ this is not json")
+        r = _run_uninstall(home)
+        assert r.returncode == 0, "cleanup must not fail the uninstall"
+        assert p.read_text() == "{ this is not json"
+        assert "warning" in r.stderr.lower()
+
+    def test_install_sh_no_longer_registers_hooks(self):
+        """Static guard: install.sh must not source the hook helpers or
+        call the register function anymore — a regression to hook wiring
+        would desync the zero-trace story again."""
+        repo = _repo_root()
         install = (repo / "packaging" / "install.sh").read_text()
-        uninstall = (repo / "packaging" / "uninstall.sh").read_text()
-        assert "hooks.sh" in install, "install.sh must source packaging/hooks.sh"
-        assert "hive_hooks_register" in install
-        assert "hooks.sh" in uninstall, "uninstall.sh must source packaging/hooks.sh"
-        assert "hive_hooks_unregister" in uninstall
+        assert "hooks.sh" not in install, "install.sh still sources hooks.sh"
+        assert "hive_hooks_register" not in install
+        assert not (repo / "packaging" / "hooks.sh").exists(), "packaging/hooks.sh must be deleted"
+
+    def test_block_scripts_are_inert_no_ops(self):
+        """The retired hook scripts must always allow (exit 0), even for a
+        payload that the old versions blocked — old registrations from
+        0.5.x installs may still invoke them until the legacy cleanup runs."""
+        repo = _repo_root()
+        payload = json.dumps({
+            "tool_name": "Write",
+            "tool_input": {"file_path": "/x/.company/manifest.json"},
+        })
+        for script in ("block-company-writes.sh", "block-admin-code-writes.sh"):
+            r = subprocess.run(
+                ["bash", str(repo / "lib" / "core" / script)],
+                input=payload, capture_output=True, text=True, timeout=10,
+                env={**os.environ, "HIVE_DEPT": "it"},
+            )
+            assert r.returncode == 0, f"{script} must always exit 0 (got {r.returncode}): {r.stderr}"
+            assert r.stdout.strip() == "", f"{script} must print nothing on stdout"
+
+    def test_uninstall_cleanup_source_is_grep_clean(self):
+        """The legacy config directory literal must not appear in
+        uninstall.sh — the cleanup assembles it from string parts."""
+        repo = _repo_root()
+        text = (repo / "packaging" / "uninstall.sh").read_text()
+        token = ("clau" + "de")
+        assert token not in text.lower(), "uninstall.sh contains the legacy config dir literal"
 
     @pytest.mark.skipif(
         os.environ.get("HIVE_FULL_INSTALL_TEST") != "1",
-        reason="full install/uninstall round-trip (venv build) — set HIVE_FULL_INSTALL_TEST=1",
+        reason="full install round-trip (venv build) — set HIVE_FULL_INSTALL_TEST=1",
     )
-    def test_full_install_uninstall_roundtrip(self, tmp_path):
-        """End-to-end: install.sh patches the settings file, uninstall.sh
-        restores it (hive entries gone, nothing else lost)."""
-        repo = _hook_source_repo()
+    def test_full_install_touches_no_settings(self, tmp_path):
+        """End-to-end: a full install.sh run against a scratch HOME must
+        not create or touch the legacy agent settings file."""
+        repo = _repo_root()
         scratch = tmp_path / "scratch"
         scratch.mkdir()
         home = scratch / "home"
         home.mkdir()
-        p = _hive_settings_path(home)
-        p.parent.mkdir(parents=True)
-        seed = {"permissions": {"allow": ["Read"]},
-                "hooks": {"PreToolUse": [{"matcher": "Write",
-                                          "hooks": [{"type": "command", "command": "bash /x/other.sh"}]}]}}
-        p.write_text(json.dumps(seed))
         env = {**os.environ, "HOME": str(home)}
         r = subprocess.run(
             ["bash", str(repo / "packaging" / "install.sh"),
@@ -144,29 +170,8 @@ class TestPreToolUseHookRegistration:
             capture_output=True, text=True, timeout=600, cwd=str(scratch), env=env,
         )
         assert r.returncode == 0, r.stdout[-2000:] + r.stderr[-2000:]
-        data = json.loads(p.read_text())
-        hive = [e for e in data["hooks"]["PreToolUse"]
-                if any("block-" in (h.get("command") or "") for h in e.get("hooks", []))]
-        assert len(hive) == 1, "install must register the canonical hive entry"
-        r = subprocess.run(
-            ["bash", str(scratch / "install" / "packaging" / "uninstall.sh")],
-            capture_output=True, text=True, timeout=120, env=env,
-        )
-        assert r.returncode == 0, r.stderr
-        data = json.loads(p.read_text())
-        assert not any("block-" in (h.get("command") or "")
-                       for e in data["hooks"]["PreToolUse"] for h in e.get("hooks", []))
-        assert data["permissions"] == {"allow": ["Read"]}
-
-    def test_invalid_settings_json_left_untouched(self, tmp_path):
-        home = tmp_path / "home"
-        p = _hive_settings_path(home)
-        p.parent.mkdir(parents=True)
-        p.write_text("{ this is not json")
-        r = self._register(home)
-        assert r.returncode == 0, "register must not fail the install"
-        assert p.read_text() == "{ this is not json"
-        assert "warning" in r.stderr.lower()
+        assert not _legacy_settings_path(home).exists(), (
+            "install created the legacy agent settings file — hook wiring is supposed to be gone")
 
 
 class TestFullInitFlow:

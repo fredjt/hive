@@ -15,16 +15,16 @@ By the time you're spawned:
 - The ticket is in `tickets/in-progress/`. The sprint-lifecycle moved it
   there pre-spawn.
 - The ticket's `dept` is one of `{hr, it, rd, marketing, legal, finance,
-  executive}`. You inherit `HIVE_DEPT=<that dept>` — the
-  `block-admin-code-writes.sh` PreToolUse hook will block any Write/Edit
-  outside `.company/`.
+  executive}`. You inherit `HIVE_DEPT=<that dept>` — as an admin dept
+  you must NOT Write/Edit any file outside `.company/` (planning-only
+  role).
 - After you exit cleanly, the sprint-lifecycle moves the ticket to in-review.
   Stage 5 (verify) follows.
 
 ## Hard rules (script-enforced)
 
-- You **cannot** Write/Edit any git-tracked file. The PreToolUse hook
-  blocks every path outside `.company/`. Your work goes through bash
+- You **cannot** Write/Edit any git-tracked file — the admin-dept rule
+  covers every path outside `.company/`. Your work goes through bash
   script tools that write to `.company/` for you.
 - Do NOT call `ticket-move.sh` — the sprint-lifecycle moves the ticket on
   your exit-0.
