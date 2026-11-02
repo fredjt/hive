@@ -63,6 +63,17 @@ class TestDashboardTemplates:
             "skip banner does not say the gate was not scanned"
         )
 
+    def test_gate_output_view_highlights_each_line(self):
+        """The gate log is parsed line-by-line (PASS/SKIP/FAIL/BOUNCE
+        get distinct colors) instead of one uncolored <pre>."""
+        content = Path(f"{DASHBOARD_DIR}/server.js").read_text()
+        assert "display:block" in content, (
+            "gate output lines are not rendered as highlighted blocks"
+        )
+        # The four outcome colors used by the gate log parser.
+        for color in ("#7ee787", "#f0b429", "#ff7b72", "#c9d1d9"):
+            assert color in content
+
     def test_dashboard_dir_structure(self):
         """Dashboard directory should have expected structure."""
         assert Path(DASHBOARD_DIR).is_dir()
