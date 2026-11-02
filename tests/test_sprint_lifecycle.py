@@ -715,6 +715,161 @@ def test_unparseable_release_verdict_fails_explicitly(tmp_path):
     )
     assert current.get("stage") == "ceo-plan"
 
+def _seed_current_state(h, retries=0):
+    """Write .company/sprints/current.json with the given retry count so
+    the release build fields can be seeded before h.run()."""
+    state = {
+        "sprint_id": "sprint-preset",
+        "started_at": "2026-01-01T00:00:00Z",
+        "stage": "ceo-plan",
+        "stage_started_at": "2026-01-01T00:00:00Z",
+        "loop_iteration": 0,
+        "release_retry_count": retries,
+        "tickets_in_sprint": [],
+        "ceo_direction_path": None,
+        "release": {
+            "version": None, "test_log": None, "verify_log": None,
+            "tarball": None, "sha256": None,
+            "publish_status": "pending",
+        },
+    }
+    (h.project / ".company" / "sprints" / "current.json").write_text(
+        json.dumps(state, indent=2))
+
+
+def _seed_release_build(h):
+    """Mark the sprint state as having a real build (version + tarball +
+    sha256 all present on disk) so release-publish-runner.sh passes its
+    prechecks and WOULD invoke the publisher."""
+    tarball = h.project / "release.tar.gz"
+    tarball.write_bytes(b"fake-tarball")
+    sha = h.project / "release.tar.gz.sha256"
+    sha.write_text("0" * 64 + "  release.tar.gz\n")
+    f = h.project / ".company" / "sprints" / "current.json"
+    state = json.loads(f.read_text())
+    state["release"]["version"] = "9.9.9-test"
+    state["release"]["tarball"] = str(tarball)
+    state["release"]["sha256"] = str(sha)
+    f.write_text(json.dumps(state, indent=2))
+
+
+def _fake_publisher(h):
+    """Point the publish runner at a recording fake publisher via
+    HIVE_CONFIG. Returns (config_path, marker_path); the marker appears
+    only if the publisher is actually invoked."""
+    publisher = h.root / "fake-publisher.sh"
+    marker = h.root / "published.marker"
+    publisher.write_text(
+        f"#!/usr/bin/env bash\n"
+        f"echo \"PUBLISHED $*\" >> \"{marker}\"\n"
+        f"exit 0\n"
+    )
+    publisher.chmod(0o755)
+    cfg = h.root / "config.toml"
+    cfg.write_text(f'[release]\npublisher_script = "{publisher}"\n')
+    return str(cfg), marker
+
+
+def _blocker_tickets_in_it_backlog(h):
+    """RELEASE-BLOCKER tickets currently sitting in the it dept backlog."""
+    out = []
+    d = h.project / ".company" / "departments" / "it" / "tickets" / "backlog"
+    if d.exists():
+        for f in d.glob("*.json"):
+            data = json.loads(f.read_text())
+            if "RELEASE-BLOCKER" in (data.get("title") or ""):
+                out.append(data)
+    return out
+
+
+def test_release_retry_cap_never_publishes_and_files_blocker_ticket(tmp_path):
+    """A release that is ruled NO-GO past the retry cap must NOT fall
+    through to release-publish — with a real tarball in state the old
+    code handed it to the publisher anyway, and a successful publish
+    overwrote publish_status back to 'published'. It must also file a
+    visible RELEASE-BLOCKER ticket (the old code 'moved' a ticket id no
+    code path ever creates, so the blockage was invisible to planning)."""
+    h = LifecycleHarness(tmp_path, mode="nogo", preset_release_retries=3)
+    # The retry cap is 3; the next NO-GO is retry 4 -> cap exceeded.
+    _seed_release_build(h)
+    cfg, marker = _fake_publisher(h)
+
+    r = h.run(extra_env={"HIVE_CONFIG": cfg})
+    assert r.returncode == 0, r.stderr
+    assert "retry cap exceeded" in r.stderr, r.stderr[-800:]
+
+    # The publisher must NEVER be invoked for a blocked release.
+    assert not marker.exists(), (
+        "release-publish ran for a retry-capped (NO-GO) release"
+    )
+
+    # The archived sprint records the failure, not a phantom publish.
+    assert h.sprint_archive.exists(), r.stderr[-800:]
+    data = json.loads(h.sprint_archive.read_text())
+    assert data.get("release", {}).get("publish_status") == "failed"
+    assert data.get("release", {}).get("verdict") == "NO-GO"
+
+    # The blockage is visible to the next sprint's planning.
+    blockers = _blocker_tickets_in_it_backlog(h)
+    assert len(blockers) == 1, (
+        f"expected exactly one RELEASE-BLOCKER ticket in the it backlog, "
+        f"got {len(blockers)}"
+    )
+
+
+def test_unparseable_verdict_never_publishes(tmp_path):
+    """B.5 follow-up: an unparseable release-ic verdict marks the release
+    failed and goes to vp-review — but the old code then fell through to
+    release-publish. With a real tarball + working publisher in place, a
+    build that could NOT be verified still got published (publish_status
+    flipped failed -> published). Unverifiable releases must never ship."""
+    h = LifecycleHarness(tmp_path, mode="badverdict")
+    _seed_current_state(h, retries=0)
+    _seed_release_build(h)
+    cfg, marker = _fake_publisher(h)
+
+    r = h.run(extra_env={"HIVE_CONFIG": cfg})
+    assert r.returncode == 0, r.stderr
+    assert "no parseable verdict" in r.stderr, r.stderr[-800:]
+
+    assert not marker.exists(), (
+        "release-publish ran despite an unparseable (unverifiable) verdict"
+    )
+
+    assert h.sprint_archive.exists(), r.stderr[-800:]
+    data = json.loads(h.sprint_archive.read_text())
+    assert data.get("release", {}).get("publish_status") == "failed"
+    assert data.get("release", {}).get("verdict_error")
+    assert data.get("release_retry_count", 0) == 0
+
+
+def test_build_failure_retry_cap_skips_release_verify(tmp_path):
+    """When build-and-test fails past the retry cap there is no build to
+    review: the release-ic must not spawn at all (the old code fell
+    through and spawned it on a phantom build, whose empty verdict then
+    logged a spurious 'no parseable verdict' failure), and publish must
+    be skipped too. The blockage is still filed as a ticket."""
+    h = LifecycleHarness(tmp_path, mode="noop",
+                         failing_release_tests=True,
+                         preset_release_retries=3)
+    _seed_release_build(h)
+    cfg, marker = _fake_publisher(h)
+
+    r = h.run(extra_env={"HIVE_CONFIG": cfg})
+    assert r.returncode == 0, r.stderr
+    assert "retry cap exceeded" in r.stderr, r.stderr[-800:]
+
+    assert h.spawn_blocks("release-ic") == [], (
+        "release-ic spawned to review a build that never existed"
+    )
+    assert not marker.exists(), "release-publish ran for a failed build"
+
+    assert h.sprint_archive.exists(), r.stderr[-800:]
+    data = json.loads(h.sprint_archive.read_text())
+    assert data.get("release", {}).get("publish_status") == "failed"
+    assert len(_blocker_tickets_in_it_backlog(h)) == 1
+
+
 def test_full_happy_path_forward_flow(tmp_path):
     """Release goal 7: one green-path run that drives a full ticket
     forward — create -> claim -> TDD-RED (tester writes the failing test

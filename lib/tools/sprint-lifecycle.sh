@@ -163,6 +163,28 @@ defer_remaining_to_backlog() {
   log "deferred remaining tickets to backlog: $reason_text"
 }
 
+# File a RELEASE-BLOCKER ticket in the it backlog so a blocked release is
+# visible to the next sprint's planning (sprint-fill promotes it there).
+# The old code did `scripted_move "it" "RELEASE-BLOCKER" backlog` — a MOVE
+# of a ticket that no code path ever creates (ids are generated IT-NNNN),
+# which always failed, leaving the blockage visible only in sprint state.
+file_release_blocker() {
+  local retries="$1" detail="$2"
+  local sprint_id tid
+  sprint_id=$(ss_get_field .sprint_id)
+  [ -x "$SKILL_DIR/lib/tools/ticket-create.sh" ] || return 0
+  tid=$(bash "$SKILL_DIR/lib/tools/ticket-create.sh" \
+      "it" "bug" "critical" \
+      "RELEASE-BLOCKER ($sprint_id): release blocked after $retries failed release attempts" \
+      "The release pipeline for $sprint_id stopped after $retries failed release attempts ($detail). Review .company/logs/sprint-lifecycle.log and the release test/verify logs under .company/releases/, fix the root cause, then re-run the release pipeline." \
+      "sprint-lifecycle" "sprint-planning" 2>>"$LOG")
+  if [ -n "$tid" ]; then
+    log "RELEASE-BLOCKER ticket filed: $tid"
+  else
+    log "  failed to file RELEASE-BLOCKER ticket for $sprint_id"
+  fi
+}
+
 # ── CEO planning ────────────────────────────────────────────────────
 run_ceo_plan() {
   log "CEO planning stage"
@@ -808,6 +830,14 @@ if has_active_tickets; then
   defer_remaining_to_backlog "Deferred: sprint advancement"
 fi
 
+# RELEASE_BLOCKED=1 once the release is ruled unshippable (retry cap
+# exceeded or an unparseable verdict). release-verify and release-publish
+# are then skipped: falling through used to spawn a release-ic on a build
+# that never happened, and — worse — hand a real tarball to the publisher
+# after the release was already marked failed, with a successful publish
+# flipping publish_status back to "published".
+RELEASE_BLOCKED=0
+
 # Build-and-test
 log "build-and-test: running release test suite"
 if bash "$SKILL_DIR/lib/tools/release-test-suite.sh" "$PROJECT_ROOT"; then
@@ -818,12 +848,10 @@ else
   RETRY=$(ss_get_field .release_retry_count)
   if [ "$RETRY" -gt "$MAX_RELEASE_RETRIES" ]; then
     log "release retry cap exceeded ($RETRY > $MAX_RELEASE_RETRIES) → vp-review"
-    if [ -x "$SKILL_DIR/lib/tools/ticket-create.sh" ]; then
-      scripted_move "it" "RELEASE-BLOCKER" backlog \
-        "Release blocked after $RETRY retries"
-    fi
+    file_release_blocker "$RETRY" "build-and-test failed"
     ss_set_release_field publish_status failed
     ss_set_stage vp-review
+    RELEASE_BLOCKED=1
   else
     log "running bugfix cycle (attempt $RETRY)"
     run_ceo_plan
@@ -835,114 +863,134 @@ else
   fi
 fi
 
-# Release-verify
-log "release-verify: spawning release IC"
-VERSION=$(ss_get_field .release.version)
-TEST_LOG=$(ss_get_field .release.test_log)
-TARBALL=$(ss_get_field .release.tarball)
-SHA256=$(ss_get_field .release.sha256)
+# Release-verify — defined as a function so the release-publish stage
+# (and the verify stage itself, on a build that never happened) can be
+# skipped when the release is already ruled unshippable.
+run_release_verify() {
+  log "release-verify: spawning release IC"
+  VERSION=$(ss_get_field .release.version)
+  TEST_LOG=$(ss_get_field .release.test_log)
+  TARBALL=$(ss_get_field .release.tarball)
+  SHA256=$(ss_get_field .release.sha256)
 
-. "$SKILL_DIR/lib/tools/load-agent-prompt.sh"
-PROMPT="$(load_agent_prompt "$SKILL_DIR/lib/agents/release-ic.md")
+  . "$SKILL_DIR/lib/tools/load-agent-prompt.sh"
+  PROMPT="$(load_agent_prompt "$SKILL_DIR/lib/agents/release-ic.md")
 
---- STAGE: release-verify ---
-Mode: release-ic (adversarial global review).
+  --- STAGE: release-verify ---
+  Mode: release-ic (adversarial global review).
 
-You are reviewing the build before publish. Your job is to find ANY reason
-this release should NOT ship.
+  You are reviewing the build before publish. Your job is to find ANY reason
+  this release should NOT ship.
 
-Sprint id:    $(ss_get_field .sprint_id)
-Version:      ${VERSION:-(none)}
-Tarball:      ${TARBALL:-(none yet)}
-SHA256:       ${SHA256:-(none yet)}
-Test log:     ${TEST_LOG:-(no test log)}
+  Sprint id:    $(ss_get_field .sprint_id)
+  Version:      ${VERSION:-(none)}
+  Tarball:      ${TARBALL:-(none yet)}
+  SHA256:       ${SHA256:-(none yet)}
+  Test log:     ${TEST_LOG:-(no test log)}
 
-Steps (be thorough):
-1. Read the test log. Sample 1-2 tests and re-run them.
-2. Extract the tarball; run packaging/install.sh; run hive doctor.
-3. Verify VERSION matches.
-4. Recompute sha256; verify it matches.
-5. Compare changelog to merged PRs.
-6. Try the documented happy path.
+  Steps (be thorough):
+  1. Read the test log. Sample 1-2 tests and re-run them.
+  2. Extract the tarball; run packaging/install.sh; run hive doctor.
+  3. Verify VERSION matches.
+  4. Recompute sha256; verify it matches.
+  5. Compare changelog to merged PRs.
+  6. Try the documented happy path.
 
-Record your verdict with the release_verdict MCP tool (or the script
-equivalent, per lib/agents/release-ic.md):
-  mcp__hive__release_verdict(verdict=GO|NO-GO, rationale=one-paragraph,
-      blockers=bullets - only for NO-GO)
-  bash $SKILL_DIR/lib/tools/release-verdict-write.sh GO|NO-GO \
-    --rationale one-paragraph [--blockers-stdin]
-Both write the release verify log (sprint-state release.verify_log
-path) in the format:
-  VERDICT: GO|NO-GO
-  RATIONALE: <one paragraph>
-  [BLOCKERS: - ...]
-The lifecycle parses the first VERDICT: line of that file. Anything else
-(crash, free text, missing line) is an explicit release FAILURE - there
-is no silent NO-GO default.
+  Record your verdict with the release_verdict MCP tool (or the script
+  equivalent, per lib/agents/release-ic.md):
+    mcp__hive__release_verdict(verdict=GO|NO-GO, rationale=one-paragraph,
+        blockers=bullets - only for NO-GO)
+    bash $SKILL_DIR/lib/tools/release-verdict-write.sh GO|NO-GO \
+      --rationale one-paragraph [--blockers-stdin]
+  Both write the release verify log (sprint-state release.verify_log
+  path) in the format:
+    VERDICT: GO|NO-GO
+    RATIONALE: <one paragraph>
+    [BLOCKERS: - ...]
+  The lifecycle parses the first VERDICT: line of that file. Anything else
+  (crash, free text, missing line) is an explicit release FAILURE - there
+  is no silent NO-GO default.
 
-After writing the verdict, EXIT."
+  After writing the verdict, EXIT."
 
-VERIFY_LOG_PATH="$COMPANY_DIR/releases/${VERSION:-unversioned}-verify.log"
-ss_set_release_field verify_log "$VERIFY_LOG_PATH"
-mkdir -p "$(dirname "$VERIFY_LOG_PATH")"
+  VERIFY_LOG_PATH="$COMPANY_DIR/releases/${VERSION:-unversioned}-verify.log"
+  ss_set_release_field verify_log "$VERIFY_LOG_PATH"
+  mkdir -p "$(dirname "$VERIFY_LOG_PATH")"
 
-HIVE_AGENT="release-ic" HIVE_DEPT="executive" HIVE_ROLE="Release-IC" HIVE_TICKET="" \
-bash "$SKILL_DIR/lib/core/agent-spawn.sh" -- "$PROMPT" \
-  9<&- >> "$VERIFY_LOG_PATH" 2>&1
+  HIVE_AGENT="release-ic" HIVE_DEPT="executive" HIVE_ROLE="Release-IC" HIVE_TICKET="" \
+  bash "$SKILL_DIR/lib/core/agent-spawn.sh" -- "$PROMPT" \
+    9<&- >> "$VERIFY_LOG_PATH" 2>&1
 
-VERDICT=$(grep -m1 -E '^VERDICT:' "$VERIFY_LOG_PATH" 2>/dev/null | awk -F: '{gsub(/^[ ]+/,"",$2); print $2}')
+  VERDICT=$(grep -m1 -E '^VERDICT:' "$VERIFY_LOG_PATH" 2>/dev/null | awk -F: '{gsub(/^[ ]+/,"",$2); print $2}')
 
-case "$VERDICT" in
-  GO)
-    log "release-verify GO"
-    ss_set_release_field verdict GO
-    ;;
-  NO-GO)
-    log "release-verify NO-GO"
-    ss_set_release_field verdict NO-GO
-    ss_inc_release_retry
-    RETRY=$(ss_get_field .release_retry_count)
-    if [ "$RETRY" -gt "$MAX_RELEASE_RETRIES" ]; then
-      log "release retry cap exceeded → vp-review"
-      if [ -x "$SKILL_DIR/lib/tools/ticket-create.sh" ]; then
-        scripted_move "it" "RELEASE-BLOCKER" backlog \
-          "Release blocked after $RETRY retries — release-IC verdict NO-GO"
+  case "$VERDICT" in
+    GO)
+      log "release-verify GO"
+      ss_set_release_field verdict GO
+      ;;
+    NO-GO)
+      log "release-verify NO-GO"
+      ss_set_release_field verdict NO-GO
+      ss_inc_release_retry
+      RETRY=$(ss_get_field .release_retry_count)
+      if [ "$RETRY" -gt "$MAX_RELEASE_RETRIES" ]; then
+        log "release retry cap exceeded → vp-review"
+        file_release_blocker "$RETRY" "release-IC verdict NO-GO"
+        ss_set_release_field publish_status failed
+        ss_set_stage vp-review
+        RELEASE_BLOCKED=1
+      else
+        log "running bugfix cycle (attempt $RETRY)"
+        run_ceo_plan
+        run_vp_plan
+        run_sprint_fill
+        LOOP_ITERATION=0
+        ss_set_stage tdd-red
+        exit 0
       fi
+      ;;
+    *)
+      # Unparseable verdict: the release IC recorded no GO/NO-GO line
+      # (crashed mid-verification, wrote free text, or used a different
+      # format). Fail explicitly - do NOT count it as a NO-GO release
+      # decision (it is not one) and do NOT consume a retry. The stage
+      # moves to vp-review so the operator sees the failure on the
+      # dashboard (verdict_error + publish_status=failed); the retry cap
+      # is untouched.
+      log "release-verify FAILED: no parseable verdict in $VERIFY_LOG_PATH (got: '${VERDICT:-<empty>}')"
+      ss_set_release_field verdict_error "no parseable verdict - see $VERIFY_LOG_PATH"
       ss_set_release_field publish_status failed
       ss_set_stage vp-review
-    else
-      log "running bugfix cycle (attempt $RETRY)"
-      run_ceo_plan
-      run_vp_plan
-      run_sprint_fill
-      LOOP_ITERATION=0
-      ss_set_stage tdd-red
-      exit 0
-    fi
-    ;;
-  *)
-    # Unparseable verdict: the release IC recorded no GO/NO-GO line
-    # (crashed mid-verification, wrote free text, or used a different
-    # format). Fail explicitly - do NOT count it as a NO-GO release
-    # decision (it is not one) and do NOT consume a retry. The stage
-    # moves to vp-review so the operator sees the failure on the
-    # dashboard (verdict_error + publish_status=failed); the retry cap
-    # is untouched.
-    log "release-verify FAILED: no parseable verdict in $VERIFY_LOG_PATH (got: '${VERDICT:-<empty>}')"
-    ss_set_release_field verdict_error "no parseable verdict - see $VERIFY_LOG_PATH"
-    ss_set_release_field publish_status failed
-    ss_set_stage vp-review
-    ;;
-esac
+      RELEASE_BLOCKED=1
+      ;;
+  esac
+}
 
-# Release-publish
-log "release-publish: running"
-if bash "$SKILL_DIR/lib/tools/release-publish-runner.sh" "$PROJECT_ROOT"; then
-  ss_set_release_field publish_status published
-  log "release-publish OK"
+if [ "$RELEASE_BLOCKED" = "1" ]; then
+  log "release blocked; skipping release-verify (no build to review)"
 else
-  ss_set_release_field publish_status failed
-  log "release-publish FAILED — proceeding to vp-review anyway"
+  run_release_verify
+fi
+
+# Release-publish — skipped when the release is already ruled
+# unshippable: a failed or unverifiable release must never reach the
+# publisher (a successful publish would flip publish_status back to
+# 'published').
+run_release_publish() {
+  log "release-publish: running"
+  if bash "$SKILL_DIR/lib/tools/release-publish-runner.sh" "$PROJECT_ROOT"; then
+    ss_set_release_field publish_status published
+    log "release-publish OK"
+  else
+    ss_set_release_field publish_status failed
+    log "release-publish FAILED — proceeding to vp-review anyway"
+  fi
+}
+
+if [ "$RELEASE_BLOCKED" = "1" ]; then
+  log "release blocked; skipping release-publish (publish_status already failed)"
+else
+  run_release_publish
 fi
 
 # VP-review
