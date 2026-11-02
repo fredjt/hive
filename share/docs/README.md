@@ -14,7 +14,7 @@ permissions) but runs as its own application — not as a Claude Code skill.
 - **A web dashboard** (Node.js, GitHub-dark theme) for monitoring and control
   — see all departments, ticket boards, agent activity, run/stop the company,
   approve verification, etc.
-- **An MCP server** (~50 tools) that the dashboard, the CLI, and spawned
+- **An MCP server** (~55 tools) that the dashboard, the CLI, and spawned
   Claude agents all share. Structured tool calls instead of long bash
   invocations — saves output tokens (the slow part on local llama.cpp).
 - **Strict quality gates**: deterministic gates (tests, lint, security,
@@ -65,7 +65,7 @@ hive stop
                     ▼
         ┌────────────────────────┐
         │  Hive MCP server       │  (Python, FastMCP)
-        │  ~50 tools             │
+        │  ~55 tools             │
         └───────────┬────────────┘
                     │ subprocess
                     ▼
