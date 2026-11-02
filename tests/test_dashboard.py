@@ -53,6 +53,16 @@ class TestDashboardServerJS:
 class TestDashboardTemplates:
     """Test dashboard HTML templates if any exist."""
 
+    def test_gate_output_view_highlights_skips(self):
+        """A skipped gate (security-clean with no audit tool) must be
+        visually distinct from a pass in the gate output view - a silent
+        skip reads exactly like a pass otherwise."""
+        content = Path(f"{DASHBOARD_DIR}/server.js").read_text()
+        assert "SKIPPED" in content, "gate output view has no skip banner"
+        assert "not scanned" in content, (
+            "skip banner does not say the gate was not scanned"
+        )
+
     def test_dashboard_dir_structure(self):
         """Dashboard directory should have expected structure."""
         assert Path(DASHBOARD_DIR).is_dir()

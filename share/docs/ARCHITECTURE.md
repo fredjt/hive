@@ -83,6 +83,25 @@ Gates: worktree exists, branch has commits beyond main, tests exist for
 changed code, tests pass, linter passes, security audit clean. Each
 configurable via env vars (`GATE_REQUIRE_TESTS`, etc.).
 
+**Security audit (gate 6) is skip, not pass, when no tool is
+installed.** Detection + install hints live in `lib/tools/security-audit.sh`
+(one source of truth):
+
+| Stack (manifest) | Audit command | Install |
+|---|---|---|
+| Node (`package.json`) | `npm audit --audit-level=high` | ships with npm |
+| Python (`pyproject.toml`, `requirements.txt`) | `bandit -r -ll` or `pip-audit` | `pip install bandit` |
+| Rust (`Cargo.toml`) | `cargo audit` | `cargo install cargo-audit` |
+| Go (`go.mod`) | `govulncheck ./...` | `go install golang.org/x/vuln/cmd/govulncheck@latest` |
+
+When the stack's tool is missing the gate records
+`status=skip` with a detail that names the stack and the install
+command, and the gate log carries an explicit `SKIP security-clean:
+SKIPPED - ... NOT scanned (install: ...)` line. The dashboard's gate
+output view renders skip (and fail) lines in a highlighted banner so a
+skip never reads like a pass. A skip means *never scanned*, not
+*scanned clean* — install the tool if the project should be audited.
+
 ## Backend abstraction
 
 There is exactly **one** point where Hive talks to the LLM: `agent-spawn.sh`.

@@ -135,26 +135,6 @@ detect_lint_cmd() {
   fi
 }
 
-detect_security_cmd() {
-  local wt="$1" qwt
-  qwt=$(printf '%q' "$wt")
-  if [ -f "$wt/package.json" ]; then
-    echo "cd $qwt && npm audit --audit-level=high --silent"
-  elif [ -f "$wt/pyproject.toml" ] || [ -f "$wt/requirements.txt" ]; then
-    if command -v bandit >/dev/null; then
-      echo "cd $qwt && bandit -r -f txt -ll -ll . 2>/dev/null"
-    elif command -v pip-audit >/dev/null; then
-      echo "cd $qwt && pip-audit --disable-pip"
-    fi
-  elif [ -f "$wt/Cargo.toml" ] && command -v cargo-audit >/dev/null; then
-    echo "cd $qwt && cargo audit --quiet"
-  elif [ -f "$wt/go.mod" ] && command -v govulncheck >/dev/null; then
-    echo "cd $qwt && govulncheck ./..."
-  else
-    echo ""
-  fi
-}
-
 # Record a gate result for a ticket.
 record_gate() {
   local ticket_id="$1" gate="$2" status="$3" detail="$4"
@@ -370,18 +350,28 @@ fi
 
 # ── Gate 6: Security audit ──────────────────────────────────────────
 if [ -z "$GATE_FAIL" ] && [ "$GATE_REQUIRE_SECURITY" = "true" ]; then
-  SEC_CMD=$(detect_security_cmd "$WORKTREE")
+  SEC_CMD=$(bash "$SCRIPT_DIR/security-audit.sh" cmd "$WORKTREE" 2>/dev/null)
   if [ -z "$SEC_CMD" ]; then
     # No security tool installed for this stack (e.g. Python without
     # bandit/pip-audit). Skip, like the tests-pass and lint-pass gates do
     # when no framework/linter is detected — hard-failing here bounced
     # EVERY code ticket on any project without the audit tool installed.
-    record_gate "$TID" "security-clean" "skip" "no security tool available"
+    # The detail names the stack and what to install, and says NOT
+    # scanned: on the dashboard a skip must never read like a pass.
+    SEC_HINT=$(bash "$SCRIPT_DIR/security-audit.sh" hint "$WORKTREE" 2>/dev/null)
+    SEC_DETAIL="SKIPPED - no security tool available for this stack; NOT scanned (install: ${SEC_HINT:-unknown stack})"
+    record_gate "$TID" "security-clean" "skip" "$SEC_DETAIL"
+    # Log the skip too: the gate output is what operators read, and a
+    # silent skip reads exactly like a pass.
+    log "  SKIP security-clean: $SEC_DETAIL"
   else
     if SEC_OUT=$(bash -c "$SEC_CMD" 2>&1); then
       record_gate "$TID" "security-clean" "pass" "no high-severity vulnerabilities"
+      log "  PASS security-clean: clean"
     else
-      record_gate "$TID" "security-clean" "fail" "$(echo "$SEC_OUT" | head -3)"
+      SEC_FAIL_DETAIL=$(echo "$SEC_OUT" | head -3)
+      record_gate "$TID" "security-clean" "fail" "$SEC_FAIL_DETAIL"
+      log "  FAIL security-clean: $SEC_FAIL_DETAIL"
       GATE_FAIL="security audit failed"
     fi
   fi

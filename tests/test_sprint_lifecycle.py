@@ -517,6 +517,27 @@ def test_clean_release_terminal_path(tmp_path):
     assert ticket.get("verified_by") == "stub-verifier"
     assert ticket.get("gates_passed") is True
 
+    # B.6: the security-clean gate skipped (no audit tool in the sandbox)
+    # and the skip must be explicit in the gate record - a detail that
+    # names the stack and what to install, never a bare "no tool" that
+    # reads like a pass.
+    gates_file = (h.project / ".company" / "departments" / DEPT
+                  / "components" / TICKET / "gates.json")
+    assert gates_file.exists(), "gates.json was not written"
+    gates = json.loads(gates_file.read_text())["gates"]
+    sec = gates.get("security-clean", {})
+    assert sec.get("status") == "skip", (
+        f"expected security-clean to skip in the sandbox, got "
+        f"{sec.get('status')}"
+    )
+    assert "NOT scanned" in sec.get("detail", ""), (
+        f"skip detail does not say the audit was skipped: "
+        f"{sec.get('detail')}"
+    )
+    assert "install:" in sec.get("detail", ""), (
+        f"skip detail does not say what to install: {sec.get('detail')}"
+    )
+
     # GO was parsed and the sprint archived with the release record.
     assert h.sprint_archive.exists(), (
         f"sprint was not archived\nstderr: {r.stderr[-800:]}"

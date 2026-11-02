@@ -370,6 +370,59 @@ class TestGitWorktreeCreate:
         )
 
 
+class TestSecurityAuditScript:
+    """security-audit.sh: audit command + install hint detection (gate 6).
+
+    A missing audit tool is a SKIP, not a pass: the hint output is what
+    the gate's skip detail and the dashboard show, so it must name the
+    stack and the install command."""
+
+    def test_python_stack_hint_names_bandit(self, tmp_path):
+        wt = tmp_path / "wt"
+        wt.mkdir()
+        (wt / "pyproject.toml").write_text("[project]\nname='x'\n")
+        r = run_script(f"{SCRIPTS_DIR}/security-audit.sh",
+                       ["cmd", str(wt)])
+        assert r.returncode == 0, r.stderr
+        cmd = r.stdout.strip()
+        if cmd:
+            assert "bandit" in cmd or "pip-audit" in cmd, cmd
+        h = run_script(f"{SCRIPTS_DIR}/security-audit.sh",
+                       ["hint", str(wt)])
+        assert h.returncode == 0
+        assert "bandit" in h.stdout, h.stdout
+
+    def test_node_stack_always_has_audit_cmd(self, tmp_path):
+        wt = tmp_path / "wt"
+        wt.mkdir()
+        (wt / "package.json").write_text('{"name":"x"}\n')
+        r = run_script(f"{SCRIPTS_DIR}/security-audit.sh",
+                       ["cmd", str(wt)])
+        assert r.returncode == 0
+        assert "npm audit" in r.stdout, r.stdout
+
+    def test_rust_stack_hint(self, tmp_path):
+        wt = tmp_path / "wt"
+        wt.mkdir()
+        (wt / "Cargo.toml").write_text('[package]\nname="x"\n')
+        h = run_script(f"{SCRIPTS_DIR}/security-audit.sh",
+                       ["hint", str(wt)])
+        assert "cargo-audit" in h.stdout, h.stdout
+
+    def test_unknown_stack_hint_names_manifests(self, tmp_path):
+        wt = tmp_path / "wt"
+        wt.mkdir()
+        r = run_script(f"{SCRIPTS_DIR}/security-audit.sh",
+                       ["hint", str(wt)])
+        assert r.returncode == 0
+        assert "manifest" in r.stdout, r.stdout
+
+    def test_usage_without_action(self):
+        r = run_script(f"{SCRIPTS_DIR}/security-audit.sh", ["bogus", "."])
+        assert r.returncode != 0
+        assert "Usage" in r.stderr
+
+
 class TestCompanyStopScript:
     """Test company-stop.sh."""
 
