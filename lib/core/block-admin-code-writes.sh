@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# block-admin-code-writes.sh — DEPRECATED. No longer installed by hive.
-# Kept for reference only. Formerly a PreToolUse hook to forbid admin departments
+# block-admin-code-writes.sh — PreToolUse hook installed by packaging/install.sh
+# (registration logic: packaging/hooks.sh; removed by uninstall.sh). Forbids admin departments
 # (hr, it, rd, marketing, legal, finance, executive) from writing
 # APPLICATION SOURCE CODE — i.e., the program logic engineering departments
 # implement. Configuration, build/CI infrastructure, documentation, and

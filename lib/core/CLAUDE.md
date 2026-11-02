@@ -67,7 +67,13 @@ Both `block-*.sh` scripts read PreToolUse JSON from stdin and exit with:
 - **0** — allow the tool call to proceed
 - **2** — block it (Claude sees the stderr message)
 
-They are registered as hooks in `~/.claude/settings.json` with matchers `Write|Edit|NotebookEdit` (company-writes) and `Write|Edit|NotebookEdit|Bash` (company-writes) or just `Write|Edit` (admin-code-writes).
+Registration is handled by `packaging/hooks.sh` (sourced by `packaging/install.sh`;
+unregistering is done by `packaging/uninstall.sh`): both hooks live in ONE
+PreToolUse entry under `~/.claude/settings.json` with matcher
+`Write|Edit|NotebookEdit|Bash` — the Bash matcher is critical, without it the
+bash-mutation branch of `block-company-writes.sh` never fires. Re-installing
+retires any legacy narrow-matcher registrations first, so upgrades converge on
+the canonical entry.
 
 When modifying these hooks, test with a simulated PreToolUse payload:
 ```bash

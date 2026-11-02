@@ -1,9 +1,8 @@
 #!/usr/bin/env bash
-# block-company-writes.sh — DEPRECATED. No longer installed by hive.
-# Kept for reference only. Formerly a PreToolUse hook to forbid agents from clobbering
-# .company/ via either direct file edits OR bash commands.
-#
-# (Formerly read PreToolUse JSON from stdin.) Blocks:
+# block-company-writes.sh — PreToolUse hook installed by packaging/install.sh
+# (registration logic: packaging/hooks.sh; removed by uninstall.sh). Forbids
+# agents from clobbering .company/ via either direct file edits OR bash
+# commands. Reads PreToolUse JSON from stdin. Blocks:
 #
 #   1. Write / Edit / NotebookEdit on any path under .company/.
 #      Agents must use the script tools so live state changes go through
