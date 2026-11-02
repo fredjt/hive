@@ -425,6 +425,32 @@ class TestTicketMoveScript:
         assert result.returncode != 0
         assert "reason" in result.stderr.lower() or "ERROR" in result.stderr
 
+    def test_ticket_move_done_clears_skip_tdd_red(self, tmp_company_dir):
+        """Regression (release goal A.4): a ticket that reached done
+        with skip_tdd_red=true kept the flag forever (ticket-move did not
+        touch it), so a ticket re-promoted in a future sprint skipped the
+        RED stage again. ticket-move clears it when moving to done."""
+        env = {"COMPANY_DIR": str(tmp_company_dir)}
+        r = run_script(f"{SCRIPTS_DIR}/ticket-create.sh",
+                       ["it", "feature", "medium", "A4 flag", "desc"], env=env)
+        assert r.returncode == 0, r.stderr
+        tid = r.stdout.strip()
+        tf = tmp_company_dir / "departments" / "it" / "tickets" / "backlog" / f"{tid}.json"
+        data = json.loads(tf.read_text())
+        data["skip_tdd_red"] = True
+        tf.write_text(json.dumps(data, indent=2))
+
+        r = run_script(f"{SCRIPTS_DIR}/ticket-move.sh",
+                       ["it", tid, "done", "shipped", "tester", "implemented"],
+                       env={**env, "HIVE_SCRIPTED_MOVE": "1"})
+        assert r.returncode == 0, r.stderr
+        df = tmp_company_dir / "departments" / "it" / "tickets" / "done" / f"{tid}.json"
+        data = json.loads(df.read_text())
+        assert "skip_tdd_red" not in data, (
+            "skip_tdd_red survived the done move"
+        )
+        assert data["resolution"]["status"] == "implemented"
+
 
 class TestTicketCommentScript:
     """Test ticket-comment.sh."""

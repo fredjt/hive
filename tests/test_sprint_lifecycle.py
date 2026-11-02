@@ -133,7 +133,7 @@ class LifecycleHarness:
         return r
 
     def _build_project(self):
-        self.project.mkdir()
+        self.project.mkdir(parents=True, exist_ok=True)
         self._git("init", "-b", "main")
         self._git("config", "user.name", "test")
         self._git("config", "user.email", "test@example.com")
@@ -564,3 +564,44 @@ def test_retry_cap_terminal_path(tmp_path):
     )
     assert current.get("stage") == "ceo-plan"
     assert current.get("sprint_id") != data.get("sprint_id")
+
+
+def test_skip_tdd_red_honoured_and_cleared_at_done(tmp_path):
+    """Release goal A.4: skip_tdd_red=true means the tester is skipped
+    (the engineer works the ticket directly) when no [TDD-RED] commit
+    exists yet, and when the ticket eventually reaches done the flag
+    must be CLEARED - otherwise a re-promoted ticket skips the RED
+    stage again in the next sprint."""
+    # Part 1: the flag is honoured - no tester spawns at all.
+    h1 = LifecycleHarness(tmp_path / "p1", mode="noop")
+    tf1 = (h1.project / ".company" / "departments" / DEPT / "tickets"
+           / "sprint-current" / f"{TICKET}.json")
+    d1 = json.loads(_ticket_json("sprint-current"))
+    d1["skip_tdd_red"] = True
+    tf1.write_text(json.dumps(d1, indent=2))
+    r1 = h1.run()
+    assert r1.returncode == 0, r1.stderr
+    assert "skipping tester (skip_tdd_red=true" in r1.stderr, (
+        f"skip_tdd_red was not honoured\nstderr: {r1.stderr[:400]}"
+    )
+    assert "spawning ic-cycle-tester" not in r1.stderr, (
+        "tester was spawned despite skip_tdd_red=true"
+    )
+
+    # Part 2: the flag is cleared when the ticket reaches done.
+    h2 = LifecycleHarness(tmp_path / "p2", mode="go", with_code_branch=True)
+    tf2 = (h2.project / ".company" / "departments" / DEPT / "tickets"
+           / "sprint-current" / f"{TICKET}.json")
+    d2 = json.loads(_ticket_json("sprint-current"))
+    d2["skip_tdd_red"] = True
+    tf2.write_text(json.dumps(d2, indent=2))
+    r2 = h2.run()
+    assert r2.returncode == 0, r2.stderr
+    ticket = h2.ticket_at("done", "archive")
+    assert ticket is not None, (
+        f"ticket did not reach done\nstderr: {r2.stderr[-400:]}"
+    )
+    assert "skip_tdd_red" not in ticket, (
+        "skip_tdd_red survived the done move - it would skip the RED "
+        "stage again on a future re-promotion"
+    )

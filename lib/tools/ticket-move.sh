@@ -385,6 +385,12 @@ if NEW_STATUS == 'done':
         'body': prefix + ': ' + comment_text,
     })
 
+    # A done ticket is finished with its rework context: clear
+    # skip_tdd_red so a ticket re-promoted in a future sprint starts a
+    # fresh TDD cycle (RED first) instead of skipping the tester forever.
+    # The flag is lifecycle-only state, not ticket semantics.
+    ticket.pop('skip_tdd_red', None)
+
     # Update resolution with git info
     if not ticket.get('resolution') or ticket['resolution'] is None:
         ticket['resolution'] = {}

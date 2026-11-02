@@ -267,8 +267,9 @@ fi
 # NOTE: skip_tdd_red=true is deliberately NOT a gate. The flag means
 # "skip the tester; the engineer works the ticket directly" (set by
 # ticket-bounce.sh --skip-tdd-red, the PR-merge-conflict rollback, and
-# the 3-strike tester fallback), and NOTHING clears it - it survives to
-# done. Bouncing every flagged ticket here made them permanent zombies:
+# the 3-strike tester fallback). ticket-move clears it when the ticket
+# reaches done, so re-promoted tickets start a fresh TDD cycle. Bouncing
+# every flagged ticket here made them permanent zombies:
 # engineer re-spawns, ticket bounces, repeat, until the loop safety
 # valve defers it, for every sprint, forever. The ticket is in in-review
 # because the engineer just exited 0, so the real gates below evaluate

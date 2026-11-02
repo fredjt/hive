@@ -439,7 +439,8 @@ After committing the failing test, EXIT. The engineer will run next.$FRESH_HINT"
       log "$log_prefix: no [TDD-RED] commit (attempt $tdd_red_attempts)"
       if [ "$tdd_red_attempts" -ge 3 ]; then
         # Do NOT set skip_tdd_red here: that flag means 'skip the tester,
-        # the engineer works it' and is never cleared, so it would also
+        # the engineer works it' and persists across bounces within the
+        # sprint (ticket-move only clears it at done), so it would also
         # poison the verifier bounce / merge-conflict semantics later. The
         # persisted tdd_red_attempts counter above is what makes later
         # passes skip the tester.
