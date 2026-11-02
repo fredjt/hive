@@ -98,6 +98,38 @@ case "${STUB_MODE:-noop}" in
       fi
     fi
     ;;
+  happy)
+    # End-to-end happy path (goal 7): tester writes the failing [TDD-RED]
+    # test commit, engineer writes the [TDD-GREEN] implementation, the
+    # verifier approves, the release-ic records GO.
+    case "$HIVE_AGENT" in
+      ic-tester)
+        WT="$PROJECT_ROOT/.worktrees/$HIVE_TICKET"
+        printf 'from happy_impl import works\n\ndef test_works():\n    assert works()\n' > "$WT/test_happy.py" 2>> "$AGENT_SPAWN_LOG"
+        git -C "$WT" add test_happy.py 2>> "$AGENT_SPAWN_LOG"
+        git -C "$WT" commit -m "[TDD-RED] $HIVE_TICKET: add failing test for works()" >> "$AGENT_SPAWN_LOG" 2>&1
+        ;;
+      ic-engineer)
+        WT="$PROJECT_ROOT/.worktrees/$HIVE_TICKET"
+        printf 'def works():\n    return True\n' > "$WT/happy_impl.py" 2>> "$AGENT_SPAWN_LOG"
+        git -C "$WT" add happy_impl.py 2>> "$AGENT_SPAWN_LOG"
+        git -C "$WT" commit -m "[TDD-GREEN] $HIVE_TICKET: implement works()" >> "$AGENT_SPAWN_LOG" 2>&1
+        ;;
+      verification-ic)
+        if printf '%s' "$PROMPT" | grep -q -- "--- STAGE: verify ("; then
+          bash "$SKILL_DIR/lib/tools/ticket-approve.sh" "$HIVE_DEPT" "$HIVE_TICKET" \
+            "stub-verifier" "Stub approval: happy-path review - RED test added, GREEN implementation, every acceptance criterion covered, deterministic gates green." \
+            >> "$AGENT_SPAWN_LOG" 2>&1
+        fi
+        ;;
+      release-ic)
+        VLOG=$(jq -r '.release.verify_log // empty' "$COMPANY_DIR/sprints/current.json" 2>/dev/null)
+        if [ -n "$VLOG" ]; then
+          { echo "VERDICT: GO"; echo "RATIONALE: Stub happy-path release: all release gates passed."; } >> "$VLOG" 2>> "$AGENT_SPAWN_LOG"
+        fi
+        ;;
+    esac
+    ;;
 esac
 exit 0
 '''
@@ -682,3 +714,75 @@ def test_unparseable_release_verdict_fails_explicitly(tmp_path):
         (h.project / ".company" / "sprints" / "current.json").read_text()
     )
     assert current.get("stage") == "ceo-plan"
+
+def test_full_happy_path_forward_flow(tmp_path):
+    """Release goal 7: one green-path run that drives a full ticket
+    forward — create -> claim -> TDD-RED (tester writes the failing test
+    commit) -> TDD-GREEN (engineer writes the implementation) -> gates
+    pass -> verify-approve -> done -> release GO -> archive. The existing
+    scenario tests mostly cover failure/bounce corners; this proves the
+    intended forward path works start to finish."""
+    h = LifecycleHarness(tmp_path, mode="happy")
+    # Test infrastructure committed to main so BOTH the worktree gates
+    # (pytest in the branch) and the release build-and-test (pytest at the
+    # project root) find a framework with passing tests.
+    (h.project / "pytest.ini").write_text("")
+    (h.project / "test_root.py").write_text("def test_ok():\n    assert True\n")
+    h._git("add", "pytest.ini", "test_root.py")
+    h._git("commit", "-m", "test infrastructure")
+
+    ticket_file = (h.project / ".company" / "departments" / DEPT / "tickets"
+                   / "sprint-current" / f"{TICKET}.json")
+    ticket_file.write_text(_ticket_json("sprint-current"))
+
+    r = h.run()
+    assert r.returncode == 0, r.stderr
+
+    # Exactly one tester pass and one engineer pass - no bounce loop.
+    testers = h.spawn_blocks("ic-tester")
+    engineers = h.spawn_blocks("ic-engineer")
+    assert len(testers) == 1, f"expected 1 tester spawn, got {len(testers)}"
+    assert len(engineers) == 1, (
+        f"expected 1 engineer spawn, got {len(engineers)}"
+    )
+
+    # The branch carries a RED commit before a GREEN commit.
+    wt = h.project / ".worktrees" / TICKET
+    log = subprocess.run(
+        ["git", "-C", str(wt), "log", "main..HEAD", "--format=%s"],
+        capture_output=True, text=True, timeout=30,
+    ).stdout
+    red_i = log.find("[TDD-RED]")
+    green_i = log.find("[TDD-GREEN]")
+    assert red_i != -1, "no [TDD-RED] commit on the branch"
+    assert green_i != -1, "no [TDD-GREEN] commit on the branch"
+
+    # The ticket went done through the verifier's approval (then the
+    # sprint-end sweep archives it).
+    ticket = h.ticket_at("done", "archive")
+    assert ticket is not None, f"ticket did not reach done\nstderr: {r.stderr[-600:]}"
+    assert ticket.get("status") == "done"
+    assert ticket.get("verified_by") == "stub-verifier"
+    assert ticket.get("gates_passed") is True
+
+    # Gates actually ran and passed (tests-pass is real: pytest in the
+    # worktree); security-clean skipped with a visible detail.
+    gates_file = (h.project / ".company" / "departments" / DEPT / "components"
+                  / TICKET / "gates.json")
+    assert gates_file.exists(), "gates.json missing - gates never ran"
+    gates = json.loads(gates_file.read_text())["gates"]
+    assert gates["tests-pass"]["status"] == "pass"
+    assert gates["security-clean"]["status"] == "skip"
+    assert "NOT scanned" in gates["security-clean"]["detail"]
+
+    # The release ran clean: GO verdict, sprint archived.
+    assert h.sprint_archive.exists(), (
+        f"sprint was not archived\nstderr: {r.stderr[-600:]}"
+    )
+    data = json.loads(h.sprint_archive.read_text())
+    assert data.get("release", {}).get("verdict") == "GO"
+
+    # No verifier bounces anywhere along the way.
+    assert "bounced by verifier" not in r.stderr, (
+        "the happy path bounced - it should have gone straight through"
+    )
