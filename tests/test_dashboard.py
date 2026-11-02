@@ -668,13 +668,17 @@ class TestDockerClaudeInABox:
         subprocess.run(["docker", "rmi", "-f", image], capture_output=True)
 
     @staticmethod
-    def _run(hive_image, *args, timeout=300):
+    def _run(hive_image, run_opts=(), *cmd, timeout=300):
         """Run a container the way the Dockerfile documents: worktree rw at
-        /work, /root/.claude as an ephemeral tmpfs."""
-        cmd = (["docker", "run", "--rm",
-                "--tmpfs", "/root/.claude:noexec,nosuid,size=100m",
-                hive_image] + list(args))
-        return subprocess.run(cmd, capture_output=True, text=True,
+        /work, /root/.claude as an ephemeral tmpfs.
+
+        run_opts = `docker run` flags (must precede the image: -v/-w/-e...);
+        cmd      = the command executed inside the container (after the
+        image — anything after the image name is a command, not a flag)."""
+        args = (["docker", "run", "--rm",
+                 "--tmpfs", "/root/.claude:noexec,nosuid,size=100m"]
+                + list(run_opts) + [hive_image] + list(cmd))
+        return subprocess.run(args, capture_output=True, text=True,
                               timeout=timeout)
 
     def test_claude_binary_smoke(self, hive_image):
@@ -691,8 +695,8 @@ class TestDockerClaudeInABox:
         host_claude = tmp_path / "host-claude"
         host_claude.mkdir()
         r = self._run(hive_image,
-                      "-v", f"{wt}:/work:rw", "-w", "/work",
-                      "-v", f"{host_claude}:/host-claude:ro",
+                      ["-v", f"{wt}:/work:rw", "-w", "/work",
+                       "-v", f"{host_claude}:/host-claude:ro"],
                       "/entrypoint.sh", "bash", "-c",
                       "cat /work/marker.txt && echo from-container > /work/created.txt"
                       " && cat /work/created.txt")
@@ -719,7 +723,7 @@ class TestDockerClaudeInABox:
         (tmp_path / host_marker).write_text("host fs file")
 
         r = self._run(hive_image,
-                      "-v", f"{wt}:/work:rw", "-w", "/work",
+                      ["-v", f"{wt}:/work:rw", "-w", "/work"],
                       "/entrypoint.sh", "bash", "-c",
                       "echo SECRET_COUNT=$(find / -xdev -name {secret_marker} 2>/dev/null | wc -l)"
                       " && echo HOST_COUNT=$(find / -xdev -name {host_marker} 2>/dev/null | wc -l)"
@@ -751,8 +755,8 @@ class TestDockerClaudeInABox:
         (host_claude / "settings.json").write_text(cfg_marker)
 
         r = self._run(hive_image,
-                      "-v", f"{wt}:/work:rw", "-w", "/work",
-                      "-v", f"{host_claude}:/host-claude:ro",
+                      ["-v", f"{wt}:/work:rw", "-w", "/work",
+                       "-v", f"{host_claude}:/host-claude:ro"],
                       "/entrypoint.sh", "bash", "-c",
                       f"cat /root/.claude/settings.json; "
                       f"test ! -e /root/.claude/cache/{stale} && echo NO_STALE_CACHE; "
@@ -773,8 +777,8 @@ class TestDockerClaudeInABox:
         wt = tmp_path / "worktree"
         wt.mkdir()
         r = self._run(hive_image,
-                      "-e", "ANTHROPIC_API_KEY",
-                      "-v", f"{wt}:/work:rw", "-w", "/work",
+                      ["-e", "ANTHROPIC_API_KEY",
+                       "-v", f"{wt}:/work:rw", "-w", "/work"],
                       "/entrypoint.sh", "claude", "-p",
                       "Reply with exactly: OK",
                       timeout=600)
