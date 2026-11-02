@@ -10,8 +10,11 @@ This file documents the development workflow for the **Hive** project: how to ad
 # From the repo root
 cd hive
 
-# Run the full test suite
+# Run the full test suite (serial)
 python -m pytest tests/ -v
+
+# Run the full test suite in parallel (~4x faster; needs pytest-xdist)
+python -m pytest tests/ -n 8
 
 # Run a subset
 python -m pytest tests/test_bash_scripts.py -v
@@ -133,9 +136,11 @@ def test_agent_prompt_has_required_sections():
 # Run all tests (fast feedback loop)
 python -m pytest tests/ -v
 
-# Watch mode — re-run on file changes
-pip install pytest-watch
-ptw --watch lib/ -- tests/
+# Run in parallel — the fast feedback loop (~65s -> ~15s on a modern box).
+# The suite is xdist-safe: ephemeral ports, per-test temp dirs, in-process
+# MCP servers. -n 8 is the sweet spot; more workers don't help because the
+# subprocess-heavy lifecycle tests dominate.
+python -m pytest tests/ -n 8
 
 # Single test file while developing
 python -m pytest tests/test_bash_scripts.py::TestSprintStateScript -v
@@ -143,6 +148,29 @@ python -m pytest tests/test_bash_scripts.py::TestSprintStateScript -v
 # Verbose output with tracebacks for failing tests
 python -m pytest tests/test_integration.py -v --tb=long
 ```
+
+**Watch loop (`ptw`).** For long development sessions, `pytest-watch`
+re-runs the suite (or a subset) automatically whenever a watched file
+changes — no manual re-run between edits:
+
+```bash
+pip install -r packaging/requirements-dev.txt   # or: pip install pytest-watch
+
+# Watch the runtime core, run the full suite on each change
+ptw --watch lib/ -- tests/
+
+# Narrower loop: watch one module, run only its test file
+ptw --watch lib/tools/ -- tests/test_bash_scripts.py
+
+# Filter to specific tests while iterating on one bug
+ptw --watch lib/ -k ticket_move
+```
+
+Notes:
+- `ptw` runs the *serial* suite; add `-n 8` after the `--` only if you
+  want the parallel run inside the loop (usually unnecessary for a subset).
+- If `ptw` is unavailable, the equivalent one-liner is
+  `watch -n 2 'python -m pytest tests/ -q -n 8'`.
 
 ### 4. Fixing Bugs
 

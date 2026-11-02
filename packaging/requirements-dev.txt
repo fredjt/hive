@@ -1,0 +1,15 @@
+# Hive dev/test dependencies (not needed at runtime).
+#
+#   pip install -r packaging/requirements-dev.txt
+#
+# - pytest        the test runner (suite: python -m pytest tests/)
+# - pytest-xdist  parallel execution (sweet spot -n 8: ~65s -> ~15s). The
+#                 suite is xdist-safe: ephemeral ports, per-test temp dirs,
+#                 in-process MCP servers. Beyond ~8-12 workers, the
+#                 subprocess-heavy lifecycle tests stop gaining speed.
+# - pytest-cov    coverage (python -m pytest tests/ --cov=lib/hive_cli ...)
+# - pytest-watch  watch loop: ptw --watch lib/ -- tests/  (re-runs on change)
+pytest>=8.0
+pytest-xdist>=3.6
+pytest-cov>=5.0
+pytest-watch>=4.0

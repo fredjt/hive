@@ -112,6 +112,35 @@ class TestPackagingDir:
             assert os.access(str(install_script), os.X_OK)
 
 
+class TestDevWorkflowDocs:
+    """D.11: the dev workflow docs must keep documenting the fast loop.
+
+    The suite is xdist-safe and parallel is the fast path (~65s -> ~15s);
+    the watch loop (ptw) is the long-session path. If either document
+    silently disappears, developers regress to the slow serial loop."""
+
+    def test_dev_requirements_declare_test_tools(self):
+        """Dev/test deps live in packaging/requirements-dev.txt and include
+        the parallel + watch tooling referenced by AGENTS.md."""
+        p = Path("packaging/requirements-dev.txt")
+        assert p.exists(), "packaging/requirements-dev.txt missing"
+        content = p.read_text()
+        assert "pytest-xdist" in content, "parallel runner (pytest-xdist) not declared"
+        assert "pytest-watch" in content, "watch loop (pytest-watch) not declared"
+
+    def test_agents_md_documents_parallel_suite(self):
+        """AGENTS.md must show the parallel command, not just serial."""
+        content = Path("AGENTS.md").read_text()
+        assert "-n 8" in content, "AGENTS.md does not document the parallel suite (-n 8)"
+        assert "pytest-xdist" in content
+
+    def test_agents_md_documents_watch_loop(self):
+        """AGENTS.md must document the ptw watch loop (command + usage)."""
+        content = Path("AGENTS.md").read_text()
+        assert "ptw" in content, "watch loop (ptw) not documented in AGENTS.md"
+        assert "--watch lib/" in content
+
+
 class TestShareDir:
     """Test the share directory."""
 
