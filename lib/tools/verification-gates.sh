@@ -17,12 +17,15 @@ set -euo pipefail
 #   6. Linter passes
 #   7. Security audit clean
 #
-# Usage: verification-gates.sh <dept> <project-root> [--ticket <id>] [--quiet]
+# Usage: verification-gates.sh <dept> <project-root> [--ticket <id>] [--quiet] [--wait]
 #   --ticket <id>  Gate this specific in-review ticket (the lifecycle passes
 #                  its own ticket). Without it, the first ticket in the
 #                  dept's in-review dir is used (the 90s daemon).
 #   --quiet        Accepted for compatibility with the daemon; output is
 #                  captured by the caller either way.
+#   --wait         Block on the per-ticket gate lock until a concurrent run
+#                  finishes (lifecycle). Without it, a busy ticket is SKIPPED
+#                  (exit 0) so the 90s daemon can retry on its next cycle.
 #
 # Return codes:
 #   0 — all gates passed
@@ -44,10 +47,12 @@ fi
 DEPT="$1"
 PROJECT_ROOT="$(cd "$2" && pwd)"
 GATE_TICKET=""
+GATE_WAIT=0
 shift 2
 for arg in "$@"; do
   case "$arg" in
     --quiet) : ;;
+    --wait) GATE_WAIT=1 ;;
     --ticket) : ;;           # its value arrives as the next bare arg
     --ticket=*) GATE_TICKET="${arg#--ticket=}" ;;
     -*) : ;;                 # unknown flag: ignore
@@ -141,11 +146,18 @@ record_gate() {
   local gates_file="$COMPANY_DIR/departments/$DEPT/components/$ticket_id/gates.json"
   mkdir -p "$(dirname "$gates_file")"
   if [ ! -f "$gates_file" ]; then
-    echo '{"ticket_id":"'"$ticket_id"'","gates":{}}' > "$gates_file"
+    # jq (not string interpolation) so an odd ticket id can't produce
+    # invalid JSON.
+    jq -n --arg tid "$ticket_id" '{ticket_id: $tid, gates: {}}' > "$gates_file"
   fi
+  # Per-process tmp: two concurrent writers to the SAME fixed name let one
+  # process's mv steal the other's tmp and kill the loser (see the gate lock
+  # below — defense in depth for writers the lock doesn't serialize).
+  local tmp="${gates_file}.tmp.$$"
   jq --arg gate "$gate" --arg status "$status" --arg detail "$detail" --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
     '.gates[$gate] = {status: $status, detail: $detail, checked_at: $ts}' \
-    "$gates_file" > "$gates_file.tmp" && mv "$gates_file.tmp" "$gates_file"
+    "$gates_file" > "$tmp" || { rm -f "$tmp"; return 1; }
+  mv "$tmp" "$gates_file" || { rm -f "$tmp"; return 1; }
 }
 
 # Bounce a ticket back to in-progress with a comment explaining why.
@@ -171,9 +183,11 @@ mark_gates_passed() {
   local ticket_file
   ticket_file=$(find "$TICKET_DIR/in-review" -name "$ticket_id.json" -type f 2>/dev/null | head -1)
   if [ -n "$ticket_file" ]; then
+    local tmp="${ticket_file}.tmp.$$"
     jq --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
       '.gates_passed_at = $ts | .gates_passed = true' \
-      "$ticket_file" > "$ticket_file.tmp" && mv "$ticket_file.tmp" "$ticket_file"
+      "$ticket_file" > "$tmp" || { rm -f "$tmp"; return 1; }
+    mv "$tmp" "$ticket_file" || { rm -f "$tmp"; return 1; }
   fi
 }
 
@@ -201,6 +215,32 @@ fi
 
 TID=$(jq -r '.id // empty' "$TICKET_FILE")
 [ -z "$TID" ] && { log "no ticket id in file"; exit 2; }
+
+# ── Per-ticket gate lock ────────────────────────────────────────────
+# The 90s gate daemon (company-start.sh) and the lifecycle's synchronous
+# run can target the same in-review ticket. Concurrent runs corrupt each
+# other two ways: a shared fixed-name .tmp (one run's mv steals the
+# other's, the loser crashes with a rc the lifecycle reads as a spurious
+# gate failure), and concurrent pytest in the same worktree (assertion-
+# rewrite cache collisions surface as collection errors → a spurious
+# 'tests failed' bounce). Serialize per ticket: the lifecycle passes
+# --wait (it must get a real evaluation, bounded by a 15-minute lock
+# timeout); the daemon skips a busy ticket and retries on its next cycle.
+GATE_LOCK_DIR="$COMPANY_DIR/gate-runs"
+mkdir -p "$GATE_LOCK_DIR"
+GATE_LOCK="$GATE_LOCK_DIR/$DEPT-$TID.lock"
+exec 8>"$GATE_LOCK"
+if [ "$GATE_WAIT" = "1" ]; then
+  if ! flock -w 900 8; then
+    log "gate lock for $TID not released within 900s — failing this run"
+    exit 2
+  fi
+else
+  if ! flock -n 8; then
+    log "another gate run is in progress for $TID — skipping (retry next cycle)"
+    exit 0
+  fi
+fi
 
 # Already gates_passed and the caller did not force a re-run: nothing to
 # do. Without this, the 90s daemon re-ran the full test suite AND appended

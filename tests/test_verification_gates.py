@@ -199,6 +199,74 @@ class TestTicketTargeting:
         assert result.returncode == 2
 
 
+class TestConcurrentGateRuns:
+    """record_gate / mark_gates_passed write gates.json (and the ticket file)
+    through a FIXED-named .tmp. The 90s gate daemon (company-start.sh) and
+    the lifecycle's synchronous run can gate the same ticket at the same
+    time; a shared tmp lets one process's mv steal the other's file and the
+    loser dies with a non-zero rc, which the lifecycle reads as a spurious
+    'usage error' gate failure (a bounce). The tmp must be per-process.
+
+    The test makes the race deterministic: a PATH shim that makes every `mv`
+    sleep 0.5s before moving. Without the per-ticket lock, both runs start
+    the same evaluation — the first record_gate's mv consumes the shared
+    tmp and kills the loser, and the concurrent pytest in the same worktree
+    corrupts the winner's collection. With the lock, one run executes the
+    full gate and the other skips cleanly; both exit 0 and the gate record
+    is intact."""
+
+    def test_two_concurrent_runs_both_succeed(self, tmp_path):
+        # Ticket id without a hyphen: make_code_project turns it into a
+        # Python identifier (test_<id>_works), so "TICK-1" would be a
+        # SyntaxError the moment pytest collects it.
+        proj = tmp_path / "proj"
+        make_code_project(proj, "T4")
+        make_company(proj, "T4")
+
+        shim_dir = tmp_path / "shim"
+        shim_dir.mkdir()
+        real_mv = shutil.which("mv")
+        assert real_mv, "system mv not found"
+        (shim_dir / "mv").write_text(
+            "#!/usr/bin/env bash\n"
+            "sleep 0.5\n"
+            f"exec {real_mv} \"$@\"\n"
+        )
+        (shim_dir / "mv").chmod(0o755)
+
+        env = dict(os.environ, PATH=f"{shim_dir}:{os.environ['PATH']}")
+        procs = [
+            subprocess.Popen(
+                ["bash", str(GATES), "backend", str(proj), "--ticket", "T4"],
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env,
+            )
+            for _ in range(2)
+        ]
+        rcs = [p.wait(timeout=300) for p in procs]
+        out = b"".join(p.stdout.read() + p.stderr.read() for p in procs)
+
+        assert rcs == [0, 0], (
+            f"concurrent gate runs must both succeed, got rc={rcs} — a shared "
+            f"fixed-named .tmp let one run steal the other's and the loser "
+            f"crashed (the lifecycle reads that as a spurious gate failure)\n"
+            f"{out.decode(errors='replace')[-800:]}"
+        )
+        # Exactly one run must have skipped on the busy lock — the loser
+        # must NOT re-run the suite a second time (that's the double-pytest
+        # in one worktree that corrupts collection).
+        decoded = out.decode(errors="replace")
+        assert "skipping (retry next cycle)" in decoded, (
+            "the busy run did not skip — both runs evaluated the same "
+            "ticket concurrently\n" + decoded[-800:]
+        )
+
+        # The record must survive the race intact.
+        gates_file = (proj / ".company" / "departments" / "backend"
+                      / "components" / "T4" / "gates.json")
+        data = json.loads(gates_file.read_text())  # valid JSON or it raises
+        assert data["gates"]["tests-pass"]["status"] == "pass"
+
+
 class TestSkipTddRedFlag:
     """Regression: skip_tdd_red=true must NOT be a hard gate bounce.
 

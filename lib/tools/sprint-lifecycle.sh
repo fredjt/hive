@@ -622,10 +622,13 @@ After exit 0, this script will:
   # Per-ticket gate output log (for dashboard "View gate" button)
   local GATE_LOG="$COMPANY_DIR/logs/gate-${ticket}.log"
 
-  # Run gates synchronously
+  # Run gates synchronously. --wait: block on the per-ticket gate lock if
+  # the 90s daemon is mid-run on this ticket (without it a concurrent run
+  # corrupts this evaluation; with a non-blocking skip we'd proceed on no
+  # evaluation at all).
   local GATES_RC=0
   GATE_LOG="$GATE_LOG" bash "$SKILL_DIR/lib/tools/verification-gates.sh" \
-    "$dept" "$PROJECT_ROOT" --ticket "$ticket" || GATES_RC=$?
+    "$dept" "$PROJECT_ROOT" --ticket "$ticket" --wait || GATES_RC=$?
 
   if [ "$GATES_RC" -ne 0 ]; then
     # Gates failed (rc=2) or usage error (rc=1) — bounce to tdd-green.
