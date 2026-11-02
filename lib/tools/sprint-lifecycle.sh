@@ -865,9 +865,20 @@ Steps (be thorough):
 5. Compare changelog to merged PRs.
 6. Try the documented happy path.
 
-Write your verdict to stdout:
+Record your verdict with the release_verdict MCP tool (or the script
+equivalent, per lib/agents/release-ic.md):
+  mcp__hive__release_verdict(verdict=GO|NO-GO, rationale=one-paragraph,
+      blockers=bullets - only for NO-GO)
+  bash $SKILL_DIR/lib/tools/release-verdict-write.sh GO|NO-GO \
+    --rationale one-paragraph [--blockers-stdin]
+Both write the release verify log (sprint-state release.verify_log
+path) in the format:
   VERDICT: GO|NO-GO
   RATIONALE: <one paragraph>
+  [BLOCKERS: - ...]
+The lifecycle parses the first VERDICT: line of that file. Anything else
+(crash, free text, missing line) is an explicit release FAILURE - there
+is no silent NO-GO default.
 
 After writing the verdict, EXIT."
 
@@ -881,32 +892,48 @@ bash "$SKILL_DIR/lib/core/agent-spawn.sh" -- "$PROMPT" \
 
 VERDICT=$(grep -m1 -E '^VERDICT:' "$VERIFY_LOG_PATH" 2>/dev/null | awk -F: '{gsub(/^[ ]+/,"",$2); print $2}')
 
-if [ "$VERDICT" = "GO" ]; then
-  log "release-verify GO"
-  ss_set_release_field verdict GO
-else
-  log "release-verify NO-GO (verdict=$VERDICT)"
-  ss_set_release_field verdict NO-GO
-  ss_inc_release_retry
-  RETRY=$(ss_get_field .release_retry_count)
-  if [ "$RETRY" -gt "$MAX_RELEASE_RETRIES" ]; then
-    log "release retry cap exceeded → vp-review"
-    if [ -x "$SKILL_DIR/lib/tools/ticket-create.sh" ]; then
-      scripted_move "it" "RELEASE-BLOCKER" backlog \
-        "Release blocked after $RETRY retries — release-IC verdict NO-GO"
+case "$VERDICT" in
+  GO)
+    log "release-verify GO"
+    ss_set_release_field verdict GO
+    ;;
+  NO-GO)
+    log "release-verify NO-GO"
+    ss_set_release_field verdict NO-GO
+    ss_inc_release_retry
+    RETRY=$(ss_get_field .release_retry_count)
+    if [ "$RETRY" -gt "$MAX_RELEASE_RETRIES" ]; then
+      log "release retry cap exceeded → vp-review"
+      if [ -x "$SKILL_DIR/lib/tools/ticket-create.sh" ]; then
+        scripted_move "it" "RELEASE-BLOCKER" backlog \
+          "Release blocked after $RETRY retries — release-IC verdict NO-GO"
+      fi
+      ss_set_release_field publish_status failed
+      ss_set_stage vp-review
+    else
+      log "running bugfix cycle (attempt $RETRY)"
+      run_ceo_plan
+      run_vp_plan
+      run_sprint_fill
+      LOOP_ITERATION=0
+      ss_set_stage tdd-red
+      exit 0
     fi
+    ;;
+  *)
+    # Unparseable verdict: the release IC recorded no GO/NO-GO line
+    # (crashed mid-verification, wrote free text, or used a different
+    # format). Fail explicitly - do NOT count it as a NO-GO release
+    # decision (it is not one) and do NOT consume a retry. The stage
+    # moves to vp-review so the operator sees the failure on the
+    # dashboard (verdict_error + publish_status=failed); the retry cap
+    # is untouched.
+    log "release-verify FAILED: no parseable verdict in $VERIFY_LOG_PATH (got: '${VERDICT:-<empty>}')"
+    ss_set_release_field verdict_error "no parseable verdict - see $VERIFY_LOG_PATH"
     ss_set_release_field publish_status failed
     ss_set_stage vp-review
-  else
-    log "running bugfix cycle (attempt $RETRY)"
-    run_ceo_plan
-    run_vp_plan
-    run_sprint_fill
-    LOOP_ITERATION=0
-    ss_set_stage tdd-red
-    exit 0
-  fi
-fi
+    ;;
+esac
 
 # Release-publish
 log "release-publish: running"

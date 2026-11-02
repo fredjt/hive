@@ -86,6 +86,18 @@ case "${STUB_MODE:-noop}" in
       fi
     fi
     ;;
+  badverdict)
+    # Release-ic writes an unparseable verdict (wrong keyword).
+    if printf '%s' "$PROMPT" | grep -q -- "--- STAGE: release-verify"; then
+      VLOG=$(jq -r '.release.verify_log // empty' "$COMPANY_DIR/sprints/current.json" 2>/dev/null)
+      if [ -n "$VLOG" ]; then
+        {
+          echo "VERDICT: MAYBE"
+          echo "RATIONALE: Stub wrote a malformed verdict."
+        } >> "$VLOG" 2>> "$AGENT_SPAWN_LOG"
+      fi
+    fi
+    ;;
 esac
 exit 0
 '''
@@ -263,9 +275,11 @@ def test_tester_loop_is_bounded_when_no_tdd_red_commit(tmp_path):
     spawns per pass, the tdd_red_attempts counter persists at strike 3
     (possible only once the ticket is claimed into in-progress), the
     engineer takes over, and the ticket bounces on the gate loop until the
-    loop-iteration safety valve defers it to backlog; the release bugfix
-    cycle's sprint-fill then re-promotes it, so the run ends with the
-    ticket back in sprint-current."""
+    loop-iteration safety valve defers it to backlog. release-verify then
+    finds no verdict at all - which is an EXPLICIT release failure (not a
+    silent NO-GO default): the stage moves to vp-review, the sprint is
+    archived with verdict_error, no retry is consumed, and the ticket
+    stays in backlog."""
     h = LifecycleHarness(tmp_path)
     ticket_file = (h.project / ".company" / "departments" / DEPT / "tickets"
                    / "sprint-current" / f"{TICKET}.json")
@@ -276,15 +290,25 @@ def test_tester_loop_is_bounded_when_no_tdd_red_commit(tmp_path):
 
     # No [TDD-RED] commit is ever produced (the tester is a stub), so the
     # 3-strike fallback must kick in. The ticket then bounces on the gate
-    # loop; the loop-iteration safety valve defers it to backlog, and the
-    # release bugfix cycle's sprint-fill re-promotes it - so after the run
-    # the ticket is back in sprint-current.
-    ticket = h.ticket_at("sprint-current")
+    # loop; the loop-iteration safety valve defers it to backlog. With no
+    # release verdict recorded, the run ends in the explicit-failure
+    # path: vp-review -> archive, ticket left in backlog.
+    ticket = h.ticket_at("backlog")
     assert ticket is not None, (
-        f"ticket not in sprint-current after the release bugfix cycle. "
-        f"backlog: {h.ticket_at('backlog')} "
+        f"ticket not in backlog after the safety-valve deferral. "
         f"in-progress: {h.ticket_at('in-progress')}\n"
         f"stderr: {r.stderr}"
+    )
+    assert "no parseable verdict" in r.stderr, (
+        "release-verify did not fail explicitly on the missing verdict"
+    )
+    assert h.sprint_archive.exists(), "sprint was not archived"
+    data = json.loads(h.sprint_archive.read_text())
+    assert data.get("release", {}).get("verdict_error"), (
+        "verdict_error was not recorded on the release"
+    )
+    assert data.get("release_retry_count", 0) == 0, (
+        "an unparseable verdict must not consume a release retry"
     )
     assert ticket.get("tdd_red_attempts") == 3, (
         "tdd_red_attempts never reached 3 - the counter writes went to a "
@@ -374,10 +398,12 @@ def test_verifier_crash_increments_bounce_count(tmp_path):
         "crash-bounced ticket abandoned in in-progress with a zero "
         "bounce_count - the increment was lost"
     )
-    ticket = h.ticket_at("sprint-current")
+    # Not re-promoted in this run (the no-verdict release now fails
+    # explicitly instead of running a bugfix cycle): the deferred ticket
+    # stays in backlog for the next sprint.
+    ticket = h.ticket_at("backlog")
     assert ticket is not None, (
-        f"ticket not in sprint-current after deferral + re-promotion\n"
-        f"stderr: {r.stderr}"
+        f"ticket not in backlog after deferral\nstderr: {r.stderr}"
     )
 
 
@@ -408,7 +434,7 @@ def test_verifier_bounce_cap_defers_and_resets_counter(tmp_path):
     )
     bodies = " ".join(
         (c.get("body") or "")
-        for c in (h.ticket_at("sprint-current") or {}).get("comments", [])
+        for c in (h.ticket_at("backlog") or {}).get("comments", [])
     )
     assert bodies.count("REJECTED by verification") >= 2, (
         "expected two verifier bounces before the cap deferral"
@@ -416,9 +442,9 @@ def test_verifier_bounce_cap_defers_and_resets_counter(tmp_path):
 
     # After the deferral + bugfix-cycle re-promotion the ticket must have
     # a FRESH bounce budget: no stale bounce_count left behind.
-    ticket = h.ticket_at("sprint-current")
+    ticket = h.ticket_at("backlog")
     assert ticket is not None, (
-        f"ticket not re-promoted to sprint-current\nstderr: {r.stderr}"
+        f"ticket not in backlog after the cap deferral\nstderr: {r.stderr}"
     )
     assert ticket.get("bounce_count", 0) == 0, (
         f"stale bounce_count={ticket.get('bounce_count')} survived the "
@@ -605,3 +631,31 @@ def test_skip_tdd_red_honoured_and_cleared_at_done(tmp_path):
         "skip_tdd_red survived the done move - it would skip the RED "
         "stage again on a future re-promotion"
     )
+
+def test_unparseable_release_verdict_fails_explicitly(tmp_path):
+    """Release goal B.5: a malformed release-ic verdict (wrong keyword)
+    must fail the release EXPLICITLY - no silent NO-GO default, no retry
+    consumed, verdict_error + publish_status=failed recorded, stage
+    vp-review so the operator sees it."""
+    h = LifecycleHarness(tmp_path, mode="badverdict")
+    r = h.run()
+    assert r.returncode == 0, r.stderr
+
+    assert "no parseable verdict" in r.stderr, (
+        f"malformed verdict was not surfaced\nstderr: {r.stderr[-500:]}"
+    )
+    assert "NO-GO" not in r.stderr.replace("no parseable", ""), (
+        "the malformed verdict was treated as a NO-GO decision"
+    )
+    assert h.sprint_archive.exists(), "sprint was not archived"
+    data = json.loads(h.sprint_archive.read_text())
+    assert data.get("release", {}).get("verdict_error"), (
+        "verdict_error missing from the archived release"
+    )
+    assert data.get("release", {}).get("publish_status") == "failed"
+    assert data.get("release", {}).get("verdict") is None
+    assert data.get("release_retry_count", 0) == 0
+    current = json.loads(
+        (h.project / ".company" / "sprints" / "current.json").read_text()
+    )
+    assert current.get("stage") == "ceo-plan"
