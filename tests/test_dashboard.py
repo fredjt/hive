@@ -405,3 +405,76 @@ class TestDashboardServerRobustness:
         assert 'data-ticket="' in content
         assert "runGates(b.dataset.dept,b.dataset.ticket)" in content
         assert "openGateOutput(b.dataset.dept,b.dataset.ticket)" in content
+
+
+class TestTicketBoardWritePath:
+    """C.10: ticket-board write path — fields typed into the create form
+    must actually be persisted, and write failures must surface to the
+    user instead of being swallowed."""
+
+    def _content(self):
+        return Path(f"{DASHBOARD_DIR}/server.js").read_text()
+
+    def test_create_endpoint_forwards_labels_and_ac(self):
+        """The create form collects labels + acceptance criteria; the POST
+        handler used to drop both, so every dashboard ticket was created
+        with labels==[] and acceptance_criteria==[] (silent data loss).
+        It must forward them to MCP ticket_create."""
+        content = self._content()
+        i = content.find("mcpCall('ticket_create'")
+        assert i >= 0, "POST /tickets no longer proxies to MCP ticket_create"
+        seg = content[i:i + 1000]
+        assert "labels:" in seg, "create endpoint does not forward labels"
+        assert "acceptance_criteria:" in seg, (
+            "create endpoint does not forward acceptance_criteria"
+        )
+
+    def test_ticket_modal_renders_labels(self):
+        """Labels are stored on the ticket — the detail modal must show
+        them, otherwise the field is write-only and invisible."""
+        content = self._content()
+        assert "df('Labels'" in content
+
+    def test_move_ticket_surfaces_failure(self):
+        """A rejected move (done hard-gate, role gate, MCP down) used to be
+        silent: the modal closed and the board re-rendered with the ticket
+        still in its old column and no explanation. The PATCH response must
+        be checked and the failure alerted."""
+        content = self._content()
+        i = content.find("async function moveTicket")
+        assert i >= 0
+        seg = content[i:i + 800]
+        assert "r=await api(" in seg, "moveTicket ignores the PATCH response"
+        assert "r&&r.error" in seg, "moveTicket does not check r.error"
+        assert "Move failed" in seg
+
+    def test_add_comment_surfaces_failure(self):
+        content = self._content()
+        i = content.find("async function addComment")
+        assert i >= 0
+        seg = content[i:i + 800]
+        assert "r=await api(" in seg, "addComment ignores the PATCH response"
+        assert "r&&r.error" in seg, "addComment does not check r.error"
+        assert "Comment failed" in seg
+
+    def test_show_ticket_handles_missing_ticket(self):
+        """404 {error:'Ticket not found'} used to render a modal full of
+        'undefined' fields; the response must be checked."""
+        content = self._content()
+        i = content.find("async function showTicket")
+        assert i >= 0
+        seg = content[i:i + 900]
+        assert "t&&t.error" in seg, "showTicket does not check the error response"
+
+    def test_show_board_surfaces_fetch_failure(self):
+        """A failed first fetch used to reject with no feedback, leaving the
+        view on the previous panel's DOM. showBoard must catch and render
+        the error."""
+        content = self._content()
+        i = content.find("async function showBoard")
+        assert i >= 0
+        seg = content[i:i + 1000]
+        assert "try {" in seg and "catch(e)" in seg, (
+            "showBoard does not catch the first-fetch failure"
+        )
+        assert "Failed to load tickets" in seg

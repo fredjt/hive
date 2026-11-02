@@ -18,6 +18,8 @@ def register(server: Server) -> None:
         created_by: str = "user",
         source: str = "manual",
         estimate: str | None = None,
+        labels: list[str] | None = None,
+        acceptance_criteria: list[str] | None = None,
         company_dir: str | None = None,
     ) -> dict:
         """Create a new ticket in the dept's backlog.
@@ -26,10 +28,16 @@ def register(server: Server) -> None:
           type:     feature | bug | improvement | chore | infrastructure | research
           priority: critical | high | medium | low
           estimate: trivial | small | medium | large | xlarge   (optional, default medium)
+          labels:   optional list of short tags (stored on the ticket)
+          acceptance_criteria: optional list of criteria, one string each
         """
         args = [dept, type, priority, title, description, created_by, source]
         if estimate:
             args.append(estimate)
+        if labels:
+            args += ["--labels", ",".join(labels)]
+        if acceptance_criteria:
+            args += ["--ac", "\n".join(acceptance_criteria)]
         return run("ticket-create", *args, company_dir=company_dir).to_dict()
 
     @server.tool()

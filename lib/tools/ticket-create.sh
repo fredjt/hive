@@ -1,5 +1,5 @@
 #!/bin/bash
-# Usage: ticket-create.sh <department> <type> <priority> <title> <description> <created_by> <source> [estimate]
+# Usage: ticket-create.sh <department> <type> <priority> <title> <description> <created_by> <source> [estimate] [--labels "a,b"] [--ac "criterion per line"]
 # Example: ticket-create.sh backend-api-services bug high "Fix rate limiting" "Rate limiter not configured" "VP-R&D" "rd-discovery" "medium"
 #
 # Creates a ticket in the department's backlog with all metadata filled in.
@@ -23,23 +23,34 @@ TITLE="$4"
 DESC="$5"
 CREATED_BY="$6"
 SOURCE="$7"
-ESTIMATE="${8:-medium}"
+# Estimate is the OPTIONAL 8th positional; if the 8th arg is a flag
+# (--labels / --ac / --external-id ...), there is no positional estimate.
+if [ "${8:-}" != "" ] && [ "${8:0:2}" != "--" ]; then
+  ESTIMATE="$8"
+else
+  ESTIMATE="medium"
+fi
 shift 7 2>/dev/null || true
 [ "${1:-}" != "" ] && [ "${1:0:2}" != "--" ] && shift   # consume the optional estimate positional
 
-# Optional --external-id <id>: links the ticket to a foreign id (e.g.
-# (empty for native hive tickets).
+# Optional flags: --external-id <id> links the ticket to a foreign id
+# (empty for native hive tickets); --labels "a,b" and --ac "line per
+# criterion" populate the ticket's labels / acceptance_criteria.
 EXTERNAL_ID=""
+LABELS=""
+AC=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --external-id) EXTERNAL_ID="$2"; shift 2 ;;
     --estimate)    ESTIMATE="$2"; shift 2 ;;
+    --labels)      LABELS="$2"; shift 2 ;;
+    --ac)          AC="$2"; shift 2 ;;
     *) shift ;;
   esac
 done
 
 if [ -z "$DEPT" ] || [ -z "$TYPE" ] || [ -z "$TITLE" ]; then
-  echo "Usage: ticket-create.sh <department> <type> <priority> <title> <description> <created_by> <source> [estimate] [--external-id <id>]" >&2
+  echo "Usage: ticket-create.sh <department> <type> <priority> <title> <description> <created_by> <source> [estimate] [--external-id <id>] [--labels \"a,b\"] [--ac \"per line\"]" >&2
   echo "Types: feature, bug, improvement, chore, infrastructure, research" >&2
   echo "Priorities: critical, high, medium, low" >&2
   echo "Sources: sprint-planning, rd-discovery, qa-finding, user-request, bug-report, improvement, verification" >&2
@@ -287,6 +298,8 @@ TC_PRIORITY="$PRIORITY" \
 TC_ESTIMATE="$ESTIMATE" \
 TC_TIMESTAMP="$TIMESTAMP" \
 TC_EXTERNAL_ID="$EXTERNAL_ID" \
+TC_LABELS="$LABELS" \
+TC_AC="$AC" \
 python3 - <<'PYEOF'
 import json, os
 ticket = {
@@ -305,8 +318,8 @@ ticket = {
     'estimate': os.environ['TC_ESTIMATE'],
     'dependencies': [],
     'blocked_by': [],
-    'labels': [],
-    'acceptance_criteria': [],
+    'labels': [x.strip() for x in os.environ.get('TC_LABELS', '').split(',') if x.strip()],
+    'acceptance_criteria': [x.strip() for x in os.environ.get('TC_AC', '').split('\n') if x.strip()],
     'comments': [],
     'resolution': {'status': None, 'resolved_at': None, 'resolved_by': None, 'git_branch': None, 'commit': None, 'notes': None},
     'created_at': os.environ['TC_TIMESTAMP'],

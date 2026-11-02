@@ -600,6 +600,44 @@ class TestTicketRouteExpeditedTool:
                 os.environ["PYTHONPATH"] = old_path
             else:
                 os.environ.pop("PYTHONPATH", None)
+
+    def test_ticket_create_stores_labels_and_acceptance_criteria(self, install_dir, tmp_company_dir):
+        """C.10: ticket_create must forward labels / acceptance_criteria to
+        ticket-create.sh (--labels/--ac) — the dashboard create form feeds
+        them from user input, and they used to be silently dropped at the
+        API boundary."""
+        sys_path = str(install_dir / "lib")
+        old_path = os.environ.get("PYTHONPATH", "")
+        if sys_path not in old_path:
+            os.environ["PYTHONPATH"] = sys_path + (":" + old_path if old_path else "")
+
+        try:
+            from hive_mcp.server import build_server
+            server = build_server()
+            fn = server._tool_manager._tools["ticket_create"].fn
+            (tmp_company_dir / "logs").mkdir(exist_ok=True)
+            result = fn(
+                dept="it",
+                type="feature",
+                priority="medium",
+                title="Labels + AC round trip",
+                description="desc",
+                labels=["auth", "api"],
+                acceptance_criteria=["one", "two"],
+                company_dir=str(tmp_company_dir),
+            )
+            assert result.get("ok") is True, result
+            files = list((tmp_company_dir / "departments" / "it" / "tickets" / "backlog").glob("*.json"))
+            assert len(files) == 1
+            data = json.loads(files[0].read_text())
+            assert data["labels"] == ["auth", "api"]
+            assert data["acceptance_criteria"] == ["one", "two"]
+        finally:
+            if old_path:
+                os.environ["PYTHONPATH"] = old_path
+            else:
+                os.environ.pop("PYTHONPATH", None)
+
 def _is_pure_shim(text):
     """A deprecation shim: a straight-line script that echoes a notice and
     exits non-zero — no conditionals, no arg reading, no real work. Any

@@ -131,6 +131,49 @@ class TestTicketCreateScript:
             f"counter next_id={counter['next_id']} out of sync with ticket {ticket_id}"
         )
 
+    def test_ticket_create_stores_labels_and_acceptance_criteria(self, tmp_company_dir):
+        """C.10: the dashboard create form collects labels + acceptance
+        criteria, but the write path silently dropped both — every ticket
+        came back with labels==[] and acceptance_criteria==[]. The flags
+        must round-trip into the ticket JSON, and the flag list must not
+        leak into the optional estimate positional (no estimate WARN)."""
+        env = {"COMPANY_DIR": str(tmp_company_dir)}
+        result = run_script(
+            f"{SCRIPTS_DIR}/ticket-create.sh",
+            ["it", "feature", "medium", "Labels AC", "desc",
+             "tester", "manual",
+             "--labels", "auth, api,urgent",
+             "--ac", "line one\nline two"],
+            env=env,
+        )
+        assert result.returncode == 0, result.stderr
+        assert "WARN" not in result.stderr, (
+            f"estimate saw a flag as positional: {result.stderr}"
+        )
+        files = list((tmp_company_dir / "departments" / "it" / "tickets" / "backlog").glob("*.json"))
+        assert len(files) == 1
+        data = json.loads(files[0].read_text())
+        assert data["labels"] == ["auth", "api", "urgent"]
+        assert data["acceptance_criteria"] == ["line one", "line two"]
+        assert data["estimate"] == "medium"
+
+    def test_ticket_create_flags_without_estimate_default_medium(self, tmp_company_dir):
+        """C.10: with flags and NO positional estimate, the estimate must
+        default to medium silently (the 8th positional is the first flag,
+        not an estimate)."""
+        env = {"COMPANY_DIR": str(tmp_company_dir)}
+        result = run_script(
+            f"{SCRIPTS_DIR}/ticket-create.sh",
+            ["it", "chore", "low", "No est", "d", "t", "manual", "--labels", "x"],
+            env=env,
+        )
+        assert result.returncode == 0, result.stderr
+        assert "WARN" not in result.stderr
+        files = list((tmp_company_dir / "departments" / "it" / "tickets" / "backlog").glob("*.json"))
+        data = json.loads(files[0].read_text())
+        assert data["estimate"] == "medium"
+        assert data["labels"] == ["x"]
+
 
 class TestTicketGetScript:
     """Test ticket-get.sh."""
