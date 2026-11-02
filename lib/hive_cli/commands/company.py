@@ -25,6 +25,71 @@ def _project_root(args) -> str:
     return str(Path(args.project_dir).resolve())
 
 
+def _pid_alive(pid) -> bool:
+    """Signal-0 liveness check (mirrors company-health.sh / server.js)."""
+    if not isinstance(pid, int) or pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+        return True
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+
+
+def _daemon_table(company_dir: str) -> list[dict]:
+    """Per-daemon liveness + supervisor bookkeeping from processes.json.
+
+    This is the machine-readable half of the restart policy in
+    company-health.sh: restart_count is incremented on every supervised
+    restart, and dead/dead_reason are written when a daemon exhausts
+    HIVE_MAX_RESTARTS (never restarted again within the session).
+    """
+    proc_file = Path(company_dir) / "processes.json"
+    if not proc_file.is_file():
+        return []
+    try:
+        data = json.loads(proc_file.read_text())
+    except json.JSONDecodeError:
+        return []
+    out = []
+    for p in data.get("processes", []):
+        pid = p.get("pid")
+        out.append({
+            "role": p.get("role", "unknown"),
+            "department": p.get("department", ""),
+            "pid": pid,
+            "alive": _pid_alive(pid),
+            "restart_count": p.get("restart_count", 0),
+            "dead": bool(p.get("dead")),
+            "dead_reason": p.get("dead_reason", ""),
+            "started_at": p.get("started_at", ""),
+        })
+    return out
+
+
+def _print_daemons(daemons: list[dict]) -> None:
+    """Human-readable daemon section for `hive status`."""
+    if not daemons:
+        return
+    print()
+    print("Daemons (supervisor-managed by company-health.sh):")
+    for d in daemons:
+        if d["alive"]:
+            sym = "✓"
+        elif d["dead"]:
+            sym = "✗"
+        else:
+            sym = "·"
+        line = f"  {sym} {d['role']:<24} pid={d['pid']}  restarts={d['restart_count']}"
+        if d["dead"]:
+            line += f"  DEAD — {d['dead_reason']} (fix: hive stop && hive start)"
+        elif not d["alive"]:
+            line += "  (not running — supervisor restarts dead daemons up to budget)"
+        print(line)
+
+
 def handle_start(args) -> int:
     project_root = _project_root(args)
     company_dir = Path(project_root) / ".company"
@@ -123,30 +188,36 @@ def handle_status(args) -> int:
     if args.dept:
         payload["dept"] = args.dept
     res = mcp_client.call_tool("status_get", payload)
+    # Daemon state comes straight from processes.json — independent of the
+    # MCP server, which matters when the MCP daemon is exactly what died.
+    daemons = _daemon_table(company_dir)
     if args.json:
+        if isinstance(res, dict):
+            res["daemons"] = daemons
         print(json.dumps(res, indent=2))
         return 0 if res.get("ok") else 1
 
     if not res.get("ok"):
         print(f"ERROR: {res.get('stderr') or res.get('error')}", file=sys.stderr)
+        _print_daemons(daemons)
         return 1
 
     data = res.get("data", {})
     if not data:
         print("No departments found.")
-        return 0
-
-    # Pretty print
-    for dept, st in sorted(data.items()):
-        if "error" in st:
-            print(f"  {dept}: {st['error']}")
-            continue
-        health = st.get("health", "?")
-        sym = {"good": "✓", "warning": "⚠", "critical": "✗"}.get(health, "·")
-        tickets = st.get("tickets", {})
-        bl, sp, ip = tickets.get("backlog", 0), tickets.get("sprint_current", 0), tickets.get("in_progress", 0)
-        ir, dn = tickets.get("in_review", 0), tickets.get("done", 0)
-        velocity = st.get("velocity_per_window", 0)
-        stuck = st.get("stuck_tickets", 0)
-        print(f"  {sym} {dept:<30} health={health:<8} bl={bl} sp={sp} ip={ip} ir={ir} done={dn} stuck={stuck} velocity={velocity}")
+    else:
+        # Pretty print
+        for dept, st in sorted(data.items()):
+            if "error" in st:
+                print(f"  {dept}: {st['error']}")
+                continue
+            health = st.get("health", "?")
+            sym = {"good": "✓", "warning": "⚠", "critical": "✗"}.get(health, "·")
+            tickets = st.get("tickets", {})
+            bl, sp, ip = tickets.get("backlog", 0), tickets.get("sprint_current", 0), tickets.get("in_progress", 0)
+            ir, dn = tickets.get("in_review", 0), tickets.get("done", 0)
+            velocity = st.get("velocity_per_window", 0)
+            stuck = st.get("stuck_tickets", 0)
+            print(f"  {sym} {dept:<30} health={health:<8} bl={bl} sp={sp} ip={ip} ir={ir} done={dn} stuck={stuck} velocity={velocity}")
+    _print_daemons(daemons)
     return 0

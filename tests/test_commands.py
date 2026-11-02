@@ -1,6 +1,7 @@
 """Tests for hive_cli.commands — command handlers."""
 import sys
 import os
+import json
 from pathlib import Path
 # Ensure lib/ is on the path when running from within hive/ directory
 _hive_lib = str(Path(__file__).resolve().parent.parent / "lib")
@@ -223,6 +224,125 @@ class TestConfigCommand:
         from hive_cli.commands.config import handle
         # The handle function should process 'get' action
         pass  # Hard to test without actual config file
+
+
+class TestStatusDaemonSection:
+    """B.3: `hive status` surfaces per-daemon liveness, restart_count, and
+    the supervisor's dead state (restart budget exhausted) read straight
+    from processes.json — independent of the MCP server, which matters
+    when the MCP daemon is exactly what died."""
+
+    DEAD_PID = 4000000  # pid_max is 4194304 — this one is not running
+
+    @staticmethod
+    def _args(project_dir, as_json=False):
+        import argparse
+        return argparse.Namespace(project_dir=str(project_dir), dept=None, json=as_json)
+
+    def _seed_daemons(self, tmp_path):
+        company = tmp_path / ".company"
+        company.mkdir(exist_ok=True)
+        (company / "processes.json").write_text(json.dumps({
+            "processes": [
+                {"pid": os.getpid(), "role": "hive-mcp",
+                 "department": "infrastructure", "interval": "continuous",
+                 "restart_count": 0},
+                {"pid": self.DEAD_PID, "role": "sprint-lifecycle",
+                 "department": "infrastructure", "interval": "continuous",
+                 "restart_count": 5, "dead": True,
+                 "dead_reason": "restart budget exhausted (5/5)"},
+            ],
+        }))
+
+    def test_status_json_includes_daemon_table(self, tmp_path, monkeypatch, capsys):
+        from hive_cli.commands import company
+        monkeypatch.setattr(
+            company.mcp_client, "call_tool",
+            lambda name, payload: {"ok": True,
+                                   "data": {"it": {"health": "good", "tickets": {}}}})
+        self._seed_daemons(tmp_path)
+        rc = company.handle_status(self._args(tmp_path, as_json=True))
+        out = json.loads(capsys.readouterr().out)
+        assert rc == 0
+        daemons = out["daemons"]
+        by_role = {d["role"]: d for d in daemons}
+        assert set(by_role) == {"hive-mcp", "sprint-lifecycle"}
+        assert by_role["hive-mcp"]["alive"] is True
+        assert by_role["hive-mcp"]["restart_count"] == 0
+        assert by_role["sprint-lifecycle"]["alive"] is False
+        assert by_role["sprint-lifecycle"]["dead"] is True
+        assert by_role["sprint-lifecycle"]["restart_count"] == 5
+
+    def test_status_text_marks_dead_daemon(self, tmp_path, monkeypatch, capsys):
+        from hive_cli.commands import company
+        monkeypatch.setattr(
+            company.mcp_client, "call_tool",
+            lambda name, payload: {"ok": True, "data": {}})
+        self._seed_daemons(tmp_path)
+        rc = company.handle_status(self._args(tmp_path))
+        out = capsys.readouterr().out
+        assert rc == 0
+        assert "sprint-lifecycle" in out
+        assert "DEAD — restart budget exhausted (5/5)" in out
+        assert "restarts=5" in out
+        assert "hive stop && hive start" in out
+
+    def test_status_shows_daemons_when_mcp_is_down(self, tmp_path, monkeypatch, capsys):
+        from hive_cli.commands import company
+        monkeypatch.setattr(
+            company.mcp_client, "call_tool",
+            lambda name, payload: {"ok": False, "error": "ConnectionError: server down"})
+        self._seed_daemons(tmp_path)
+        rc = company.handle_status(self._args(tmp_path))
+        captured = capsys.readouterr()
+        assert rc == 1
+        assert "server down" in captured.err
+        # The daemon section must still be printed — it is the operator's
+        # only view when the MCP daemon itself is dead.
+        assert "sprint-lifecycle" in captured.out
+
+
+class TestDoctorDaemonHealth:
+    """B.3: `hive doctor` reports supervisor-managed daemon health. A
+    daemon marked dead (restart budget exhausted) fails the run; a live
+    daemon passes; a project without .company is left alone."""
+
+    DEAD_PID = 4000000
+
+    def _run_doctor(self, tmp_path, monkeypatch, capsys):
+        import argparse
+        from hive_cli.commands import doctor
+        monkeypatch.chdir(tmp_path)
+        rc = doctor.handle(argparse.Namespace(project_dir="."))
+        return rc, capsys.readouterr().out
+
+    def test_doctor_fails_on_dead_daemon(self, tmp_path, monkeypatch, capsys):
+        company = tmp_path / ".company"
+        company.mkdir()
+        (company / "processes.json").write_text(json.dumps({"processes": [
+            {"pid": self.DEAD_PID, "role": "sprint-lifecycle", "restart_count": 5,
+             "dead": True, "dead_reason": "restart budget exhausted (5/5)"},
+        ]}))
+        rc, out = self._run_doctor(tmp_path, monkeypatch, capsys)
+        assert rc == 1, "a dead daemon must fail the doctor run"
+        assert "Daemon health" in out
+        assert "DEAD — restart budget exhausted (5/5)" in out
+        assert "hive stop && hive start" in out
+
+    def test_doctor_reports_live_daemon(self, tmp_path, monkeypatch, capsys):
+        company = tmp_path / ".company"
+        company.mkdir()
+        (company / "processes.json").write_text(json.dumps({"processes": [
+            {"pid": os.getpid(), "role": "hive-mcp", "restart_count": 1},
+        ]}))
+        rc, out = self._run_doctor(tmp_path, monkeypatch, capsys)
+        assert "Daemon health" in out
+        assert "daemon hive-mcp" in out
+        assert "DEAD" not in out.split("Daemon health")[-1]
+
+    def test_doctor_ignores_project_without_company(self, tmp_path, monkeypatch, capsys):
+        rc, out = self._run_doctor(tmp_path, monkeypatch, capsys)
+        assert "Daemon health" not in out
 
 
 

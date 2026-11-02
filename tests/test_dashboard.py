@@ -49,6 +49,16 @@ class TestDashboardServerJS:
         content = Path(f"{DASHBOARD_DIR}/server.js").read_text()
         assert "mcp" in content.lower() or "MCP" in content
 
+    def test_process_table_shows_restart_and_dead_budget(self):
+        """B.3: the Running Processes table must surface the supervisor's
+        restart_count and budget-dead state (company-health.sh writes both
+        into processes.json; the /api/processes endpoint already passes
+        them through, so the table is the last missing piece)."""
+        content = Path(f"{DASHBOARD_DIR}/server.js").read_text()
+        assert "Restarts" in content, "process table needs a Restarts column"
+        assert "restart_count" in content
+        assert "Dead (budget)" in content, "budget-dead state needs a distinct badge"
+
 
 class TestDashboardTemplates:
     """Test dashboard HTML templates if any exist."""

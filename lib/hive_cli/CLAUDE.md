@@ -14,7 +14,7 @@ lib/hive_cli/
   mcp_client.py      Async MCP client (HTTP + stdio transports) with sync wrapper
   __init__.py        (empty)
   commands/          One module per CLI subcommand
-    company.py       start / stop / status
+    company.py       start / stop / status (+ per-daemon liveness & supervisor dead-state from processes.json)
     ticket.py        create / get / list / move / claim / comment / approve
     init.py          workspace initialization (delegates to bash)
     dashboard.py     launches Node.js dashboard server
@@ -24,7 +24,7 @@ lib/hive_cli/
     backlog.py       prioritize
     inbox.py         file / process
     config.py        get / set / edit / show
-    doctor.py        installation diagnostics
+    doctor.py        installation diagnostics + .company/ daemon health (dead daemons fail the run)
     killall.py       emergency process kill
     llm.py           llm-tiny stats / tail
     gh.py            gh status / issues / mirror / pr open/merge/reject

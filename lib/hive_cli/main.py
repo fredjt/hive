@@ -184,6 +184,7 @@ def _add_config(sub) -> None:
 
 def _add_doctor(sub) -> None:
     p = sub.add_parser("doctor", help="Diagnose installation and dependencies")
+    p.add_argument("project_dir", nargs="?", default=".", help="Project root to check .company/ daemon health in (default: .)")
     p.set_defaults(_handler=doctor.handle)
 
 

@@ -28,8 +28,12 @@
 #   - Each daemon can be restarted at most MAX_RESTARTS times (default 5)
 #     within the current company session. This prevents restart loops from
 #     burning API calls or disk space.
-#   - After MAX_RESTARTS, the daemon is marked "dead" in the log and
-#     requires manual intervention (hive stop + hive start).
+#   - After MAX_RESTARTS, the daemon is marked dead IN processes.json
+#     (dead=true, dead_at, dead_reason) and in the log, and the supervisor
+#     never touches it again for the rest of the session. This is visible
+#     to operators via `hive status`, `hive doctor`, and the dashboard
+#     process table — recovery is manual (hive stop + hive start), which
+#     resets the counters for the new session.
 #   - The restart counter is stored in processes.json as per-process
 #     restart_count fields.
 
@@ -43,7 +47,8 @@ SKILL_DIR="${HIVE_ROOT:-$(cd "$SCRIPT_DIR/../.." && pwd)}"
 INSTALL_DIR="${HIVE_INSTALL_DIR:-$SKILL_DIR}"
 
 MAX_RESTARTS="${HIVE_MAX_RESTARTS:-5}"
-HEALTH_INTERVAL=30
+# Interval is env-overridable so tests can run the loop fast (HIVE_HEALTH_INTERVAL=1).
+HEALTH_INTERVAL="${HIVE_HEALTH_INTERVAL:-30}"
 
 [ -d "$COMPANY_DIR" ] || exit 0
 
@@ -83,6 +88,45 @@ try:
             break
 except Exception:
     pass
+PYEOF
+}
+
+# --- Mark a daemon permanently dead (restart budget exhausted) ---
+# Writes dead=true + dead_at + dead_reason into the process entry in
+# processes.json so `hive status`, `hive doctor`, and the dashboard can
+# surface it. Idempotent: re-marking an already-dead entry (or a missing
+# one) rewrites nothing.
+mark_daemon_dead() {
+  local pid="$1"
+  local reason="$2"
+  CH_PROCS_FILE="$COMPANY_DIR/processes.json" CH_PID="$pid" CH_REASON="$reason" python3 - <<'PYEOF' 2>/dev/null
+import json, os, sys
+from datetime import datetime, timezone
+
+procs_file = os.environ['CH_PROCS_FILE']
+try:
+    pid = int(os.environ['CH_PID'])
+    reason = os.environ['CH_REASON']
+    data = json.load(open(procs_file))
+except Exception:
+    sys.exit(0)
+
+now = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+changed = False
+for p in data.get('processes', []):
+    if p.get('pid') == pid and not p.get('dead'):
+        p['dead'] = True
+        p['dead_at'] = now
+        p['dead_reason'] = reason
+        changed = True
+        break
+
+if not changed:
+    sys.exit(0)
+
+tmp = procs_file + '.tmp.' + str(os.getpid())
+json.dump(data, open(tmp, 'w'), indent=2)
+os.replace(tmp, procs_file)
 PYEOF
 }
 
@@ -276,6 +320,7 @@ PYEOF
 
   if [ "$restart_count" -ge "$MAX_RESTARTS" ]; then
     echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] health: $role (pid=$pid) dead after $restart_count restarts — marking as dead, manual restart required" >> "$COMPANY_DIR/logs/health.log"
+    mark_daemon_dead "$pid" "restart budget exhausted ($restart_count/$MAX_RESTARTS)"
     return 1
   fi
 
@@ -434,6 +479,11 @@ except Exception:
     sys.exit(0)
 
 for p in data.get('processes', []):
+    if p.get('dead'):
+        # Restart budget exhausted — never restart again this session.
+        # Recovery is manual (hive stop + hive start); the dead state is
+        # visible in hive status / hive doctor / dashboard.
+        continue
     pid = p.get('pid')
     if pid is None:
         continue

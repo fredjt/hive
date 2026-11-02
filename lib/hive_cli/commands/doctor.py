@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import subprocess
 from pathlib import Path
 
 from hive_cli import mcp_client
+from hive_cli.commands.company import _pid_alive
 
 
 # HIVE_INSTALL_DIR — global install (venv, MCP/CLI/dashboard source).
@@ -95,6 +97,42 @@ def handle(args) -> int:
               "roster-rebuild.sh", "status-rebuild.sh", "company-start.sh"):
         p = HIVE_ROOT / "lib" / "tools" / s
         all_ok &= _check(f"  {s}", p.is_file())
+
+    # Company daemon health — only when we're in a project with a .company
+    # workspace. A daemon marked dead by the supervisor (restart budget
+    # exhausted) needs manual intervention, so it fails the doctor run.
+    project_dir = Path(getattr(args, "project_dir", ".")).resolve()
+    company_dir = project_dir / ".company"
+    procs_file = company_dir / "processes.json"
+    if company_dir.is_dir() or procs_file.is_file():
+        print("\nDaemon health (company supervisor):")
+        procs = []
+        if procs_file.is_file():
+            try:
+                procs = json.loads(procs_file.read_text()).get("processes", [])
+            except json.JSONDecodeError:
+                pass
+        if not procs:
+            print("  (no recorded daemons — company not started, or already stopped)")
+        for p in procs:
+            role = p.get("role", "unknown")
+            pid = p.get("pid")
+            restarts = p.get("restart_count", 0)
+            if p.get("dead"):
+                all_ok &= _check(
+                    f"  daemon {role}", False,
+                    f"DEAD — {p.get('dead_reason', 'restart budget exhausted')} "
+                    f"(pid={pid}, restarts={restarts}); run: hive stop && hive start")
+            elif _pid_alive(pid):
+                all_ok &= _check(f"  daemon {role}", True,
+                                 f"pid={pid} restarts={restarts}")
+            else:
+                # Not alive but not marked dead: either inside the supervisor's
+                # ~30s restart window, or the supervisor itself is gone.
+                # Warn, don't fail — a live supervisor will restart it.
+                print(f" \033[33m⚠\033[0m {('daemon ' + role):<35} "
+                      f"pid={pid} not running (restarts={restarts}) — supervisor "
+                      f"restarts dead daemons up to HIVE_MAX_RESTARTS per session")
 
     print()
     if all_ok:

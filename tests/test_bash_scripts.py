@@ -4,6 +4,7 @@ import re
 import json
 import os
 import subprocess
+import time
 from pathlib import Path
 import hashlib
 # Ensure lib/ is on the path when running from within hive/ directory
@@ -946,5 +947,88 @@ class TestBuildPackageReproducibility:
             capture_output=True, text=True, timeout=30, cwd=str(out),
         )
         assert result.returncode == 0, f"sidecar mismatch: {result.stdout}{result.stderr}"
+
+
+class TestCompanyHealthRestartPolicy:
+    """B.3: a failing daemon restarts up to HIVE_MAX_RESTARTS, is then
+    marked dead IN processes.json (dead=true, dead_reason), and is never
+    restarted again within the session. The dead state is what
+    `hive status` / `hive doctor` / the dashboard surface to the operator.
+    Runs the real supervisor loop against a scratch .company with a fast
+    (1s) health interval."""
+
+    @staticmethod
+    def _dead_pid():
+        """A pid that is definitely not running (pid > typical usage)."""
+        pid = 4000000
+        while pid > 1:
+            try:
+                os.kill(pid, 0)
+                pid -= 1
+            except ProcessLookupError:
+                return pid
+            except PermissionError:
+                pid -= 1
+        pytest.fail("no dead pid found")
+
+    def test_failing_daemon_restarts_to_budget_then_dead_never_again(self, tmp_path):
+        proj = tmp_path / "proj"
+        company = proj / ".company"
+        (company / "logs").mkdir(parents=True)
+        dead_pid = self._dead_pid()
+        # status-rebuild exits immediately without a departments/ dir, so
+        # every supervised restart is a fresh failure — a perfect stand-in
+        # for a daemon that cannot stay up.
+        (company / "processes.json").write_text(json.dumps({
+            "started_at": "2026-01-01T00:00:00Z",
+            "project_root": str(proj),
+            "processes": [
+                {"pid": dead_pid, "role": "status-rebuild",
+                 "department": "infrastructure", "interval": "continuous",
+                 "started_at": "2026-01-01T00:00:00Z", "restart_count": 0},
+            ],
+        }))
+        full_env = os.environ.copy()
+        full_env["HIVE_INSTALL_DIR"] = str(Path(__file__).resolve().parent.parent)
+        full_env["HIVE_MAX_RESTARTS"] = "2"
+        full_env["HIVE_HEALTH_INTERVAL"] = "1"
+        health = subprocess.Popen(
+            ["bash", f"{SCRIPTS_DIR}/company-health.sh", str(proj)],
+            env=full_env,
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+        try:
+            # 1) Budget exhausted: entry marked dead, restart_count == MAX.
+            deadline = time.time() + 30
+            entry = None
+            while time.time() < deadline:
+                data = json.loads((company / "processes.json").read_text())
+                entry = data["processes"][0]
+                if entry.get("dead"):
+                    break
+                time.sleep(0.25)
+            assert entry is not None and entry.get("dead") is True, \
+                f"daemon never marked dead: {entry}"
+            assert entry.get("restart_count") == 2, entry
+            assert "restart budget exhausted" in entry.get("dead_reason", ""), entry
+            assert entry.get("dead_at"), entry
+
+            # 2) Never restarted again: let several 1s cycles elapse and
+            # require the entry to be byte-stable (no restart, no rewrites).
+            snapshot = json.dumps(entry, sort_keys=True)
+            time.sleep(3)
+            data = json.loads((company / "processes.json").read_text())
+            entry2 = data["processes"][0]
+            assert json.dumps(entry2, sort_keys=True) == snapshot, \
+                f"dead daemon was touched again: {entry} -> {entry2}"
+            assert entry2.get("restart_count") == 2
+
+            # 3) Exactly ONE terminal log line — not one per health cycle.
+            log = (company / "logs" / "health.log").read_text()
+            assert log.count("dead after 2 restarts") == 1
+        finally:
+            health.kill()
+            health.wait(timeout=10)
 
 
