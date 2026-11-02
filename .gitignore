@@ -38,6 +38,14 @@ Thumbs.db
 # Local planning — never committed
 RELEASE_GOALS.md
 
+# Local tooling state — never committed (sandbox/dev runtime dirs;
+# these may hold credentials or caches and must stay out of the repo)
+.cache/
+.config/
+.docker/
+.local/
+.gitconfig
+
 # Hive scaffold (tweakable per-project; see negation entries below to track specific tweaks)
 .hive
 # To track a specific scaffold tweak, add a negation entry, e.g.:
