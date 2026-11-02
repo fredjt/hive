@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Hive is a standalone framework for orchestrating a swarm of Claude Code agents as a virtual company on a software project. It runs as its own application (not a Claude Code skill) using Claude Code as its LLM backend.
 
-**Version:** 0.5.15
+**Version:** 0.5.17
 
 ## Directory layout
 

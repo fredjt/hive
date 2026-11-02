@@ -1,5 +1,79 @@
 # Changelog
 
+## 0.5.17
+
+Third round: reproducible, verifiable release packages; one coherent
+PreToolUse-hook story; supervisor health visible to the operator; and the
+previously untested paths (MCP HTTP transport, release checks, docker
+isolation) under test. Eight goals, each shipped with regression tests.
+
+### Release engineering
+- The package build is actually reproducible now: tarball mtimes anchor
+  to a stable per-release value (SOURCE_DATE_EPOCH, else the last commit
+  that touched VERSION, else HEAD, else epoch 0) instead of the VERSION
+  file's own mtime — which changes on every release cut and therefore
+  changed every rebuild's bytes. The release workflow now verifies the
+  rebuilt tarball against the checksum committed with the tag instead of
+  checking a freshly generated pair against itself (and fails loudly
+  when the published sidecar can't be fetched). Regression test: two
+  builds of the same tree with different VERSION-file mtimes produce an
+  identical sha256.
+- The deprecated PreToolUse-hook story is reconciled: install.sh /
+  uninstall.sh register (and remove again) the block-company-writes and
+  block-admin-code-writes hooks in the agent's Claude settings.json,
+  restoring the .company/ write protection that 16 agent prompts already
+  described. Round-trip test against a scratch HOME (patched, then
+  restored; legacy narrow-matcher entries migrated to the canonical
+  one).
+
+### Daemon & state reliability
+- Supervisor daemon health is now surfaced: per-daemon liveness,
+  restart_count, and the DEAD state (restart budget exhausted) are
+  reported by `hive doctor`, which now fails on a dead daemon with the
+  exact recovery command (hive stop && hive start) instead of the
+  condition living only in logs/health.log. The restart policy is
+  tested: a failing daemon restarts up to budget, is marked dead at the
+  cap, and is never restarted again within the session.
+- Behavioral coverage for the CLI surface over recently changed
+  internals: a second `gates run` on a locked ticket skips while the
+  first holds the flock; `company stop` reaps the supervisor loop it
+  started; `restart` fails cleanly with a useful message when no
+  dashboard is recorded in processes.json (previously a bare error).
+
+### MCP transport & diagnostics
+- The streamable-http wire path is integration-tested — and was dead on
+  mcp >= 2.0 (packaging pins mcp>=1.0, so 2.x is in scope): server.py
+  set server.settings.host/port, fields mcp 2.x removed from Settings,
+  so every HTTP server start crashed; mcp_client.py unpacked
+  streamable_http_client's mcp-1.x 3-tuple yield (2.x yields two
+  values), so every HTTP tool call raised inside the TaskGroup. Both
+  are fixed compatibly across SDK generations. New tests boot the real
+  server on an ephemeral port, round-trip a write tool and a read tool
+  over the wire, list tools over the wire, and assert a down server
+  (with the stdio fallback broken) fails fast with a clean error dict.
+- `hive doctor` covers the release path: VERSION file presence, the
+  *resolved* publisher script (config override via
+  [release].publisher_script, or the built-in github.sh) existing and
+  executable — the exact requirement the publish stage enforces — gh
+  CLI for the default publisher, and VERSION-vs-packaging/pyproject.toml
+  metadata drift. The check immediately found live drift (VERSION 0.5.16
+  vs pyproject 0.5.15), fixed in this release.
+
+### Hygiene
+- .gitignore and .dockerignore now cover build/test litter (dist/,
+  .coverage, .pytest_cache/, unsloth-tmp/) so a normal build-and-test
+  cycle leaves git status clean. Tests pin the AGENTS.md / CLAUDE.md
+  structure blocks to the real tree, so stale layout entries (like a
+  top-level templates/ that lives at lib/templates/) fail CI.
+- The claude-in-a-box Docker image has a smoke test (skipif-guarded on
+  docker availability; a failed build fails, it does not skip): builds
+  the image, runs claude --help, and asserts the isolation model with
+  false-positive-proof unique markers — the worktree mount is visible
+  and writable, a secret in the host's .company/ and an unmounted host
+  file are unreachable inside the box, and /root/.claude is a fresh
+  tmpfs seeded from the ro host mount (stale host cache not copied). A
+  trivial live prompt runs when ANTHROPIC_API_KEY is set.
+
 ## 0.5.16
 
 Second bugfix round. Three lifecycle correctness fixes, each shipped with a
