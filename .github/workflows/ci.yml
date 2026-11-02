@@ -43,14 +43,15 @@ jobs:
           export PATH="$HOME/.cargo/bin:$PATH"
           # Core runtime deps (needed for imports in hive_cli/hive_mcp)
           pip install mcp fastapi 'uvicorn[standard]' httpx tomli
-          # Test deps
-          pip install pytest anyio
+          # Test deps (xdist: the suite is xdist-safe, -n auto parallelizes
+          # across the runner's cores)
+          pip install pytest anyio pytest-xdist
           # Verify installation
           python -c "import mcp; import fastapi; import httpx; print('All dependencies installed successfully')"
 
       - name: Run test suite
         run: |
-          PYTHONPATH=lib pytest tests/ -v --tb=short
+          PYTHONPATH=lib pytest tests/ -n auto -v --tb=short
 
   # ──────────────────────────────────────────────
   # 2. Bash syntax validation
