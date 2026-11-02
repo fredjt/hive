@@ -154,9 +154,9 @@ record_gate() {
 bounce_ticket() {
   local ticket_id="$1" reason="$2"
   log "  BOUNCE $ticket_id: $reason"
-  bash "$SCRIPT_DIR/ticket-comment.sh" "$DEPT" "$ticket_id" "verification-gates" \
-    "GATE FAILURE: $reason. Returning to in-progress for fix." 2>/dev/null || true
-
+  # One comment per bounce: the move comment IS the rejection comment.
+  # (A separate pre-move ticket-comment.sh used to write a second
+  # near-identical comment on every gate bounce.)
   HIVE_SCRIPTED_MOVE=1 HIVE_ROLE=Verification-IC \
     bash "$SCRIPT_DIR/ticket-move.sh" "$DEPT" "$ticket_id" in-progress \
       "Gate failure: $reason" "verification-gates" 2>/dev/null || true

@@ -348,7 +348,9 @@ def test_tester_loop_is_bounded_when_no_tdd_red_commit(tmp_path):
     assert "Skipping the tester from now on" in bodies, (
         "no 3-strike tester-exhausted comment on the ticket"
     )
-    assert "GATE FAILURE" in bodies, "no GATE FAILURE comments on the ticket"
+    assert "gate failure" in bodies.lower(), (
+        "no gate-failure comments on the ticket"
+    )
     assert "no commits" in bodies.lower(), (
         "the gate bounce did not cite the missing commits - it bounced on "
         "the skip_tdd_red zombie gate instead of evaluating the branch"

@@ -50,12 +50,10 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 COMPANY_DIR="${COMPANY_DIR:-.company}"
 export COMPANY_DIR
 
-# 1. Add the detailed rejection comment to the ticket
-if ! bash "$SCRIPT_DIR/ticket-comment.sh" "$DEPT" "$TICKET_ID" "$AUTHOR" "REJECTED by verification:
-$RATIONALE"; then
-  echo "ERROR: ticket-comment.sh failed; aborting bounce" >&2
-  exit 1
-fi
+# 1. The rejection comment is written by the ticket-move call below (the
+# move comment IS the canonical rejection comment - one comment per
+# bounce, full rationale, no duplicate). A separate pre-move
+# ticket-comment.sh used to write a second near-identical comment.
 
 # 2. If --skip-tdd-red, set the flag on the ticket file BEFORE moving it,
 # so sprint-lifecycle bounces it to tdd-red on the next loop.
@@ -86,11 +84,13 @@ for st in in-review in-progress sprint-current; do
 done
 
 # 3. Move back to in-progress as a scripted move (in-review→in-progress
-# requires HIVE_SCRIPTED_MOVE=1 or HIVE_ROLE=Verification-IC).
-SHORT_SUMMARY=$(echo "$RATIONALE" | head -c 200 | tr '\n' ' ')
+# requires HIVE_SCRIPTED_MOVE=1 or HIVE_ROLE=Verification-IC). The move
+# comment carries the FULL rationale with the 'REJECTED by verification:'
+# prefix that sprint-lifecycle.sh's rework/conflict prompts select on -
+# do not truncate or reword it.
 if ! HIVE_SCRIPTED_MOVE=1 HIVE_ROLE=Verification-IC \
      bash "$SCRIPT_DIR/ticket-move.sh" "$DEPT" "$TICKET_ID" in-progress \
-       "Bounced by verification: $SHORT_SUMMARY" "$AUTHOR"; then
+       "REJECTED by verification: $RATIONALE" "$AUTHOR"; then
   echo "ERROR: ticket-move.sh failed; ticket may be in inconsistent state" >&2
   exit 1
 fi

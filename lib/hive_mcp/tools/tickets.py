@@ -209,9 +209,10 @@ def register(server: Server) -> None:
     ) -> dict:
         """Verification IC's BOUNCE path — return the ticket to the engineer
         for another loop iteration. Atomically:
-          1. Writes the rationale as a comment on the ticket
-          2. Moves the ticket from in-review back to in-progress
-          3. Posts a "bounced" comment on the linked GitHub issue (if any)
+          1. Moves the ticket from in-review back to in-progress, writing
+             the FULL rationale as the 'REJECTED by verification' comment
+             (one comment per bounce — the move comment is canonical)
+          2. Posts a "bounced" comment on the linked GitHub issue (if any)
 
         Use bounce when ONE more loop can plausibly fix the ticket — the
         implementation has a bug, the test misses coverage, the diff is
