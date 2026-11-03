@@ -95,7 +95,14 @@ echo "  Symlinked $BIN_LINK → $INSTALL_DIR/bin/hive"
 #     at this file for [llm]; a stranger must not have to invent a file
 #     that no documentation shows. Never overwrite an existing file — it
 #     may hold operator edits.
-USER_CONFIG="${HIVE_USER_CONFIG:-$HOME/.config/hive/config.toml}"
+# A2: the location is steered by HIVE_CONFIG — the one spelling doctor
+# and release-publish-runner.sh already read (0.7.1 introduced the second
+# spelling, HIVE_USER_CONFIG, for this script; it keeps working as a
+# deprecated alias for one release and loses when both are set).
+USER_CONFIG="${HIVE_CONFIG:-${HIVE_USER_CONFIG:-$HOME/.config/hive/config.toml}}"
+if [ -z "${HIVE_CONFIG:-}" ] && [ -n "${HIVE_USER_CONFIG:-}" ]; then
+  echo "  NOTE: HIVE_USER_CONFIG is deprecated — use HIVE_CONFIG (same file)."
+fi
 if [ -f "$USER_CONFIG" ]; then
   echo "  User config: $USER_CONFIG (kept as-is)"
 else

@@ -408,28 +408,33 @@ class TestInstallScaffoldsUserConfig:
     recommending the retired ANTHROPIC_*/LLM_TINY_* variable names."""
 
     @staticmethod
-    def _run_install(home: Path, tmp_path: Path) -> subprocess.CompletedProcess:
+    def _run_install(home: Path, tmp_path: Path,
+                     extra_env: dict | None = None) -> subprocess.CompletedProcess:
         repo = _repo_root()
         # Stage a minimal tree — the same surface the release tarball
         # carries — so the test is fast and deterministic, and local
         # scratch state (venv/, dist/, scratch projects) in a dev checkout
         # can't drag along a 100MB+ copy or a stale venv.
         tree = tmp_path / "hive-src"
-        tree.mkdir()
+        tree.mkdir(exist_ok=True)
         for d in ("bin", "lib", "etc", "packaging", "share"):
             dst = tree / d
-            subprocess.run(["cp", "-r", str(repo / d), str(dst)], check=True)
+            if not dst.exists():
+                subprocess.run(["cp", "-r", str(repo / d), str(dst)], check=True)
             for junk in dst.rglob("__pycache__"):
                 subprocess.run(["rm", "-rf", str(junk)])
         (tree / "VERSION").write_text(
             (repo / "VERSION").read_text() if (repo / "VERSION").is_file()
             else "0.0.0-dev\n")
+        env = {**os.environ, "HOME": str(home)}
+        if extra_env:
+            env.update(extra_env)
         return subprocess.run(
             ["bash", str(tree / "packaging" / "install.sh"),
              "--bin-link", str(home / ".local" / "bin" / "hive")],
             capture_output=True, text=True, timeout=300,
             cwd=str(tree),
-            env={**os.environ, "HOME": str(home)},
+            env=env,
         )
 
     def test_install_creates_user_config_from_template(self, tmp_path):
@@ -460,6 +465,50 @@ class TestInstallScaffoldsUserConfig:
         assert r.returncode == 0, r.stdout + "\n" + r.stderr
         assert user.read_text() == edited, \
             "an existing user config holds operator edits — install must keep it"
+
+    def test_install_honors_hive_config_env(self, tmp_path):
+        """A2: install.sh reads HIVE_CONFIG — the spelling doctor and
+        release-publish-runner.sh already use."""
+        home = tmp_path / "home"
+        home.mkdir()
+        target = tmp_path / "scratch" / "c.toml"
+        target.parent.mkdir()
+        r = self._run_install(home, tmp_path,
+                              extra_env={"HIVE_CONFIG": str(target)})
+        assert r.returncode == 0, r.stdout + "\n" + r.stderr
+        assert target.is_file(), \
+            "HIVE_CONFIG must steer where the installer scaffolds the config"
+        assert not (home / ".config" / "hive" / "config.toml").exists(), \
+            "the default location must not also be scaffolded"
+
+    def test_install_hive_user_config_alias_still_works(self, tmp_path):
+        """A2: HIVE_USER_CONFIG keeps working as a deprecated alias —
+        with a one-time note pointing at the new spelling."""
+        home = tmp_path / "home"
+        home.mkdir()
+        target = tmp_path / "scratch" / "alias.toml"
+        target.parent.mkdir()
+        r = self._run_install(home, tmp_path,
+                              extra_env={"HIVE_USER_CONFIG": str(target)})
+        assert r.returncode == 0, r.stdout + "\n" + r.stderr
+        assert target.is_file(), \
+            "the HIVE_USER_CONFIG alias must keep working for one release"
+        assert "HIVE_USER_CONFIG" in r.stdout and "deprecated" in r.stdout, \
+            "the alias use must print a deprecation note naming the new var"
+
+    def test_install_hive_config_wins_over_alias(self, tmp_path):
+        home = tmp_path / "home"
+        home.mkdir()
+        primary = tmp_path / "scratch" / "primary.toml"
+        alias = tmp_path / "scratch" / "alias.toml"
+        primary.parent.mkdir()
+        r = self._run_install(home, tmp_path,
+                              extra_env={"HIVE_CONFIG": str(primary),
+                                         "HIVE_USER_CONFIG": str(alias)})
+        assert r.returncode == 0, r.stdout + "\n" + r.stderr
+        assert primary.is_file()
+        assert not alias.exists(), \
+            "when both are set, HIVE_CONFIG (the canonical spelling) must win"
 
     def test_env_hint_drops_retired_llm_variables(self):
         install = (_repo_root() / "packaging" / "install.sh").read_text()
