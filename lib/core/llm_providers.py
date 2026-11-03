@@ -220,6 +220,7 @@ class Resolved:
     provider: str = ""
     api_style: str = "openai"
     model: str = ""
+    verification_model: str = ""  # C.3: distinct endpoint for stage 5 (verify)
     base_url: str = ""
     api_key: str = ""
     needs_key: bool = False
@@ -259,12 +260,16 @@ def resolve(env: dict | None = None, hive_root: str | Path | None = None) -> Res
 
     base_url = pick("HIVE_API_BASE", "base_url")
     model = pick("HIVE_MODEL", "model")
+    # C.3: verification fast path — env > config; empty means "use the
+    # main model" (agent-spawn.sh injects --model only when set).
+    verification_model = pick("HIVE_VERIFICATION_MODEL", "verification_model")
 
     provider = (env.get("HIVE_PROVIDER") or "").strip() or (config.get("provider") or "").strip()
     if provider:
         if provider not in PROVIDERS:
             return Resolved(
-                provider=provider, api_style="openai", model=model, base_url=base_url,
+                provider=provider, api_style="openai", model=model,
+                verification_model=verification_model, base_url=base_url,
                 needs_key=True,
                 warnings=[f"Unknown provider '{provider}' — not in registry; "
                           "using generic OpenAI-compatible handling"],
@@ -295,7 +300,8 @@ def resolve(env: dict | None = None, hive_root: str | Path | None = None) -> Res
                     "[llm].base_url or HIVE_API_BASE)")
     else:
         if not base_url:
-            return Resolved(model=model, warnings=["No LLM provider configured"])
+            return Resolved(model=model, verification_model=verification_model,
+                            warnings=["No LLM provider configured"])
         provider = detect_provider(base_url)
         if provider in PROVIDERS:
             meta = PROVIDERS[provider]
@@ -329,7 +335,8 @@ def resolve(env: dict | None = None, hive_root: str | Path | None = None) -> Res
 
     needs_key = bool(meta.get("needs_key", True))
     return Resolved(
-        provider=provider, api_style=api_style, model=model, base_url=base_url,
+        provider=provider, api_style=api_style, model=model,
+        verification_model=verification_model, base_url=base_url,
         api_key=api_key, needs_key=needs_key, key_from_env=key_from_env,
         key_in_config=key_in_config, warnings=warnings,
     )

@@ -582,3 +582,54 @@ class TestDoctorDeep:
         finally:
             server.shutdown()
             server.server_close()
+
+
+class TestVerificationModel:
+    """C.3: verification_model fast path — env > config; empty = main
+    model; the harness --model flag (B.1) overrides everything."""
+
+    def test_resolve_returns_distinct_verification_model(self, tmp_path):
+        _write_config(tmp_path, (
+            '[llm]\nprovider = "openai"\nmodel = "main-model"\n'
+            'verification_model = "verify-model"\n'))
+        r = _import_resolve()(env={"HOME": str(tmp_path),
+                                   "OPENAI_API_KEY": "k"},
+                              hive_root=str(tmp_path))
+        assert r.model == "main-model"
+        assert r.verification_model == "verify-model"
+        assert r.verification_model != r.model
+
+    def test_env_wins_for_verification_model(self, tmp_path):
+        _write_config(tmp_path, (
+            '[llm]\nmodel = "m"\nverification_model = "config-vm"\n'))
+        r = _import_resolve()(env={"HOME": str(tmp_path),
+                                   "HIVE_VERIFICATION_MODEL": "env-vm"})
+        assert r.verification_model == "env-vm"
+
+    def test_verification_defaults_to_empty(self, tmp_path):
+        r = _import_resolve()(env={"HOME": str(tmp_path)})
+        assert r.verification_model == ""
+
+    def test_harness_model_flag_overrides(self, tmp_path):
+        canned = b'{"model": "x", "choices": [{"message": {"content": "ok"}}]}'
+        base_url, server = _start_stub(canned=canned)
+        try:
+            env = {
+                "PATH": "/usr/bin:/bin",
+                "HOME": str(tmp_path / "home"),
+                "HIVE_PROVIDER": "openai",
+                "HIVE_API_BASE": base_url,
+                "HIVE_MODEL": "main-model",
+                "HIVE_API_KEY": "k",
+            }
+            r = subprocess.run(
+                [sys.executable, str(REPO / "lib" / "core" / "agent-harness.py"),
+                 "--no-mcp", "--model", "override-model", "--", "hi"],
+                capture_output=True, text=True, timeout=60, env=env)
+            assert r.returncode == 0, r.stderr
+            assert server.last_request is not None
+            body = json.loads(server.last_request["body"])
+            assert body["model"] == "override-model"
+        finally:
+            server.shutdown()
+            server.server_close()
