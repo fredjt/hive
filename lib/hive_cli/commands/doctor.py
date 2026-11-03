@@ -6,6 +6,7 @@ import json
 import os
 import re
 import shutil
+import sys
 import subprocess
 from pathlib import Path
 
@@ -175,6 +176,37 @@ def handle(args) -> int:
     harness_path = HIVE_ROOT / "lib" / "core" / "agent-harness.py"
     all_ok &= _check("agent harness", harness_path.is_file(),
                      f"{harness_path} (Python-based, no CLI required)")
+
+    # LLM provider resolution (reports the resolved provider/model and the
+    # key's source — never the key value itself).
+    print("\nLLM provider:")
+    try:
+        core_dir = str(HIVE_ROOT / "lib" / "core")
+        if core_dir not in sys.path:
+            sys.path.insert(0, core_dir)
+        from llm_providers import resolve as _resolve_llm
+        llm_res = _resolve_llm(hive_root=HIVE_ROOT)
+        if llm_res.is_configured:
+            if llm_res.key_from_env:
+                key_src = "env " + llm_res.key_from_env
+            elif llm_res.key_in_config:
+                key_src = "config [llm].api_key"
+            else:
+                key_src = "none"
+            all_ok &= _check("LLM provider configured", True,
+                             "provider={0} model={1} base={2} key={3}".format(
+                                 llm_res.provider or "?", llm_res.model or "(default)",
+                                 llm_res.base_url or "(default)", key_src))
+        else:
+            all_ok &= _check("LLM provider configured", False,
+                             "unconfigured — set HIVE_PROVIDER/HIVE_MODEL/"
+                             "HIVE_API_BASE/HIVE_API_KEY or the [llm] section "
+                             "of config.toml")
+        for w in llm_res.warnings:
+            print("  warning: " + w)
+    except Exception as e:
+        all_ok &= _check("LLM provider resolution", False, str(e))
+
     all_ok &= _check("git", shutil.which("git") is not None)
     all_ok &= _check("jq", shutil.which("jq") is not None)
     all_ok &= _check("node (for dashboard)", shutil.which("node") is not None)

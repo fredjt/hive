@@ -281,7 +281,7 @@ class TestConfigDefaults:
         """A.2: pin the config surface so a section sneaks back in loudly."""
         config = self._load()
         expected = {
-            "paths", "mcp", "dashboard", "logs", "github", "release",
+            "paths", "llm", "mcp", "dashboard", "logs", "github", "release",
             "sprint", "worktree", "health", "tdd",
         }
         missing = expected - set(config)

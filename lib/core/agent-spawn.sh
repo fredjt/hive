@@ -102,10 +102,23 @@ if [ -z "$PROMPT" ]; then
   exit 1
 fi
 
-# Build model override for verification agents
+# Build model override for verification agents.
+# Precedence: HIVE_VERIFICATION_MODEL env > [llm].verification_model config.
 MODEL_ARG=""
+if echo "${HIVE_ROLE:-}" | grep -qi "verification" && [ -z "${HIVE_VERIFICATION_MODEL:-}" ]; then
+  # Read [llm].verification_model: user config first, then defaults
+  # (same precedence as the rest of the config: env > user > defaults).
+  for _cfg in "$HOME/.config/hive/config.toml" "$HIVE_ROOT/etc/config.defaults.toml"; do
+    [ -f "$_cfg" ] || continue
+    _vm=$(awk '/^[[:space:]]*\[llm\]/{s=1;next} /^[[:space:]]*\[/{s=0} s && /^[[:space:]]*verification_model[[:space:]]*=/{sub(/^[[:space:]]*verification_model[[:space:]]*=[[:space:]]*/,""); gsub(/["'"'"']/,""); print; exit}' "$_cfg" 2>/dev/null) || _vm=""
+    if [ -n "$_vm" ]; then
+      HIVE_VERIFICATION_MODEL="$_vm"
+      break
+    fi
+  done
+fi
 if echo "${HIVE_ROLE:-}" | grep -qi "verification" && [ -n "${HIVE_VERIFICATION_MODEL:-}" ]; then
-  MODEL_ARG="--model" "$HIVE_VERIFICATION_MODEL"
+  MODEL_ARG="--model ${HIVE_VERIFICATION_MODEL}"
 fi
 
 # Log the spawn

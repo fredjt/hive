@@ -857,6 +857,80 @@ class TestCoreScripts:
         assert Path(f"{CORE_DIR}/agent-spawn.sh").exists()
 
 
+class TestAgentSpawnVerificationModel:
+    """B.1: verification agents pull their model from [llm].verification_model.
+
+    Precedence: HIVE_VERIFICATION_MODEL env > user config > install
+    defaults. The harness is stubbed (it reports its argv) so the test
+    exercises the real agent-spawn.sh logic without an LLM call.
+    """
+
+    def _scratch(self, tmp_path):
+        root = tmp_path / "hive-root"
+        (root / "lib" / "core").mkdir(parents=True)
+        (root / "etc").mkdir()
+        (root / "lib" / "core" / "agent-harness.py").write_text(
+            "import sys, json\n"
+            "print(json.dumps({'argv': sys.argv[1:]}))\n")
+        (root / "etc" / "config.defaults.toml").write_text(
+            '[llm]\nverification_model = "default-vm"\n')
+        home = tmp_path / "home"
+        (home / ".config" / "hive").mkdir(parents=True)
+        return root, home
+
+    def _run_spawn(self, tmp_path, root, home, role, extra=None):
+        env = os.environ.copy()
+        env.pop("HIVE_VERIFICATION_MODEL", None)
+        env.update({
+            "HIVE_ROOT": str(root),
+            "HOME": str(home),
+            "HIVE_ROLE": role,
+            "COMPANY_DIR": str(tmp_path / "company"),
+            # Do not source the real operator env file.
+            "HIVE_ENV_FILE": str(tmp_path / "no-such-env.sh"),
+        })
+        if extra:
+            env.update(extra)
+        r = subprocess.run(
+            ["bash", f"{CORE_DIR}/agent-spawn.sh", "--", "test prompt"],
+            capture_output=True, text=True, timeout=30, env=env)
+        assert r.returncode == 0, f"{r.stdout!r} {r.stderr!r}"
+        for line in r.stdout.splitlines():
+            if line.startswith("{"):
+                return json.loads(line)
+        raise AssertionError(f"no harness argv line in output: {r.stdout!r}")
+
+    @staticmethod
+    def _model_from(argv):
+        return argv[argv.index("--model") + 1] if "--model" in argv else None
+
+    def test_verification_model_from_install_defaults(self, tmp_path):
+        root, home = self._scratch(tmp_path)
+        argv = self._run_spawn(tmp_path, root, home, "verification-IC")
+        assert self._model_from(argv["argv"]) == "default-vm"
+
+    def test_user_config_beats_install_defaults(self, tmp_path):
+        root, home = self._scratch(tmp_path)
+        (home / ".config" / "hive" / "config.toml").write_text(
+            '[llm]\nverification_model = "user-vm"\n')
+        argv = self._run_spawn(tmp_path, root, home, "verification-IC")
+        assert self._model_from(argv["argv"]) == "user-vm"
+
+    def test_env_var_beats_user_config(self, tmp_path):
+        root, home = self._scratch(tmp_path)
+        (home / ".config" / "hive" / "config.toml").write_text(
+            '[llm]\nverification_model = "user-vm"\n')
+        argv = self._run_spawn(
+            tmp_path, root, home, "verification-IC",
+            extra={"HIVE_VERIFICATION_MODEL": "env-vm"})
+        assert self._model_from(argv["argv"]) == "env-vm"
+
+    def test_non_verification_role_gets_no_model_override(self, tmp_path):
+        root, home = self._scratch(tmp_path)
+        argv = self._run_spawn(tmp_path, root, home, "IC")
+        assert self._model_from(argv["argv"]) is None
+
+
 class TestAllScriptsExist:
     """Ensure every .sh file in lib/tools/ is executable and parseable."""
 

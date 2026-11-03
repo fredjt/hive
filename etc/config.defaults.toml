@@ -4,6 +4,30 @@
 # Root of the hive install. Auto-detected; only override if running from a non-standard location.
 hive_root = "~/.local/share/hive"
 
+[llm]
+# LLM provider selection for the agent harness (lib/core/agent-harness.py).
+# Selection is explicit: `provider` names the API family, and model /
+# base_url / api_key override that family's defaults.
+# Precedence per value: HIVE_* env vars (HIVE_PROVIDER, HIVE_MODEL,
+# HIVE_API_BASE, HIVE_API_KEY) > this config > provider defaults.
+#
+# Known providers: openai, anthropic, groq, openrouter, ollama, google,
+# unsloth (unsloth: Anthropic-style or OpenAI-style endpoint + API key).
+provider         = ""
+model            = ""
+base_url         = ""
+api_key          = ""
+api_style        = ""   # unsloth only: "openai" or "anthropic"
+#
+# Model used for verification agents (stage 5: verify). When set (here or
+# via the HIVE_VERIFICATION_MODEL env var), verification spawns run with
+# that model. Verification is the most cognitively demanding stage —
+# reviewing diffs, checking logic, assessing correctness — and a weak
+# model produces high failure rates, so point it at a stronger model than
+# the default used by all other agents (CEO, VPs, ICs).
+verification_model = ""
+
+
 [mcp]
 # HTTP transport for the dashboard, the CLI, and parallel-spawned agents.
 host = "127.0.0.1"

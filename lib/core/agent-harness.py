@@ -34,9 +34,14 @@ Environment variables:
   MCP_URL                 MCP server URL (default: http://127.0.0.1:7891/mcp)
   MAX_TURNS               max conversation turns (default: 50)
   HIVE_ALLOW_SHELL        if set to "false", disable shell commands
-  HIVE_MODEL              model name for the LLM API (optional, for remote APIs)
-  HIVE_API_BASE           base URL for the LLM API (optional)
-  HIVE_API_KEY            API key for the LLM API (optional)
+  HIVE_PROVIDER           explicit provider name (openai, anthropic, groq,
+                          openrouter, ollama, google, unsloth)
+  HIVE_MODEL              model name (optional; [llm].model if unset)
+  HIVE_API_BASE           base URL (optional; provider default if unset)
+  HIVE_API_KEY            API key (optional; [llm].api_key or per-provider
+                          env, e.g. OPENAI_API_KEY, if unset)
+  # LLM config can also live in the [llm] section of config.toml
+  # (etc/config.defaults.toml + ~/.config/hive/config.toml); env wins.
 """
 
 from __future__ import annotations
@@ -828,6 +833,24 @@ def main() -> int:
     parser.add_argument("--temperature", type=float, default=None, help="Sampling temperature 0.0-2.0")
     parser.add_argument("--max-tokens", type=int, default=None, help="Max response tokens")
     args = parser.parse_args()
+
+    # Resolve LLM provider config: CLI args > HIVE_* env > [llm] config
+    # > provider defaults (lib/core/llm_providers.py). Warnings go to
+    # stderr; the result JSON on stdout is untouched.
+    try:
+        from llm_providers import resolve as _resolve_llm
+    except ImportError:
+        _resolve_llm = None
+    if _resolve_llm is not None:
+        resolved = _resolve_llm()
+        for _w in resolved.warnings:
+            print(f"[agent-harness] warning: {_w}", file=sys.stderr)
+        if not args.api_base:
+            args.api_base = resolved.base_url or None
+        if not args.model:
+            args.model = resolved.model or None
+        if not args.api_key:
+            args.api_key = resolved.api_key or None
 
     # Read prompt from arg or stdin
     if args.prompt:
