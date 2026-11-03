@@ -117,7 +117,9 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          # 24: Node 20 is EOL — runners force-run old pin values on
+          # Node 24 and annotate the run with a deprecation warning.
+          node-version: '24'
 
       - name: Check dashboard server.js syntax
         run: |

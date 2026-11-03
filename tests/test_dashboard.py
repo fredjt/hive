@@ -467,6 +467,24 @@ class TestCISecretScan:
             "changes the guard)"
 
 
+class TestCINodeVersion:
+    """C.2: the node-check job must not pin a deprecated Node major."""
+
+    WORKFLOW = Path(".github/workflows/ci.yml")
+
+    def test_node_check_pins_a_current_node(self):
+        text = self.WORKFLOW.read_text()
+        pinned = re.findall(r"node-version:\s*'?([0-9]+)", text)
+        assert pinned, "node-check job does not pin a node version"
+        for pin in pinned:
+            major = int(pin)
+            # Node 20 went EOL April 2026; GitHub runners force-run EOL
+            # pins on the current major and annotate the run with a
+            # deprecation warning. Don't ship a pin that rots.
+            assert major >= 24, \
+                f"node-check pins EOL Node {major} — bump to the current major"
+
+
 class TestPullRequestTemplate:
     """Test the PR template."""
 
