@@ -1,5 +1,49 @@
 # Changelog
 
+## 0.7.0
+
+First public release — the first Hive anyone outside the project will
+see. The public surface is complete and safe: a full license, a way to
+actually obtain the software, contributor and security docs, and CI
+that can never let a secret into history again.
+
+### Public surface
+- Complete MIT license (B.1): the old LICENSE was a truncated 324-byte
+  MIT that ended mid-clause and was not a usable license; it is now the
+  full MIT text — grant, conditions (retain the copyright notice), and
+  the IN-NO-EVENT liability clause all present.
+- How to obtain Hive (B.2): the README documents both acquisition
+  paths — release tarball (download, verify the sha256 sidecar with
+  `sha256sum -c`, extract, install) or git clone — plus the `hive
+  doctor` gate. INSTALL no longer pins a version, so its header can't
+  rot again.
+- CONTRIBUTING.md (B.3): the development loop — every change needs a
+  test, the pytest commands, the per-directory AGENTS.md map, and the
+  commit checklist.
+- SECURITY.md (B.3): a private reporting path for a tool that stores
+  and passes LLM provider API keys — report via the GitHub security
+  advisory form, never as a public issue; secret leaks are reported
+  privately with credentials referenced by prefix only, and the
+  response is revoke-then-scrub.
+- Issue templates (B.3): bug report + feature request; the bug
+  template warns that secrets never belong in an issue.
+
+### CI hardening
+- Secret scan (C.1): gitleaks runs over the full git history on every
+  push/PR; any finding fails the pipeline. A secret can never land in
+  history again.
+- Node 24 (C.2): the node-check job no longer pins EOL Node 20; the
+  runner deprecation annotation is gone.
+- Full-surface lint (C.3): ruff (F401/E722) now covers lib/ + tests/
+  instead of just the MCP/CLI packages; the findings outside the old
+  scope are fixed and the tree is clean under its own selection.
+
+### Standing guards
+Each of the above is pinned as a permanent test in the suite — the
+license clause markers, the no-stale-version-string scan, the
+contributor/security doc content, and the shape of the CI jobs — so a
+regression of the public surface fails CI the moment it lands.
+
 ## 0.6.0
 
 Provider-native agent runtime. **Breaking release**: the agent runtime is

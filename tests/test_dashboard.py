@@ -293,6 +293,23 @@ class TestVersionFile:
         # Should be a version string
         assert len(content) > 0
 
+    def test_version_matches_pyproject_and_changelog(self):
+        """D.1: VERSION, pyproject metadata, and the newest changelog
+        entry must all agree — a half-done version bump rots the public
+        surface (doctor already flags VERSION/pyproject drift at
+        runtime; this pins the source tree itself)."""
+        version = Path("VERSION").read_text().strip()
+        pyproject = Path("packaging/pyproject.toml").read_text()
+        m = re.search(r'^version\s*=\s*"([^"]+)"', pyproject, re.M)
+        assert m, "no version field in packaging/pyproject.toml"
+        assert m.group(1) == version, \
+            f"VERSION={version} but pyproject version={m.group(1)}"
+        changelog = Path("CHANGELOG.md").read_text()
+        top = re.search(r"^## (\S+)", changelog, re.M)
+        assert top, "no version entry in CHANGELOG.md"
+        assert top.group(1) == version, \
+            f"VERSION={version} but newest changelog entry is {top.group(1)}"
+
 
 class TestREADME:
     """Test the README."""
