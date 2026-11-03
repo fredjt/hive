@@ -1,7 +1,11 @@
 """HTTP/stdio client for the hive MCP server.
 
-Uses the official mcp Python SDK to handle session lifecycle correctly
-(initialize → tools/call) for both Streamable HTTP and stdio transports.
+Transport preference (C.2: one protocol implementation, two consumers):
+  1. The official mcp Python SDK — the fast path, used whenever it is
+     installed (the CLI runs in the install venv, where it is).
+  2. The shared SDK-free Streamable HTTP client (lib/core/mcp_http.py,
+     httpx only) — used when the mcp SDK is not importable, so tool calls
+     still work in environments that ship the CLI without the SDK.
 """
 
 from __future__ import annotations
@@ -14,9 +18,16 @@ from pathlib import Path
 from typing import Any
 
 import httpx
-from mcp import ClientSession, StdioServerParameters
-from mcp.client.stdio import stdio_client
-from mcp.client.streamable_http import streamable_http_client
+
+try:
+    from mcp import ClientSession, StdioServerParameters
+    from mcp.client.stdio import stdio_client
+    from mcp.client.streamable_http import streamable_http_client
+    _HAS_MCP_SDK = True
+except ImportError:  # SDK-free environment (C.2)
+    ClientSession = StdioServerParameters = None  # type: ignore
+    stdio_client = streamable_http_client = None  # type: ignore
+    _HAS_MCP_SDK = False
 
 
 # HIVE_INSTALL_DIR — where the venv + MCP server source live (global).
@@ -30,6 +41,23 @@ MCP_PORT = int(os.environ.get("HIVE_MCP_PORT", "7891"))
 
 def _http_endpoint() -> str:
     return f"http://{MCP_HOST}:{MCP_PORT}/mcp"
+
+
+def _load_sdk_free_client():
+    """The shared SDK-free Streamable HTTP client (lib/core/mcp_http.py).
+    Loaded path-based: this module lives in lib/hive_cli/, the client in
+    lib/core/ (which is not a package)."""
+    import importlib.util
+    import sys
+    core_dir = Path(__file__).resolve().parent.parent / "core"
+    mod_path = core_dir / "mcp_http.py"
+    if "mcp_http" in sys.modules:
+        return sys.modules["mcp_http"]
+    spec = importlib.util.spec_from_file_location("mcp_http", mod_path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    sys.modules["mcp_http"] = mod
+    return mod
 
 
 def _is_http_server_up() -> bool:
@@ -75,7 +103,26 @@ async def _stdio_session():
 
 
 async def _call_async(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
-    """Pick a transport (HTTP if up, else stdio) and call the tool."""
+    """Pick a transport (HTTP if up, else stdio) and call the tool.
+
+    SDK-backed when the mcp SDK is importable; otherwise the shared
+    SDK-free HTTP client (C.2). The SDK-free path serves the HTTP
+    transport only — stdio needs the SDK to spawn the child session.
+    """
+    if not _HAS_MCP_SDK:
+        if not _is_http_server_up():
+            return {"ok": False,
+                    "error": "MCP HTTP server not reachable and the mcp SDK "
+                             "is not installed (stdio fallback unavailable)"}
+        res = _load_sdk_free_client().call_tool(_http_endpoint(), name, arguments)
+        if not res.get("ok"):
+            return res
+        text = res.get("response", "")
+        try:
+            return json.loads(text)
+        except (json.JSONDecodeError, TypeError):
+            return {"ok": True, "stdout": text}
+
     session_cm = _http_session() if _is_http_server_up() else _stdio_session()
     async with session_cm as session:
         result = await session.call_tool(name, arguments=arguments)
@@ -108,6 +155,10 @@ def call_tool(name: str, arguments: dict[str, Any] | None = None) -> dict[str, A
 
 
 async def _list_async() -> list[str]:
+    if not _HAS_MCP_SDK:
+        if not _is_http_server_up():
+            return []
+        return sorted(_load_sdk_free_client().list_tools(_http_endpoint()))
     session_cm = _http_session() if _is_http_server_up() else _stdio_session()
     async with session_cm as session:
         resp = await session.list_tools()

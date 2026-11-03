@@ -1023,3 +1023,37 @@ class TestHttpTransportWire:
         })
         assert res.get("ok") is False, res
         assert res.get("error"), f"expected a non-empty error message: {res}"
+
+
+@pytest.mark.skipif(not _HAS_FASTMCP, reason="mcp server not available")
+class TestMcpClientSdkFree:
+    """C.2: mcp_client falls back to the shared SDK-free HTTP client
+    (lib/core/mcp_http.py) when the mcp SDK is not importable — the
+    SDK-backed fast path is untouched when the SDK is present."""
+
+    def test_call_tool_with_sdk_uninstalled(self, http_mcp_server, tmp_company_dir):
+        repo = Path(__file__).resolve().parent.parent
+        poison = Path(tempfile.mkdtemp(prefix="hive-poison-"))
+        (poison / "mcp.py").write_text(
+            "raise ImportError('mcp SDK intentionally absent')\n")
+        code = (
+            "import sys\n"
+            f"sys.path.insert(0, {str(repo / 'lib')!r})\n"
+            f"sys.path.insert(0, {str(poison)!r})\n"
+            "from hive_cli import mcp_client\n"
+            "assert mcp_client._HAS_MCP_SDK is False\n"
+            f"mcp_client.MCP_HOST = '127.0.0.1'\n"
+            f"mcp_client.MCP_PORT = {http_mcp_server}\n"
+            "res = mcp_client.call_tool('ticket_list', "
+            f"{{'dept': 'it', 'company_dir': {str(tmp_company_dir)!r}}})\n"
+            "assert res.get('ok') is True, res\n"
+            "assert res.get('data', {}).get('count') == 0, res\n"
+            "tools = mcp_client.list_tools()\n"
+            "assert 'ticket_create' in tools and len(tools) >= 40, len(tools)\n"
+            "print('SDKFREE_OK')\n"
+        )
+        r = subprocess.run([sys.executable, "-c", code],
+                           capture_output=True, text=True, timeout=90,
+                           env={**os.environ, "PYTHONPATH": str(repo / "lib")})
+        assert r.returncode == 0, f"{r.stdout[-400:]} {r.stderr[-800:]}"
+        assert "SDKFREE_OK" in r.stdout

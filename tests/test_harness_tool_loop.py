@@ -219,3 +219,61 @@ def test_tool_loop_round_trip(mcp_http_server):
     finally:
         llm_server.shutdown()
         llm_server.server_close()
+
+
+def _run_round_trip(mcp_url, company_dir, llm_base, llm_server, extra_env=None):
+    """Run the harness through the canned 3-turn script; return the
+    CompletedProcess. extra_env overrides (C.2 poisons PYTHONPATH)."""
+    env = {
+        "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
+        "HOME": str(Path(company_dir).parent / "home"),
+        "HIVE_ROOT": str(REPO),
+        "COMPANY_DIR": company_dir,
+        "MCP_URL": mcp_url,
+        "HIVE_PROVIDER": "openai",
+        "HIVE_API_BASE": llm_base,
+        "HIVE_MODEL": "stub",
+        "HIVE_API_KEY": "test-key",
+    }
+    if extra_env:
+        env.update(extra_env)
+    return subprocess.run(
+        [sys.executable, str(REPO / "lib" / "core" / "agent-harness.py"),
+         "--", "Create the ticket, read it back, then finish."],
+        capture_output=True, text=True, timeout=120, env=env,
+        cwd=str(Path(company_dir).parent),
+    )
+
+
+def test_round_trip_without_mcp_sdk_installed(mcp_http_server, tmp_path):
+    """C.2: the harness's MCP path is SDK-free. With the mcp SDK made
+    unimportable in the harness process (poison module first on
+    PYTHONPATH), the full tool round-trip must still complete — the
+    shared lib/core/mcp_http.py owns the protocol; only httpx is
+    required."""
+    poison = tmp_path / "poison"
+    poison.mkdir()
+    (poison / "mcp.py").write_text(
+        "raise ImportError('mcp SDK intentionally absent (C.2 test)')\n")
+
+    mcp_url, company_dir = mcp_http_server
+    llm_base, llm_server = _free_http_port_and_start(_TurnLLMHandler)
+    llm_server.requests = []
+    llm_server.turn = 0
+    try:
+        r = _run_round_trip(mcp_url, company_dir, llm_base, llm_server,
+                            extra_env={"PYTHONPATH": str(poison)})
+        assert r.returncode == 0, \
+            f"harness failed without mcp SDK: {r.stderr[-800:]}"
+        events = [json.loads(line) for line in r.stdout.strip().splitlines()
+                  if line.strip().startswith("{")]
+        tool_results = [e for e in events if e.get("type") == "tool_result"]
+        assert len(tool_results) == 2 and all(e.get("ok") for e in tool_results), \
+            f"tool results wrong without SDK: {tool_results}"
+        tickets_root = Path(company_dir) / "departments" / TICKET_DEPT / "tickets"
+        found = [f for f in tickets_root.rglob("*.json")
+                 if f.name != "counter.json"]
+        assert len(found) == 1, "write did not land without mcp SDK"
+    finally:
+        llm_server.shutdown()
+        llm_server.server_close()
