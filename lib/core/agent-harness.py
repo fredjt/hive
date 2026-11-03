@@ -68,10 +68,33 @@ except ImportError:
     httpx = None  # type: ignore
 
 
+def _mcp_parse_body(resp: "httpx.Response") -> Any:
+    """Parse a JSON-RPC response body that may be plain JSON or SSE
+    (Streamable HTTP servers answer `event: message` / `data: {...}`)."""
+    ctype = resp.headers.get("content-type", "")
+    if "text/event-stream" in ctype:
+        for line in resp.text.splitlines():
+            if line.startswith("data: "):
+                try:
+                    return json.loads(line[6:])
+                except json.JSONDecodeError:
+                    continue
+        return None
+    try:
+        return resp.json()
+    except json.JSONDecodeError:
+        return None
+
+
 def call_mcp_tool(mcp_url: str, tool_name: str, arguments: dict) -> dict[str, Any]:
     """Call an MCP tool over Streamable HTTP.
 
-    Returns a dict with ok/exit_code/stdout/stderr compatible with existing
+    Handles the full session handshake (initialize ->
+    notifications/initialized -> tools/call) including the mcp-session-id
+    header the server requires after initialize, and parses both
+    application/json and text/event-stream (SSE) response bodies.
+
+    Returns a dict with ok/response/error keys compatible with existing
     log consumers that expect the harness result format.
     """
     if httpx is None:
@@ -85,6 +108,10 @@ def call_mcp_tool(mcp_url: str, tool_name: str, arguments: dict) -> dict[str, An
     try:
         # Initialize session
         with httpx.Client(timeout=30.0) as client:
+            base_headers = {
+                "Content-Type": "application/json",
+                "Accept": "application/json, text/event-stream",
+            }
             init_resp = client.post(
                 endpoint,
                 json={
@@ -100,7 +127,7 @@ def call_mcp_tool(mcp_url: str, tool_name: str, arguments: dict) -> dict[str, An
                         },
                     },
                 },
-                headers={"Content-Type": "application/json"},
+                headers=base_headers,
             )
             if init_resp.status_code != 200:
                 return {
@@ -109,7 +136,21 @@ def call_mcp_tool(mcp_url: str, tool_name: str, arguments: dict) -> dict[str, An
                     "tool": tool_name,
                 }
 
-            # Call the tool
+            # Streamable HTTP: the server issues a session id that must
+            # ride on every subsequent request (without it tools/call
+            # fails with 400 "Missing session ID").
+            session_headers = dict(base_headers)
+            session_id = init_resp.headers.get("mcp-session-id")
+            if session_id:
+                session_headers["mcp-session-id"] = session_id
+                # Spec: the client must acknowledge initialization.
+                client.post(
+                    endpoint,
+                    json={"jsonrpc": "2.0", "method": "notifications/initialized"},
+                    headers=session_headers,
+                )
+
+            # Call the tool (session header required after initialize)
             resp = client.post(
                 endpoint,
                 json={
@@ -118,7 +159,7 @@ def call_mcp_tool(mcp_url: str, tool_name: str, arguments: dict) -> dict[str, An
                     "method": "tools/call",
                     "params": {"name": tool_name, "arguments": arguments},
                 },
-                headers={"Content-Type": "application/json"},
+                headers=session_headers,
             )
 
             if resp.status_code != 200:
@@ -128,7 +169,13 @@ def call_mcp_tool(mcp_url: str, tool_name: str, arguments: dict) -> dict[str, An
                     "tool": tool_name,
                 }
 
-            result = resp.json()
+            result = _mcp_parse_body(resp)
+            if result is None:
+                return {
+                    "ok": False,
+                    "error": "MCP call returned an unparseable body",
+                    "tool": tool_name,
+                }
             # Parse the structured content
             if isinstance(result, dict) and "result" in result:
                 content = result["result"]
@@ -643,6 +690,12 @@ def run_agent(
         assistant_text = llm_result["content"]
         total_cost_usd += llm_result.get("usage", {}).get("total_cost_usd", 0.0)
 
+        # C.1: stream-json event for this turn — agent-spawn tees the
+        # harness stdout to .company/logs/streams/<id>.jsonl and the
+        # dashboard replays these per spawn (assistant text + tool events).
+        print(json.dumps({"type": "assistant", "turn": num_turns + 1,
+                          "text": assistant_text}))
+
         # Parse the assistant's response for bash: and mcp: blocks
         actions = parse_actions(assistant_text, no_mcp=no_mcp, mcp_url=mcp_url, cwd=cwd, company_dir=company_dir)
 
@@ -655,19 +708,29 @@ def run_agent(
         action_results = []
         for action in actions:
             if action["type"] == "bash":
+                print(json.dumps({"type": "tool_use", "tool": "bash",
+                                  "args": {"command": action["command"]}}))
                 result = run_shell_command(action["command"], cwd=cwd)
                 out = f"```\n{result['stdout']}\n```"
                 if not result['ok']:
                     out += f"\nError: {result['stderr'].strip()}"
                 action_results.append(out)
+                print(json.dumps({"type": "tool_result", "tool": "bash",
+                                  "ok": bool(result.get("ok")),
+                                  "response": out[:8000]}))
             elif action["type"] == "mcp":
                 tool_name = action["name"]
                 tool_args = action["args"]
+                print(json.dumps({"type": "tool_use", "tool": tool_name,
+                                  "args": tool_args}))
                 result = call_mcp_tool(mcp_url, tool_name, tool_args)
                 response_text = result.get("response", str(result))
                 if not result.get("ok"):
                     response_text = f"Error: {result.get('error', 'Unknown')}"
                 action_results.append(f"MCP tool '{tool_name}' returned: {response_text}")
+                print(json.dumps({"type": "tool_result", "tool": tool_name,
+                                  "ok": bool(result.get("ok")),
+                                  "response": response_text[:8000]}))
 
         # Append action results as user message for the next turn
         combined = "\n\n".join(action_results)
