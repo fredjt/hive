@@ -68,144 +68,31 @@ except ImportError:
     httpx = None  # type: ignore
 
 
-def _mcp_parse_body(resp: "httpx.Response") -> Any:
-    """Parse a JSON-RPC response body that may be plain JSON or SSE
-    (Streamable HTTP servers answer `event: message` / `data: {...}`)."""
-    ctype = resp.headers.get("content-type", "")
-    if "text/event-stream" in ctype:
-        for line in resp.text.splitlines():
-            if line.startswith("data: "):
-                try:
-                    return json.loads(line[6:])
-                except json.JSONDecodeError:
-                    continue
-        return None
-    try:
-        return resp.json()
-    except json.JSONDecodeError:
-        return None
-
-
 def call_mcp_tool(mcp_url: str, tool_name: str, arguments: dict) -> dict[str, Any]:
     """Call an MCP tool over Streamable HTTP.
 
-    Handles the full session handshake (initialize ->
-    notifications/initialized -> tools/call) including the mcp-session-id
-    header the server requires after initialize, and parses both
-    application/json and text/event-stream (SSE) response bodies.
+    C.2: the protocol itself (initialize handshake, mcp-session-id
+    header, notifications/initialized, SSE body parsing) lives in the
+    shared SDK-free lib/core/mcp_http.py — httpx only, no mcp SDK.
 
     Returns a dict with ok/response/error keys compatible with existing
     log consumers that expect the harness result format.
     """
-    if httpx is None:
+    if _httpx is None:
         return {
             "ok": False,
             "error": "httpx not installed — MCP tool calls disabled",
             "tool": tool_name,
         }
-
-    endpoint = f"{mcp_url}"
-    try:
-        # Initialize session
-        with httpx.Client(timeout=30.0) as client:
-            base_headers = {
-                "Content-Type": "application/json",
-                "Accept": "application/json, text/event-stream",
-            }
-            init_resp = client.post(
-                endpoint,
-                json={
-                    "jsonrpc": "2.0",
-                    "id": 1,
-                    "method": "initialize",
-                    "params": {
-                        "protocolVersion": "2024-11-05",
-                        "capabilities": {"tools": {}},
-                        "clientInfo": {
-                            "name": "hive-agent-harness",
-                            "version": "0.1.0",
-                        },
-                    },
-                },
-                headers=base_headers,
-            )
-            if init_resp.status_code != 200:
-                return {
-                    "ok": False,
-                    "error": f"MCP init failed: {init_resp.status_code}",
-                    "tool": tool_name,
-                }
-
-            # Streamable HTTP: the server issues a session id that must
-            # ride on every subsequent request (without it tools/call
-            # fails with 400 "Missing session ID").
-            session_headers = dict(base_headers)
-            session_id = init_resp.headers.get("mcp-session-id")
-            if session_id:
-                session_headers["mcp-session-id"] = session_id
-                # Spec: the client must acknowledge initialization.
-                client.post(
-                    endpoint,
-                    json={"jsonrpc": "2.0", "method": "notifications/initialized"},
-                    headers=session_headers,
-                )
-
-            # Call the tool (session header required after initialize)
-            resp = client.post(
-                endpoint,
-                json={
-                    "jsonrpc": "2.0",
-                    "id": 2,
-                    "method": "tools/call",
-                    "params": {"name": tool_name, "arguments": arguments},
-                },
-                headers=session_headers,
-            )
-
-            if resp.status_code != 200:
-                return {
-                    "ok": False,
-                    "error": f"MCP call failed: {resp.status_code}",
-                    "tool": tool_name,
-                }
-
-            result = _mcp_parse_body(resp)
-            if result is None:
-                return {
-                    "ok": False,
-                    "error": "MCP call returned an unparseable body",
-                    "tool": tool_name,
-                }
-            # Parse the structured content
-            if isinstance(result, dict) and "result" in result:
-                content = result["result"]
-            else:
-                content = result
-
-            # Extract text from content blocks
-            texts = []
-            if isinstance(content, dict):
-                for block in content.get("content", []):
-                    if isinstance(block, dict) and block.get("type") == "text":
-                        texts.append(block.get("text", ""))
-            elif isinstance(content, list):
-                for block in content:
-                    if isinstance(block, dict) and block.get("type") == "text":
-                        texts.append(block.get("text", ""))
-
-            return {
-                "ok": True,
-                "tool": tool_name,
-                "arguments": arguments,
-                "response": "\n".join(texts) if texts else str(content),
-            }
-
-    except Exception as e:
+    if mcp_http is None:  # pragma: no cover - module sits next to this file
         return {
             "ok": False,
-            "error": f"MCP call error: {type(e).__name__}: {e}",
+            "error": "mcp_http module unavailable",
             "tool": tool_name,
         }
+    return mcp_http.call_tool(mcp_url, tool_name, arguments)
+
+
 
 
 # ---------------------------------------------------------------------------
@@ -337,6 +224,22 @@ except ImportError:  # pragma: no cover - import path depends on caller
         _spec.loader.exec_module(llm_providers)
     except Exception:  # pragma: no cover
         llm_providers = None  # type: ignore
+
+
+try:
+    import mcp_http  # type: ignore
+except ImportError:  # pragma: no cover - import path depends on caller
+    import importlib.util as _ilm
+    import os as _osm
+    try:
+        _specm = _ilm.spec_from_file_location(
+            "mcp_http",
+            _osm.path.join(_osm.dirname(_osm.abspath(__file__)),
+                           "mcp_http.py"))
+        mcp_http = _ilm.module_from_spec(_specm)  # type: ignore
+        _specm.loader.exec_module(mcp_http)
+    except Exception:  # pragma: no cover
+        mcp_http = None  # type: ignore
 
 
 def detect_provider(api_base: str) -> str:
