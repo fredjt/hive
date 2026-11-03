@@ -471,6 +471,102 @@ class TestConfigPath:
             "the missing variant must point at the command that creates it"
 
 
+class TestLlmTestCommand:
+    """B1: `hive llm test` — one small round trip through the exact resolver
+    path the harness uses. Prints provider, model, base_url, the key's
+    SOURCE (never the key), latency, and the model's first reply line;
+    exit 0/1. 'Endpoint dead' goes from a 20-agent-turn discovery to a
+    2-second check. Unconfigured reuses the doctor hint that names the
+    config file."""
+
+    install_dir = Path(__file__).resolve().parent.parent
+
+    @staticmethod
+    def _run_llm_test(home, env_extra):
+        env = {**os.environ, "HOME": str(home),
+               "HIVE_ROOT": str(TestLlmTestCommand.install_dir),
+               "PYTHONPATH": str(TestLlmTestCommand.install_dir / "lib")
+               + os.pathsep + os.environ.get("PYTHONPATH", "")}
+        # Clear any inherited LLM env so the scratch config decides.
+        for var in ("HIVE_PROVIDER", "HIVE_MODEL", "HIVE_API_BASE",
+                    "HIVE_API_KEY", "HIVE_API_STYLE", "HIVE_VERIFICATION_MODEL"):
+            env.pop(var, None)
+        env.update(env_extra)
+        return subprocess.run(
+            [sys.executable, "-m", "hive_cli.main", "llm", "test"],
+            capture_output=True, text=True, env=env,
+            cwd=str(TestLlmTestCommand.install_dir), timeout=60,
+        )
+
+    def test_stub_endpoint_round_trip_prints_model(self, tmp_path):
+        """A local http.server returning OpenAI-style chat JSON → exit 0
+        with the model name printed (and the key never printed)."""
+        import threading
+        from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+        class Handler(BaseHTTPRequestHandler):
+            def do_POST(self):
+                n = int(self.headers.get("Content-Length", 0))
+                self.rfile.read(n)
+                body = json.dumps({
+                    "id": "chatcmpl-stub", "object": "chat.completion",
+                    "model": "stub-model",
+                    "choices": [{"index": 0,
+                                 "message": {"role": "assistant", "content": "OK"},
+                                 "finish_reason": "stop"}],
+                    "usage": {"prompt_tokens": 5, "completion_tokens": 1,
+                              "total_tokens": 6},
+                }).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def log_message(self, *a):
+                pass
+
+        server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        port = server.server_address[1]
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        try:
+            r = self._run_llm_test(tmp_path, {
+                "HIVE_PROVIDER": "openai", "HIVE_MODEL": "stub-model",
+                "HIVE_API_BASE": f"http://127.0.0.1:{port}/v1",
+                "HIVE_API_KEY": "sk-test-DO-NOT-PRINT",
+            })
+            assert r.returncode == 0, r.stdout + "\n" + r.stderr
+            out = r.stdout
+            assert "stub-model" in out, "the model name must be printed"
+            assert f"http://127.0.0.1:{port}/v1" in out
+            assert "openai" in out
+            assert "sk-test-DO-NOT-PRINT" not in r.stdout + r.stderr, \
+                "the key must never be printed — only its source label"
+            assert "from env HIVE_API_KEY" in out
+        finally:
+            server.shutdown()
+
+    def test_connection_refused_names_base_url(self, tmp_path):
+        r = self._run_llm_test(tmp_path, {
+            "HIVE_PROVIDER": "openai", "HIVE_MODEL": "any-model",
+            "HIVE_API_BASE": "http://127.0.0.1:1/v1",
+            "HIVE_API_KEY": "k",
+        })
+        assert r.returncode == 1, \
+            "a dead endpoint must exit 1 — that is the whole point of B1"
+        out = r.stdout + r.stderr
+        assert "http://127.0.0.1:1/v1" in out, \
+            "the failure message must name the base_url it tried"
+
+    def test_unconfigured_names_config_file(self, tmp_path):
+        r = self._run_llm_test(tmp_path, {})
+        assert r.returncode == 1
+        out = r.stdout + r.stderr
+        user_cfg = str(tmp_path / ".config" / "hive" / "config.toml")
+        assert user_cfg in out, \
+            "the unconfigured message must name the config file to edit"
+
+
 class TestStatusDaemonSection:
     """B.3: `hive status` surfaces per-daemon liveness, restart_count, and
     the supervisor's dead state (restart budget exhausted) read straight

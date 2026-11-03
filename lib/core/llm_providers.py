@@ -124,6 +124,25 @@ def suggest_close(name: str, candidates: list[str], n: int = 3) -> list[str]:
     return difflib.get_close_matches(name, candidates, n=n, cutoff=0.6)
 
 
+def unconfigured_hint(hive_root: str | Path | None = None,
+                      env: dict | None = None) -> str:
+    """The canonical 'LLM unconfigured' message (C4, reused by B1): names
+    the exact user-config file to edit (honoring the HIVE_CONFIG override)
+    and the one-shot env-var escape hatch. Never contains a key value."""
+    env = env if env is not None else dict(os.environ)
+    home = (env.get("HOME") or os.path.expanduser("~")).strip()
+    user_cfg = Path(env.get("HIVE_CONFIG")
+                    or (Path(home) / ".config" / "hive" / "config.toml"))
+    export_vars = "HIVE_PROVIDER/HIVE_MODEL/HIVE_API_BASE/HIVE_API_KEY"
+    if user_cfg.is_file():
+        return (f"unconfigured — edit the [llm] section of {user_cfg} "
+                f"(hive config edit), or export {export_vars} "
+                "for one-shot runs")
+    return (f"unconfigured — run 'hive config edit' to create {user_cfg} "
+            f"from the template and set the [llm] section (or export "
+            f"{export_vars} for one-shot runs)")
+
+
 def detect_provider(base_url: str) -> str:
     """Best-effort provider detection from a base URL (fallback path
     only — the config/env path is explicit)."""

@@ -256,6 +256,7 @@ def handle(args) -> int:
         if core_dir not in sys.path:
             sys.path.insert(0, core_dir)
         from llm_providers import resolve as _resolve_llm
+        from llm_providers import unconfigured_hint
         llm_res = _resolve_llm(hive_root=HIVE_ROOT)
         if llm_res.is_configured:
             if llm_res.key_from_env:
@@ -269,22 +270,10 @@ def handle(args) -> int:
                                  llm_res.provider or "?", llm_res.model or "(default)",
                                  llm_res.base_url or "(default)", key_src))
         else:
-            # C4: name the exact file. The old message said "the [llm]
-            # section of config.toml" without a path — the user file does
-            # not exist until the installer (or `hive config edit`) makes
-            # it, so a stranger had nothing to look for.
-            user_cfg = Path.home() / ".config" / "hive" / "config.toml"
-            if user_cfg.is_file():
-                hint = (f"unconfigured — edit the [llm] section of "
-                        f"{user_cfg} (hive config edit), or export "
-                        "HIVE_PROVIDER/HIVE_MODEL/HIVE_API_BASE/HIVE_API_KEY "
-                        "for one-shot runs")
-            else:
-                hint = ("unconfigured — run 'hive config edit' to create "
-                        f"{user_cfg} from the template and set the [llm] "
-                        "section (or export HIVE_PROVIDER/HIVE_MODEL/"
-                        "HIVE_API_BASE/HIVE_API_KEY for one-shot runs)")
-            all_ok &= _check("LLM provider configured", False, hint)
+            # C4: name the exact file (the hint lives in llm_providers so
+            # `hive llm test` — B1 — reuses the very same message).
+            all_ok &= _check("LLM provider configured", False,
+                             unconfigured_hint(hive_root=HIVE_ROOT))
         for w in llm_res.warnings:
             print("  warning: " + w)
         # B.4: optional reachability probe — behind --deep so a plain

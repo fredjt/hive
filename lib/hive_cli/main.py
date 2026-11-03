@@ -203,6 +203,7 @@ def _add_llm(sub) -> None:
     sp.add_parser("stats", help="Counts by caller and mode over last 24h/1h")
     pt = sp.add_parser("tail", help="Tail recent llm-tiny calls")
     pt.add_argument("-n", type=int, default=20, help="number of recent calls to show")
+    sp.add_parser("test", help="One-shot round trip through the configured endpoint (B1)")
     p.set_defaults(_handler=llm.handle)
 
 
