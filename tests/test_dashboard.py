@@ -446,6 +446,27 @@ class TestContributorDocs:
                 f".github/ISSUE_TEMPLATE/{name} missing"
 
 
+class TestCISecretScan:
+    """C.1: CI must run a permanent secret scan — a secret can never
+    land in history again."""
+
+    WORKFLOW = Path(".github/workflows/ci.yml")
+
+    def test_ci_workflow_exists(self):
+        assert self.WORKFLOW.exists(), ".github/workflows/ci.yml missing"
+
+    def test_secrets_job_runs_gitleaks_over_full_history(self):
+        text = self.WORKFLOW.read_text()
+        assert "secrets:" in text, "no 'secrets' job in ci.yml"
+        assert "gitleaks detect --source . --redact --no-banner" in text, \
+            "the gitleaks detect command (with --redact) is not pinned"
+        assert "fetch-depth: 0" in text, \
+            "secret scan must see full history, not just the working tree"
+        assert re.search(r"GITLEAKS_VERSION=\d+\.\d+\.\d+", text), \
+            "gitleaks version must be pinned (a floating version silently " \
+            "changes the guard)"
+
+
 class TestPullRequestTemplate:
     """Test the PR template."""
 
