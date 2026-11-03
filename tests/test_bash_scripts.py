@@ -1087,6 +1087,26 @@ class TestBuildPackagePublicSurface:
         assert "sha256sum -c" in readme, \
             "tarball README must document the sidecar verification step"
 
+    def test_tarball_ships_the_full_public_surface(self, tmp_path):
+        """B.1-B.3 added CONTRIBUTING.md, SECURITY.md and the 0.7.0
+        CHANGELOG to the repo's public surface; a downloader who installs
+        from the tarball (the path documented in the README) must get them
+        too — shipped verbatim, like INSTALL and LICENSE."""
+        pkg = self._build_and_extract(tmp_path)
+        missing = []
+        for name in ("CHANGELOG.md", "CONTRIBUTING.md", "SECURITY.md"):
+            shipped_path = pkg / name
+            tracked_path = self.install_dir / name
+            assert tracked_path.is_file(), f"tracked {name} is missing"
+            if not shipped_path.is_file():
+                missing.append(name)
+                continue
+            assert shipped_path.read_text() == tracked_path.read_text(), \
+                f"tarball {name} must be the tracked file verbatim"
+        assert not missing, \
+            f"tarball is missing public-surface files: {missing} — a " \
+            "tarball install must carry the same public surface as the repo"
+
 
 class TestCompanyHealthRestartPolicy:
     """B.3: a failing daemon restarts up to HIVE_MAX_RESTARTS, is then

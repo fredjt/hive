@@ -72,6 +72,14 @@ done
 cp "$SOURCE_DIR/share/docs/README.md" "$STAGE/$PKG_NAME/README.md"
 cp "$SOURCE_DIR/INSTALL" "$STAGE/$PKG_NAME/INSTALL"
 cp "$SOURCE_DIR/LICENSE" "$STAGE/$PKG_NAME/LICENSE"
+# B.1-B.3 extended the public surface beyond README/INSTALL/LICENSE;
+# a tarball install must carry it too (release history, contributor and
+# security docs) — same verbatim-copy rule, no regeneration.
+for f in CHANGELOG.md CONTRIBUTING.md SECURITY.md; do
+  if [ -f "$SOURCE_DIR/$f" ]; then
+    cp "$SOURCE_DIR/$f" "$STAGE/$PKG_NAME/$f"
+  fi
+done
 
 # Prune things that shouldn't ship
 echo "Pruning build artifacts and caches..."
