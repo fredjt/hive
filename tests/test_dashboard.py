@@ -409,6 +409,43 @@ class TestNoStaleVersionStrings:
         )
 
 
+class TestContributorDocs:
+    """B.3: a public repo needs contributor + security docs."""
+
+    def test_contributing_prescribes_the_dev_loop(self):
+        p = Path("CONTRIBUTING.md")
+        assert p.exists(), "CONTRIBUTING.md missing"
+        content = p.read_text()
+        assert "Every change needs a test" in content, \
+            "CONTRIBUTING must carry the test-first rule"
+        assert "pytest" in content, \
+            "CONTRIBUTING must carry the pytest commands"
+        assert "Checklist" in content, \
+            "CONTRIBUTING must carry the commit checklist"
+        assert "AGENTS.md" in content, \
+            "CONTRIBUTING must point at the per-directory AGENTS.md map"
+
+    def test_security_demands_private_reporting(self):
+        p = Path("SECURITY.md")
+        assert p.exists(), "SECURITY.md missing"
+        content = p.read_text()
+        assert "security/advisories/new" in content, \
+            "no private reporting path (security advisory form)"
+        low = content.lower()
+        assert "do not open a public issue" in low, \
+            "must state vulnerabilities are reported privately, never public"
+        assert "revoke" in low, \
+            "secret-leak response must mention revoking the credential"
+        # The leak guidance must forbid pasting live values
+        assert "never paste" in low or "by prefix" in low, \
+            "must tell reporters not to paste live credential values"
+
+    def test_issue_templates_exist(self):
+        for name in ("bug_report.yml", "feature_request.yml"):
+            assert (Path(".github/ISSUE_TEMPLATE") / name).exists(), \
+                f".github/ISSUE_TEMPLATE/{name} missing"
+
+
 class TestPullRequestTemplate:
     """Test the PR template."""
 

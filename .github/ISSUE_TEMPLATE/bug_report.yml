@@ -1,0 +1,30 @@
+name: Bug report
+about: Something in Hive is broken or misbehaving
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: What you expected, what actually happened, and how to reproduce it (command + output).
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Hive version
+      description: Output of `hive --version` or the VERSION file in your install.
+    validations:
+      required: true
+  - type: textarea
+    id: env
+    attributes:
+      label: Environment
+      description: OS, Python version, how you installed (tarball / git / docker).
+  - type: note
+    attributes:
+      label: Before you post
+      description: |
+        **Do not paste secrets, API keys, or tokens into this issue.**
+        If your bug involves a leaked credential, report it privately per
+        SECURITY.md and reference the credential by prefix only (e.g. `gho_…`).
