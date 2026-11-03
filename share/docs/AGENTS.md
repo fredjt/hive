@@ -14,6 +14,7 @@ This directory is Hive's **documentation corpus** — the human-readable referen
 | `ARCHITECTURE.md` | Deep dive into components, state model, quality gating pipeline, process model, language rationale | Developers extending Hive |
 | `CLI.md` | Command reference for every `hive` subcommand with argument signatures | Operators, users |
 | `MCP-TOOLS.md` | Catalog of ~49 MCP tools with argument lists | Agent prompt authors, MCP tool developers |
+| `LLM-PROVIDERS.md` | LLM provider config: the `[llm]` section, provider registry, wire formats, unsloth, key precedence | Operators setting up the agent runtime |
 | `PACKAGING.md` | How to build a release tarball, install on targets, uninstall, host artifacts | Release engineers, packagers |
 
 ## How the docs relate
@@ -23,6 +24,7 @@ README.md          → entry point, links to the other three
 ARCHITECTURE.md    → expands the "one-line tour" from README with process model and rationale
 CLI.md             → exhaustive command reference (not in root AGENTS.md)
 MCP-TOOLS.md       → full tool catalog with args (not in root AGENTS.md)
+LLM-PROVIDERS.md   → [llm] config, provider registry, wire formats, unsloth
 PACKAGING.md       → standalone release/distribution guide
 ```
 

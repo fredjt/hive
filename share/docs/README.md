@@ -81,7 +81,8 @@ hive stop
 ```
 
 See `ARCHITECTURE.md` for details. See `CLI.md` for command reference.
-See `MCP-TOOLS.md` for the MCP tool catalog.
+See `MCP-TOOLS.md` for the MCP tool catalog. See `LLM-PROVIDERS.md`
+for the `[llm]` config and the provider registry.
 
 ## Why MCP
 
@@ -130,7 +131,7 @@ point for standing up a company on a project.
 - `etc/config.defaults.toml` — default config
 - `~/.config/hive/config.toml` — your overrides
 - `packaging/{install,uninstall}.sh` — setup scripts
-- `share/docs/` — this README + ARCHITECTURE.md + CLI.md + MCP-TOOLS.md
+- `share/docs/` — this README + ARCHITECTURE.md + CLI.md + MCP-TOOLS.md + LLM-PROVIDERS.md
 
 ## Status
 

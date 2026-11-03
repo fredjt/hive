@@ -361,3 +361,111 @@ class TestHarnessWireShapes:
         assert "HTTP 401" in result["error"]
         # client errors should not burn all retries
         assert req is not None
+
+
+class TestUnslothProvider:
+    """B.3: unsloth is a named provider — operator endpoint, operator-chosen
+    wire style (openai | anthropic), UNSLOTH_API_KEY env fallback."""
+
+    def test_unsloth_openai_style_resolution(self, tmp_path):
+        _write_config(tmp_path, (
+            '[llm]\nprovider = "unsloth"\napi_style = "openai"\n'
+            'base_url = "http://127.0.0.1:9999/v1"\nmodel = "u-model"\n'))
+        r = _import_resolve()(env={"HOME": str(tmp_path),
+                                   "UNSLOTH_API_KEY": "sk-unsloth"},
+                              hive_root=str(tmp_path))
+        assert r.provider == "unsloth"
+        assert r.api_style == "openai"
+        assert r.base_url == "http://127.0.0.1:9999/v1"
+        assert r.api_key == "sk-unsloth"
+        assert r.key_from_env == "UNSLOTH_API_KEY"
+        assert r.is_configured
+
+    def test_unsloth_anthropic_style_env_over_config(self, tmp_path):
+        _write_config(tmp_path, (
+            '[llm]\nprovider = "unsloth"\napi_style = "openai"\n'
+            'base_url = "http://127.0.0.1:9999"\nmodel = "u-model"\n'))
+        r = _import_resolve()(env={"HOME": str(tmp_path),
+                                   "HIVE_API_STYLE": "anthropic",
+                                   "HIVE_API_KEY": "sk-2"},
+                              hive_root=str(tmp_path))
+        assert r.api_style == "anthropic"
+        assert r.api_key == "sk-2"  # HIVE_API_KEY outranks UNSLOTH_API_KEY
+
+    def test_unsloth_missing_api_style_warns(self, tmp_path):
+        _write_config(tmp_path, (
+            '[llm]\nprovider = "unsloth"\nbase_url = "http://x"\nmodel = "m"\n'))
+        r = _import_resolve()(env={"HOME": str(tmp_path),
+                                   "UNSLOTH_API_KEY": "k"},
+                              hive_root=str(tmp_path))
+        assert any("api_style" in w for w in r.warnings)
+
+    def test_unsloth_requires_explicit_base_url(self, tmp_path):
+        _write_config(tmp_path, (
+            '[llm]\nprovider = "unsloth"\napi_style = "openai"\nmodel = "m"\n'))
+        r = _import_resolve()(env={"HOME": str(tmp_path),
+                                   "UNSLOTH_API_KEY": "k"},
+                              hive_root=str(tmp_path))
+        assert not r.is_configured
+        assert any("base_url" in w for w in r.warnings)
+
+    def test_stub_round_trip_openai_style(self):
+        canned = b'{"model": "u-model", "choices": '
+        canned += b'[{"message": {"content": "from-unsloth"}}]}'
+        base_url, server = _start_stub(canned=canned)
+        try:
+            h = _load_harness()
+            r = h.call_llm_api(
+                [{"role": "user", "content": "hi"}],
+                api_base=base_url, model="u-model", api_key="sk-u",
+                api_style="openai", provider="unsloth")
+            assert r["ok"] and r["content"] == "from-unsloth"
+            req = server.last_request
+            assert req["path"] == "/chat/completions"
+            assert req["headers"].get("authorization") == "Bearer sk-u"
+        finally:
+            server.shutdown()
+            server.server_close()
+
+    def test_stub_round_trip_anthropic_style(self):
+        canned = b'{"model": "u-model", "content": '
+        canned += b'[{"type": "text", "text": "anth-path"}]}'
+        base_url, server = _start_stub(canned=canned)
+        try:
+            h = _load_harness()
+            r = h.call_llm_api(
+                [{"role": "user", "content": "hi"}],
+                api_base=base_url, model="u-model", api_key="sk-u",
+                api_style="anthropic", provider="unsloth")
+            assert r["ok"] and r["content"] == "anth-path"
+            req = server.last_request
+            assert req["path"] == "/v1/messages"
+            assert req["headers"].get("x-api-key") == "sk-u"
+        finally:
+            server.shutdown()
+            server.server_close()
+
+    def test_doctor_reports_unsloth_cleanly(self, tmp_path, capsys):
+        code = (
+            "import sys; sys.path.insert(0, 'lib');\n"
+            "import os;\n"
+            "os.environ['HIVE_PROVIDER']='unsloth';\n"
+            "os.environ['HIVE_API_STYLE']='anthropic';\n"
+            "os.environ['HIVE_API_BASE']='http://127.0.0.1:9/v1';\n"
+            "os.environ['HIVE_MODEL']='u-model';\n"
+            "os.environ['UNSLOTH_API_KEY']='SECRET-DO-NOT-PRINT';\n"
+            "from hive_cli.commands import doctor;\n"
+            "doctor.HIVE_INSTALL_DIR = __import__('pathlib').Path(os.getcwd());\n"
+            "doctor.HIVE_ROOT = __import__('pathlib').Path(os.getcwd());\n"
+            "import types;\n"
+            "doctor.handle(types.SimpleNamespace())\n"
+        )
+        import subprocess
+        r = subprocess.run(
+            [sys.executable, "-c", code],
+            capture_output=True, text=True, timeout=60, cwd=str(REPO))
+        out = r.stdout
+        assert "provider=unsloth" in out, out
+        assert "model=u-model" in out, out
+        assert "SECRET-DO-NOT-PRINT" not in out, "key leaked into doctor output"
+        assert "key=env UNSLOTH_API_KEY" in out, out

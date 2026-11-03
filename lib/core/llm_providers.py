@@ -31,6 +31,10 @@ PROVIDERS = {
                    "extra_headers": {"HTTP-Referer": "https://github.com/fredjt/hive", "X-Title": "Hive Agent Harness"}},
     "ollama": {"api_style": "openai", "base_url": "http://127.0.0.1:11434/v1", "model": "", "key_env": "", "needs_key": False},
     "google": {"api_style": "gemini", "base_url": "https://generativelanguage.googleapis.com/v1beta", "model": "", "key_env": "GEMINI_API_KEY", "needs_key": True},
+    # B.3: first-class named provider. The endpoint is operator-supplied
+    # (no default base_url) and speaks EITHER the OpenAI-style or the
+    # Anthropic-style API — [llm].api_style (or HIVE_API_STYLE) says which.
+    "unsloth": {"api_style": "", "base_url": "", "model": "", "key_env": "UNSLOTH_API_KEY", "needs_key": True},
 }
 
 
@@ -228,6 +232,9 @@ class Resolved:
         """True if a model is selected and (if needed) a key is present."""
         if not self.model and not self.base_url:
             return False
+        if not self.base_url and self.provider in PROVIDERS \
+                and not PROVIDERS[self.provider]["base_url"]:
+            return False  # no default endpoint — an explicit base_url is mandatory
         if self.needs_key and not self.api_key:
             return False
         return True
@@ -270,6 +277,22 @@ def resolve(env: dict | None = None, hive_root: str | Path | None = None) -> Res
         warnings = []
         api_style = meta.get("api_style", "openai")
         key_env = meta.get("key_env", "")
+        if provider == "unsloth":
+            # B.3: the wire style is operator-chosen (the endpoint speaks
+            # one dialect or the other), never inferred.
+            style = ((env.get("HIVE_API_STYLE") or "").strip()
+                     or (config.get("api_style") or "").strip())
+            if style not in ("openai", "anthropic"):
+                api_style = ""
+                warnings.append(
+                    "unsloth requires api_style = \"openai\" or \"anthropic\" "
+                    "(set [llm].api_style in config.toml or HIVE_API_STYLE)")
+            else:
+                api_style = style
+            if not base_url:
+                warnings.append(
+                    "unsloth requires base_url (the endpoint URL in "
+                    "[llm].base_url or HIVE_API_BASE)")
     else:
         if not base_url:
             return Resolved(model=model, warnings=["No LLM provider configured"])
