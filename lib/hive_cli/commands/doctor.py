@@ -81,6 +81,59 @@ def resolve_publisher(config_path, default_publisher):
     return Path(default_publisher), "built-in default"
 
 
+def _toml_loads_file(path: Path) -> dict:
+    try:
+        import tomllib
+    except ImportError:  # Python 3.10 (CI matrix) — CI installs tomli
+        import tomli as tomllib
+    return tomllib.loads(path.read_text()) or {}
+
+
+def _config_integrity_check() -> bool:
+    """A1: a typo'd section or key in the user config must be discoverable
+    in seconds, not in a failed sprint. The user file is validated against
+    the defaults schema (etc/config.defaults.toml is itself the schema —
+    anything unknown in the merged config comes from the user file). Each
+    offender is reported with a difflib close-match suggestion so the fix
+    is visible on the line: 'unknown key llms.provder — did you mean
+    llm.provider?'."""
+    print("\nConfig integrity:")
+    core_dir = str(HIVE_ROOT / "lib" / "core")
+    if core_dir not in sys.path:
+        sys.path.insert(0, core_dir)
+    from llm_providers import (known_paths, load_defaults, suggest_close,
+                               unknown_config_keys)
+    schema = load_defaults(HIVE_ROOT)
+    if not schema:
+        print(f" \033[33m·\033[0m {'config keys':<35} "
+              f"no defaults schema at {HIVE_ROOT / 'etc' / 'config.defaults.toml'}")
+        return True
+    cfg_path = Path(os.environ.get("HIVE_CONFIG",
+                                   Path.home() / ".config" / "hive" / "config.toml"))
+    user_cfg = {}
+    if cfg_path.is_file():
+        try:
+            user_cfg = _toml_loads_file(cfg_path) or {}
+        except Exception as e:
+            return _check("config keys (user file)", False,
+                          f"{cfg_path} does not parse as TOML: {e}")
+    unknowns = unknown_config_keys(user_cfg, schema)
+    if not unknowns:
+        return _check("config keys (user file)", True,
+                      f"all known ({cfg_path})" if cfg_path.is_file()
+                      else "no user config — defaults only")
+    candidates = known_paths(schema) + list(schema.keys())
+    lines = []
+    for u in unknowns:
+        kind = "section" if "." not in u else "key"
+        msg = f"unknown {kind} {u}"
+        sugg = suggest_close(u, candidates)
+        if sugg:
+            msg += " — did you mean " + " or ".join(sugg) + "?"
+        lines.append(msg)
+    return _check("config keys (user file)", False, "; ".join(lines))
+
+
 def _pyproject_version(pyproject_path) -> str | None:
     """Read the top-level [project] version field from a pyproject.toml
     (naive line scan — the format is ours). None if absent/unreadable."""
@@ -242,6 +295,11 @@ def handle(args) -> int:
             all_ok &= _check("LLM endpoint reachable (--deep)", ok, detail)
     except Exception as e:
         all_ok &= _check("LLM provider resolution", False, str(e))
+
+    # Config integrity (A1): unknown sections/keys in the user config fail
+    # here with a close-match suggestion — a typo'd provider must not ship
+    # invisibly into a failed sprint.
+    all_ok &= _config_integrity_check()
 
     all_ok &= _check("git", shutil.which("git") is not None)
     all_ok &= _check("jq", shutil.which("jq") is not None)

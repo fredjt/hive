@@ -15,6 +15,7 @@ Provider selection:
 """
 from __future__ import annotations
 
+import difflib
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -73,6 +74,54 @@ def load_config(hive_root: str | Path | None = None,
     for section, value in user_cfg.items():
         config[section] = value
     return config
+
+
+def load_defaults(hive_root: str | Path | None = None) -> dict:
+    """Parse etc/config.defaults.toml — the schema of known sections and
+    keys that user-config validation (A1) checks against."""
+    root = (Path(hive_root) if hive_root
+            else Path(__file__).resolve().parent.parent.parent)
+    defaults = root / "etc" / "config.defaults.toml"
+    if defaults.is_file():
+        return _toml_loads(defaults.read_text()) or {}
+    return {}
+
+
+def known_paths(schema: dict) -> list[str]:
+    """All known 'section.key' dotted paths in a config schema."""
+    out = []
+    for section, value in schema.items():
+        if isinstance(value, dict):
+            out.extend(f"{section}.{k}" for k in value)
+    return out
+
+
+def unknown_config_keys(user_cfg: dict, schema: dict) -> list[str]:
+    """A1: collect unknown sections and keys in a user config, relative to
+    the defaults schema. Returns sorted dotted 'section.key' offenders —
+    an unknown section contributes one entry per key it holds (and the bare
+    section name when it has none). Empty means every user key is known,
+    so a typo'd section or key can no longer ship invisibly."""
+    offenders: set[str] = set()
+    known_sections = {s for s in schema if isinstance(schema[s], dict)}
+    for section, value in user_cfg.items():
+        if section not in known_sections:
+            if isinstance(value, dict):
+                offenders.update(f"{section}.{k}" for k in value)
+            if not isinstance(value, dict) or not value:
+                offenders.add(section)
+            continue
+        known_keys = set(schema[section])
+        if isinstance(value, dict):
+            offenders.update(f"{section}.{k}" for k in value if k not in known_keys)
+        else:
+            offenders.add(section)
+    return sorted(offenders)
+
+
+def suggest_close(name: str, candidates: list[str], n: int = 3) -> list[str]:
+    """A1: difflib close matches for a typo'd config section or key."""
+    return difflib.get_close_matches(name, candidates, n=n, cutoff=0.6)
 
 
 def detect_provider(base_url: str) -> str:

@@ -80,6 +80,28 @@ def _load() -> dict:
     return config
 
 
+def _user_cfg() -> dict:
+    """Parse the user config file ({} when missing/unparseable)."""
+    if USER_CONFIG.is_file():
+        try:
+            return tomllib.loads(USER_CONFIG.read_text()) or {}
+        except Exception:
+            return {}
+    return {}
+
+
+def _unknown_keys() -> list:
+    """A1: unknown sections/keys in the user config vs the defaults schema."""
+    core = HIVE_ROOT / "lib" / "core"
+    if str(core) not in sys.path:
+        sys.path.insert(0, str(core))
+    from llm_providers import unknown_config_keys, load_defaults
+    schema = load_defaults(HIVE_ROOT)
+    if not schema:
+        return []
+    return unknown_config_keys(_user_cfg(), schema)
+
+
 def _walk(d: dict, key: str):
     parts = key.split(".")
     cur = d
@@ -93,7 +115,14 @@ def _walk(d: dict, key: str):
 def handle(args) -> int:
     if args.action == "show":
         import json as _json
-        print(_json.dumps(_load(), indent=2))
+        merged = _load()
+        unknowns = _unknown_keys()
+        if unknowns:
+            merged["_unknown_keys"] = unknowns
+            for u in unknowns:
+                print(f"warning: unknown key {u} — edit {USER_CONFIG}",
+                      file=sys.stderr)
+        print(_json.dumps(merged, indent=2))
         return 0
     if args.action == "get":
         v = _walk(_load(), args.key)

@@ -353,6 +353,80 @@ class TestDoctorLlmHint:
         assert "hive config edit" in out
 
 
+class TestConfigIntegrity:
+    """A1: a typo'd section/key in the user config must be discoverable in
+    seconds, not in a failed sprint — `hive doctor` fails with the exact
+    offender plus a difflib close-match suggestion, and `hive config show`
+    marks unknown keys in its output. Driven against a scratch HOME."""
+
+    install_dir = Path(__file__).resolve().parent.parent
+
+    @staticmethod
+    def _run(home, *args):
+        env = {**os.environ, "HOME": str(home),
+               "HIVE_ROOT": str(TestConfigIntegrity.install_dir),
+               "PYTHONPATH": str(TestConfigIntegrity.install_dir / "lib")
+               + os.pathsep + os.environ.get("PYTHONPATH", "")}
+        return subprocess.run(
+            [sys.executable, "-m", "hive_cli.main", *args],
+            capture_output=True, text=True, env=env,
+            cwd=str(TestConfigIntegrity.install_dir), timeout=120,
+        )
+
+    @staticmethod
+    def _write_user_config(home, text):
+        cfg = home / ".config" / "hive"
+        cfg.mkdir(parents=True)
+        (cfg / "config.toml").write_text(text)
+
+    def test_doctor_fails_on_unknown_key_and_names_close_match(self, tmp_path):
+        self._write_user_config(tmp_path, '[llms]\nprovder = "openai"\n')
+        r = self._run(tmp_path, "doctor")
+        assert r.returncode != 0, \
+            "a typo'd config key must fail the doctor run — it would " \
+            "otherwise ship invisibly into a failed sprint"
+        assert "llms.provder" in r.stdout, "the exact offender must be named"
+        assert "llm.provider" in r.stdout, \
+            "a close-match suggestion must point at the real key"
+        assert "did you mean" in r.stdout
+
+    def test_doctor_fails_on_unknown_section(self, tmp_path):
+        self._write_user_config(tmp_path, "[llms]\n")
+        r = self._run(tmp_path, "doctor")
+        assert r.returncode != 0
+        assert "llms" in r.stdout and "did you mean" in r.stdout
+
+    def test_doctor_fails_on_unknown_key_in_known_section(self, tmp_path):
+        self._write_user_config(tmp_path, '[llm]\nprovderr = "openai"\n')
+        r = self._run(tmp_path, "doctor")
+        assert r.returncode != 0
+        assert "llm.provderr" in r.stdout
+        assert "llm.provider" in r.stdout
+
+    def test_doctor_stays_green_on_valid_user_config(self, tmp_path):
+        self._write_user_config(
+            tmp_path, '[llm]\nprovider = "openai"\nmodel = "some-model"\n')
+        r = self._run(tmp_path, "doctor")
+        assert "unknown key" not in r.stdout, \
+            "a config with only known keys must not trigger the integrity check"
+        assert "unknown section" not in r.stdout
+
+    def test_config_show_marks_unknown_keys(self, tmp_path):
+        self._write_user_config(tmp_path, '[llms]\nprovder = "openai"\n')
+        r = self._run(tmp_path, "config", "show")
+        assert r.returncode == 0
+        data = json.loads(r.stdout)
+        assert "llms.provder" in data.get("_unknown_keys", []), \
+            "unknown keys must be marked in the show output"
+
+    def test_config_show_clean_has_no_unknowns(self, tmp_path):
+        self._write_user_config(tmp_path, '[llm]\nprovider = "openai"\n')
+        r = self._run(tmp_path, "config", "show")
+        assert r.returncode == 0
+        data = json.loads(r.stdout)
+        assert data.get("_unknown_keys", []) == []
+
+
 class TestStatusDaemonSection:
     """B.3: `hive status` surfaces per-daemon liveness, restart_count, and
     the supervisor's dead state (restart budget exhausted) read straight
