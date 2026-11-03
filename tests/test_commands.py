@@ -2,6 +2,8 @@
 import sys
 import os
 import json
+import re
+import subprocess
 from pathlib import Path
 # Ensure lib/ is on the path when running from within hive/ directory
 _hive_lib = str(Path(__file__).resolve().parent.parent / "lib")
@@ -223,6 +225,109 @@ class TestConfigCommand:
     def test_config_get_exists(self):
         # The handle function should process 'get' action
         pass  # Hard to test without actual config file
+
+
+class TestConfigSetUpsert:
+    """C2: `hive config set` does a real TOML upsert. The old line-append
+    emitted a duplicate [section] header per call, which made the user
+    config unparseable for every reader (doctor, harness, CLI) after the
+    second set into the same section. `hive config edit` seeds a missing
+    file from the tracked template instead of a blank comment."""
+
+    install_dir = Path(__file__).resolve().parent.parent
+
+    @staticmethod
+    def _run(home, *args):
+        env = {**os.environ, "HOME": str(home),
+               "HIVE_ROOT": str(TestConfigSetUpsert.install_dir),
+               "PYTHONPATH": str(TestConfigSetUpsert.install_dir / "lib")
+               + os.pathsep + os.environ.get("PYTHONPATH", "")}
+        return subprocess.run(
+            [sys.executable, "-m", "hive_cli.main", "config", *args],
+            capture_output=True, text=True, env=env,
+            cwd=str(TestConfigSetUpsert.install_dir), timeout=60,
+        )
+
+    @staticmethod
+    def _load(path):
+        try:
+            import tomllib
+        except ImportError:
+            import tomli as tomllib
+        return tomllib.loads(Path(path).read_text())
+
+    def test_set_creates_file_seeded_from_template(self, tmp_path):
+        r = self._run(tmp_path, "set", "llm.provider", "openai")
+        assert r.returncode == 0, r.stderr
+        text = (tmp_path / ".config" / "hive" / "config.toml").read_text()
+        assert re.search(r'^provider\s*=\s*"openai"\s*$', text, flags=re.M), \
+            "value must land on the key line (not just in a comment)"
+        assert text.count("[llm]") == 1
+        # Fresh file carries the template: other sections present too
+        assert "[dashboard]" in text and "[release]" in text and "[tdd]" in text
+
+    def test_set_same_section_thrice_never_duplicates_table(self, tmp_path):
+        for key, val in (("llm.provider", "openai"),
+                         ("llm.model", "qwen3"),
+                         ("llm.api_key", "sk-test")):
+            r = self._run(tmp_path, "set", key, val)
+            assert r.returncode == 0, r.stderr
+        path = tmp_path / ".config" / "hive" / "config.toml"
+        text = path.read_text()
+        assert text.count("[llm]") == 1, \
+            "duplicate [llm] table — the file would be unparseable"
+        data = self._load(path)
+        assert data["llm"]["provider"] == "openai"
+        assert data["llm"]["model"] == "qwen3"
+        assert data["llm"]["api_key"] == "sk-test"
+
+    def test_set_replaces_existing_key(self, tmp_path):
+        self._run(tmp_path, "set", "llm.provider", "openai")
+        r = self._run(tmp_path, "set", "llm.provider", "anthropic")
+        assert r.returncode == 0, r.stderr
+        text = (tmp_path / ".config" / "hive" / "config.toml").read_text()
+        key_lines = re.findall(r"^provider\s*=.*$", text, flags=re.M)
+        assert len(key_lines) == 1, "key must be replaced, not appended"
+        assert re.search(r'^provider\s*=\s*"anthropic"\s*$', text, flags=re.M)
+
+    def test_set_types_int_and_bool(self, tmp_path):
+        self._run(tmp_path, "set", "mcp.port", "9000")
+        self._run(tmp_path, "set", "logs.journal", "true")
+        path = tmp_path / ".config" / "hive" / "config.toml"
+        data = self._load(path)
+        assert data["mcp"]["port"] == 9000
+        assert data["logs"]["journal"] is True
+
+    def test_set_new_section_appends(self, tmp_path):
+        cfg = tmp_path / ".config" / "hive"
+        cfg.mkdir(parents=True)
+        (cfg / "config.toml").write_text("[mcp]\nport = 7891\n")
+        r = self._run(tmp_path, "set", "sprint.max_active_tickets", "9")
+        assert r.returncode == 0, r.stderr
+        data = self._load(cfg / "config.toml")
+        assert data["sprint"]["max_active_tickets"] == 9
+        assert data["mcp"]["port"] == 7891
+
+    def test_set_rejects_non_dotted_key(self, tmp_path):
+        r = self._run(tmp_path, "set", "llm", "openai")
+        assert r.returncode != 0
+        assert "section.key" in r.stderr
+
+    def test_config_edit_seeds_template_not_blank_comment(self, tmp_path):
+        env = {**os.environ, "HOME": str(tmp_path),
+               "HIVE_ROOT": str(self.install_dir), "EDITOR": "true",
+               "PYTHONPATH": str(self.install_dir / "lib")
+               + os.pathsep + os.environ.get("PYTHONPATH", "")}
+        r = subprocess.run(
+            [sys.executable, "-m", "hive_cli.main", "config", "edit"],
+            capture_output=True, text=True, env=env,
+            cwd=str(self.install_dir), timeout=60,
+        )
+        assert r.returncode == 0, r.stderr
+        text = (tmp_path / ".config" / "hive" / "config.toml").read_text()
+        assert "[llm]" in text and "[tdd]" in text, \
+            "a missing config must be seeded from the template so the " \
+            "editor shows every key with its working default"
 
 
 class TestStatusDaemonSection:
