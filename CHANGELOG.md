@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.7.1
+
+Config streamlining — one visible config file, created by the installer.
+
+- The installer now scaffolds `~/.config/hive/config.toml` from the new
+  tracked `etc/config.template.toml`: every section and key, with working
+  defaults and commented examples, at install time — and it never
+  overwrites a file that already exists.
+- `hive config set` does a real TOML upsert (replace in place, add to an
+  existing section, or create the section) with typed values and a
+  parse-check that refuses to write a file that would not load; the old
+  line-append produced duplicate `[section]` tables that made the config
+  unreadable for doctor, the harness and the CLI after the second set.
+- `hive config edit` seeds a missing file from the template instead of a
+  blank comment line.
+- `hive doctor` names the exact file to edit when the LLM provider is
+  unconfigured (and says to run `hive config edit` when the file does not
+  exist yet).
+- The installer's env-file hint now points at `$HOME/.config/hive/env.sh`
+  for shell-level daemon env only (PATH, GITHUB_TOKEN) and stops
+  recommending the retired ANTHROPIC_* / LLM_TINY_* variable names — LLM
+  settings belong in config.toml.
+- Both READMEs document the configure step in the quick start.
+
 ## 0.7.0
 
 First public release — the first Hive anyone outside the project will

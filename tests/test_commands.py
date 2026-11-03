@@ -330,6 +330,29 @@ class TestConfigSetUpsert:
             "editor shows every key with its working default"
 
 
+class TestDoctorLlmHint:
+    """C4: an unconfigured LLM provider must name the exact file to edit —
+    the old message said 'the [llm] section of config.toml' with no path,
+    which is how a stranger was pointed at a file they could not find."""
+
+    install_dir = Path(__file__).resolve().parent.parent
+
+    def test_doctor_names_the_user_config_file(self, tmp_path):
+        env = {**os.environ, "HOME": str(tmp_path),
+               "PYTHONPATH": str(self.install_dir / "lib")
+               + os.pathsep + os.environ.get("PYTHONPATH", "")}
+        r = subprocess.run(
+            [sys.executable, "-m", "hive_cli.main", "doctor"],
+            capture_output=True, text=True, env=env,
+            cwd=str(self.install_dir), timeout=120,
+        )
+        out = r.stdout + r.stderr
+        user_cfg = str(tmp_path / ".config" / "hive" / "config.toml")
+        assert "LLM provider configured" in out
+        assert user_cfg in out, "doctor must name the exact file to edit"
+        assert "hive config edit" in out
+
+
 class TestStatusDaemonSection:
     """B.3: `hive status` surfaces per-daemon liveness, restart_count, and
     the supervisor's dead state (restart budget exhausted) read straight

@@ -46,12 +46,18 @@ git clone https://github.com/fredjt/hive.git
 bash hive/packaging/install.sh --copy-to ~/.local/share/hive
 ```
 
-Then run the doctor gate — it must pass before you point a project at
-the install:
+Then point Hive at your LLM and run the doctor gate — it must pass
+before you point a project at the install. The installer created
+`~/.config/hive/config.toml` with every key defaulted; the only section
+that has no working default is `[llm]`:
 
 ```bash
-hive doctor
+hive config edit    # set provider/model/base_url/api_key in [llm] (examples are commented in)
+hive doctor         # gate: all checks green
 ```
+
+One-shot runs can export `HIVE_PROVIDER`, `HIVE_MODEL`, `HIVE_API_BASE`
+and `HIVE_API_KEY` instead of the config file.
 
 The installer copies the tree to `~/.local/share/hive`, creates a Python
 venv there with the required packages, and symlinks `~/.local/bin/hive`
