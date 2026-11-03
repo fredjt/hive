@@ -188,6 +188,8 @@ def _add_doctor(sub) -> None:
     p.add_argument("project_dir", nargs="?", default=".", help="Project root to check .company/ daemon health in (default: .)")
     p.add_argument("--deep", action="store_true",
                    help="Also probe LLM endpoint reachability (uses the network)")
+    p.add_argument("--json", action="store_true",
+                   help="C1: emit a machine-readable JSON dump of every check (exit code unchanged)")
     p.set_defaults(_handler=doctor.handle)
 
 

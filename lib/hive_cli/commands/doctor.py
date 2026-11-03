@@ -21,11 +21,22 @@ HIVE_INSTALL_DIR = Path(os.environ.get("HIVE_INSTALL_DIR",
 HIVE_ROOT = Path(os.environ.get("HIVE_ROOT", HIVE_INSTALL_DIR))
 
 
+# C1: run context — handle() sets JSON mode + the check/warning/llm sinks
+# here so the pretty body below can stay untouched while --json collects
+# the same checks into a machine-readable dump.
+_RUN = {"json": False, "checks": None, "warnings": None, "llm": None}
+
+
 def _check(name: str, ok: bool, detail: str = "") -> bool:
+    checks = _RUN.get("checks")
+    if checks is not None:
+        checks.append({"name": name, "ok": bool(ok), "detail": detail})
+    if _RUN.get("json"):
+        return bool(ok)
     sym = "✓" if ok else "✗"
     color = "\033[32m" if ok else "\033[31m"
     print(f" {color}{sym}\033[0m {name:<35} {detail}")
-    return ok
+    return bool(ok)
 
 
 def _probe_endpoint(base_url: str, timeout: float = 5.0) -> tuple[bool, str]:
@@ -203,6 +214,33 @@ def _release_checks() -> bool:
 
 
 def handle(args) -> int:
+    """Run every check; exit 0 iff all pass. C1: with --json the pretty
+    output is replaced by a machine-readable dump (every check as
+    name/ok/detail, plus the resolved LLM identity) on stdout — the exit
+    code is the same either way."""
+    json_mode = bool(getattr(args, "json", False))
+    checks: list = []
+    warnings: list = []
+    llm_info: dict = {}
+    _RUN.update({"json": json_mode, "checks": checks,
+                 "warnings": warnings, "llm": llm_info})
+    if json_mode:
+        import contextlib
+        import io
+        with contextlib.redirect_stdout(io.StringIO()):
+            all_ok = _run_checks(args)
+        payload = {"ok": bool(all_ok), "checks": checks,
+                   "warnings": warnings, "llm": llm_info}
+        version_file = HIVE_INSTALL_DIR / "VERSION"
+        if version_file.is_file():
+            payload["version"] = version_file.read_text().strip()
+        print(json.dumps(payload, indent=2))
+    else:
+        all_ok = _run_checks(args)
+    return 0 if all_ok else 1
+
+
+def _run_checks(args) -> bool:
     print("Hive doctor — checking installation\n")
     all_ok = True
 
@@ -258,13 +296,23 @@ def handle(args) -> int:
         from llm_providers import resolve as _resolve_llm
         from llm_providers import unconfigured_hint
         llm_res = _resolve_llm(hive_root=HIVE_ROOT)
+        if llm_res.key_from_env:
+            key_src = "env " + llm_res.key_from_env
+        elif llm_res.key_in_config:
+            key_src = "config [llm].api_key"
+        else:
+            key_src = "none"
+        # C1: the resolved identity goes into the JSON dump (key SOURCE
+        # label only — never the key value itself).
+        if _RUN.get("llm") is not None:
+            _RUN["llm"].update({
+                "configured": bool(llm_res.is_configured),
+                "provider": llm_res.provider,
+                "model": llm_res.model,
+                "base_url": llm_res.base_url,
+                "key_source": key_src,
+            })
         if llm_res.is_configured:
-            if llm_res.key_from_env:
-                key_src = "env " + llm_res.key_from_env
-            elif llm_res.key_in_config:
-                key_src = "config [llm].api_key"
-            else:
-                key_src = "none"
             all_ok &= _check("LLM provider configured", True,
                              "provider={0} model={1} base={2} key={3}".format(
                                  llm_res.provider or "?", llm_res.model or "(default)",
@@ -275,6 +323,8 @@ def handle(args) -> int:
             all_ok &= _check("LLM provider configured", False,
                              unconfigured_hint(hive_root=HIVE_ROOT))
         for w in llm_res.warnings:
+            if _RUN.get("warnings") is not None:
+                _RUN["warnings"].append(w)
             print("  warning: " + w)
         # B.4: optional reachability probe — behind --deep so a plain
         # `hive doctor` stays offline-safe.
@@ -359,6 +409,6 @@ def handle(args) -> int:
     print()
     if all_ok:
         print("\033[32mAll checks passed.\033[0m")
-        return 0
-    print("\033[31mSome checks failed. See output above.\033[0m")
-    return 1
+    else:
+        print("\033[31mSome checks failed. See output above.\033[0m")
+    return all_ok

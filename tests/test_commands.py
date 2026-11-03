@@ -632,6 +632,84 @@ class TestLlmUsageLogNaming:
         assert "llm-usage.log" in r.stdout + r.stderr
 
 
+class TestDoctorJson:
+    """C1: `hive doctor --json` — a machine-readable dump of every check
+    (name, ok, detail) on stdout; the exit code is unchanged from the
+    pretty run. The dump carries the resolved LLM identity (provider,
+    model, base_url, key SOURCE — never the key) for the dashboard."""
+
+    @staticmethod
+    def _args(json_mode):
+        import argparse
+        return argparse.Namespace(project_dir=".", json=json_mode, deep=False)
+
+    def test_doctor_json_parses_and_exit_matches_pretty(self, tmp_path, monkeypatch, capsys):
+        from hive_cli.commands import doctor
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("HOME", str(tmp_path))
+        monkeypatch.delenv("HIVE_CONFIG", raising=False)
+        for var in ("HIVE_PROVIDER", "HIVE_MODEL", "HIVE_API_BASE", "HIVE_API_KEY"):
+            monkeypatch.delenv(var, raising=False)
+
+        capsys.readouterr()
+        rc_pretty = doctor.handle(self._args(False))
+        capsys.readouterr()
+        rc_json = doctor.handle(self._args(True))
+
+        out = capsys.readouterr().out
+        data = json.loads(out)  # the entire stdout is JSON
+        assert set(data.keys()) >= {"ok", "checks", "llm"}
+        assert rc_json == rc_pretty,             "the --json run must exit like the pretty run"
+        assert data["ok"] is (rc_json == 0)
+
+    def test_doctor_json_every_check_has_name_ok_detail(self, tmp_path, monkeypatch, capsys):
+        from hive_cli.commands import doctor
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("HOME", str(tmp_path))
+        doctor.handle(self._args(True))
+        data = json.loads(capsys.readouterr().out)
+        assert len(data["checks"]) > 10
+        for c in data["checks"]:
+            assert set(c.keys()) == {"name", "ok", "detail"}
+            assert isinstance(c["ok"], bool)
+
+    def test_doctor_json_llm_check_carries_resolved_identity(self, tmp_path, monkeypatch, capsys):
+        """The LLM check must carry the resolved provider/base_url (and the
+        key's source label — never the key value)."""
+        from hive_cli.commands import doctor
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("HOME", str(tmp_path))
+        monkeypatch.setenv("HIVE_PROVIDER", "openai")
+        monkeypatch.setenv("HIVE_MODEL", "json-model")
+        monkeypatch.setenv("HIVE_API_BASE", "http://127.0.0.1:1/v1")
+        monkeypatch.setenv("HIVE_API_KEY", "sk-should-never-appear")
+        doctor.handle(self._args(True))
+        out = capsys.readouterr().out
+        data = json.loads(out)
+        assert data["llm"]["configured"] is True
+        assert data["llm"]["provider"] == "openai"
+        assert data["llm"]["model"] == "json-model"
+        assert data["llm"]["base_url"] == "http://127.0.0.1:1/v1"
+        assert data["llm"]["key_source"] == "env HIVE_API_KEY"
+        assert "sk-should-never-appear" not in out,             "the key value must never appear in the dump"
+        llm_checks = [c for c in data["checks"] if c["name"] == "LLM provider configured"]
+        assert llm_checks and llm_checks[0]["ok"] is True
+        assert "json-model" in llm_checks[0]["detail"]
+
+    def test_doctor_json_unconfigured_llm(self, tmp_path, monkeypatch, capsys):
+        from hive_cli.commands import doctor
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("HOME", str(tmp_path))
+        for var in ("HIVE_PROVIDER", "HIVE_MODEL", "HIVE_API_BASE", "HIVE_API_KEY"):
+            monkeypatch.delenv(var, raising=False)
+        doctor.handle(self._args(True))
+        out = capsys.readouterr().out
+        data = json.loads(out)
+        assert data["llm"]["configured"] is False
+        user_cfg = str(tmp_path / ".config" / "hive" / "config.toml")
+        assert user_cfg in out,             "the unconfigured dump must name the config file (C4/B1 message)"
+
+
 class TestStatusDaemonSection:
     """B.3: `hive status` surfaces per-daemon liveness, restart_count, and
     the supervisor's dead state (restart budget exhausted) read straight
