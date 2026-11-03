@@ -45,7 +45,7 @@ proc = subprocess.Popen(
 - **Company dir resolution**: Prefer `_cd()` or `_company_dir(args)` helpers that check `Path.cwd() / ".company"` — they return `None` if the directory doesn't exist. Some commands accept an explicit `company_dir` argument; pass it as a payload key.
 - **JSON output**: All commands that produce structured output use `json.dumps(result, indent=2)`.
 - **Exit codes**: Return 0 on success, non-zero on failure. The dispatcher passes this to `sys.exit()`.
-- **HIVE_ROOT / HIVE_INSTALL_DIR**: Resolve via `Path(__file__).resolve().parents[3]` as a fallback when environment variables are unset. `parents[3]` walks up: `commands/` → `hive_cli/` → `hive_cli` (parent dir) → `hive-0.5.15/` (install root).
+- **HIVE_ROOT / HIVE_INSTALL_DIR**: Resolve via `Path(__file__).resolve().parents[3]` as a fallback when environment variables are unset. `parents[3]` walks up: `commands/` → `hive_cli/` → `hive_cli` (parent dir) → `hive-<version>/` (install root).
 - **Docstrings**: Every file has a module-level docstring describing its subcommands. Multi-action commands list them in the docstring.
 
 ## Adding a new subcommand

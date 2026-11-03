@@ -243,7 +243,7 @@ class TestVersionFile:
 
     def test_version_file_is_semver_like(self):
         content = Path("VERSION").read_text().strip()
-        # Should be a version string like "0.5.14"
+        # Should be a version string like "1.2.3"
         parts = content.split(".")
         assert len(parts) >= 2, f"Version '{content}' doesn't look like semver"
 

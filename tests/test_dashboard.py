@@ -370,6 +370,45 @@ class TestInstallDoc:
         assert len(content.strip()) > 10
 
 
+class TestNoStaleVersionStrings:
+    """B.2: the public surface must not carry stale 0.5.x version pins.
+
+    INSTALL once shipped a header pinning a release it had long since
+    outgrown (and it rots again if pinned). Nothing outside CHANGELOG.md
+    — which legitimately records the historical pre-0.6 releases — may
+    reference a 0.5.x version: no headers, no doc examples, no test
+    fixtures. (The literal is not repeated in this file for the same
+    reason test_zero_trace.py assembles its token from parts.)
+    """
+
+    @staticmethod
+    def _tracked_files():
+        r = subprocess.run(["git", "ls-files"], capture_output=True,
+                           text=True, timeout=30)
+        assert r.returncode == 0, "git ls-files failed"
+        return r.stdout.split()
+
+    def test_no_05x_version_outside_changelog(self):
+        stale = re.compile(r"0\.5\.\d+")
+        offenders = []
+        for f in self._tracked_files():
+            if f == "CHANGELOG.md":
+                continue
+            p = Path(f)
+            if not p.is_file():
+                continue
+            try:
+                text = p.read_text(encoding="utf-8")
+            except (UnicodeDecodeError, OSError):
+                continue  # binary file
+            if stale.search(text):
+                offenders.append(f)
+        assert not offenders, (
+            "stale 0.5.x version string outside CHANGELOG.md: "
+            f"{offenders}"
+        )
+
+
 class TestPullRequestTemplate:
     """Test the PR template."""
 

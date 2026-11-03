@@ -1,4 +1,4 @@
-Hive 0.5.14 — installation
+Hive — installation
 
   1. Extract this archive (you've already done this)
   2. Run: bash packaging/install.sh --copy-to ~/.local/share/hive

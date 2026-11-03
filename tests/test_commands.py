@@ -522,12 +522,12 @@ class TestDoctorReleasePath:
     def test_pyproject_version_stale_fails(self, tmp_path, monkeypatch, capsys):
         """The exact drift this round ships with: VERSION bumped, the
         installed tree's pyproject metadata left behind."""
-        install = self._stub_install(tmp_path, version="0.5.17",
-                                     pyproject_version="0.5.16")
+        install = self._stub_install(tmp_path, version="0.7.0",
+                                     pyproject_version="0.6.0")
         ok, out = self._run_release_checks(tmp_path, monkeypatch, capsys, install)
         assert ok is False
         assert "STALE" in out
-        assert "VERSION=0.5.17 pyproject=0.5.16" in out
+        assert "VERSION=0.7.0 pyproject=0.6.0" in out
 
     def test_pyproject_missing_is_tolerated(self, tmp_path, monkeypatch, capsys):
         install = self._stub_install(tmp_path, write_pyproject=False)
