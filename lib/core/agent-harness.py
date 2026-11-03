@@ -270,33 +270,34 @@ except ImportError:
     _httpx = None  # type: ignore
 
 
-# Supported providers and their endpoint patterns
-PROVIDER_CONFIGS = {
-    "openai": {
-        "base_url": "https://api.openai.com/v1",
-        "headers_template": {"Authorization": "Bearer {api_key}", "Content-Type": "application/json"},
-    },
-    "anthropic": {
-        "base_url": "https://api.anthropic.com/v1",
-        "headers_template": {"x-api-key": "{api_key}", "Content-Type": "application/json", "anthropic-version": "2023-06-01"},
-    },
-    "ollama": {
-        "base_url": "http://localhost:11434/v1",
-        "headers_template": {"Content-Type": "application/json"},  # Ollama doesn't need auth by default
-    },
-    "openrouter": {
-        "base_url": "https://openrouter.ai/api/v1",
-        "headers_template": {"Authorization": "Bearer {api_key}", "Content-Type": "application/json", "HTTP-Referer": "https://github.com/fredjt/hive", "X-Title": "Hive Agent Harness"},
-    },
-    "groq": {
-        "base_url": "https://api.groq.com/openai/v1",
-        "headers_template": {"Authorization": "Bearer {api_key}", "Content-Type": "application/json"},
-    },
-}
+# Wire dialects and the provider registry live in llm_providers.py
+# (B.2): openai-style /chat/completions, anthropic-style /v1/messages,
+# gemini-style :generateContent. Import it by name when possible (the
+# harness runs as a script with its own dir on sys.path) and fall back
+# to a path-based load so the module also works when this file is
+# imported directly (e.g. by the test suite).
+try:
+    import llm_providers  # type: ignore
+except ImportError:  # pragma: no cover - import path depends on caller
+    import importlib.util as _ilu
+    import os as _os
+    try:
+        _spec = _ilu.spec_from_file_location(
+            "llm_providers",
+            _os.path.join(_os.path.dirname(_os.path.abspath(__file__)),
+                          "llm_providers.py"))
+        llm_providers = _ilu.module_from_spec(_spec)  # type: ignore
+        _spec.loader.exec_module(llm_providers)
+    except Exception:  # pragma: no cover
+        llm_providers = None  # type: ignore
 
 
 def detect_provider(api_base: str) -> str:
     """Detect the provider from the API base URL.
+
+    Fallback only (B.2): explicit provider selection (HIVE_PROVIDER /
+    [llm].provider) is the primary path; this exists so direct callers
+    and legacy env-only setups keep working.
 
     Returns a provider key that can be used to look up configuration.
     """
@@ -323,67 +324,55 @@ def detect_provider(api_base: str) -> str:
     return "custom"
 
 
+def wire_style(api_style: str | None, api_base: str | None) -> str:
+    """Resolve the wire dialect: explicit api_style wins; otherwise
+    detect it from the base URL (B.2 fallback path)."""
+    if api_style:
+        return api_style
+    provider = detect_provider(api_base or "")
+    if llm_providers is not None:
+        return llm_providers.style_for_provider(provider)
+    return "anthropic" if provider == "anthropic" else "openai"
+
+
 def build_request_payload(
     messages: list[dict],
     model: str,
     temperature: float = 0.7,
     max_tokens: int = 8192,
+    api_style: str | None = None,
+    api_base: str | None = None,
 ) -> dict:
-    """Build the request payload for an OpenAI-compatible API.
+    """Build the request body in the wire dialect's native shape.
 
-    Handles provider-specific adjustments (e.g., Anthropic's message format).
+    Dialect resolution (B.2): explicit api_style > detection from the
+    base URL. Shape building itself lives in llm_providers.build_payload.
     """
-    payload = {
-        "model": model,
-        "messages": messages,
-        "temperature": temperature,
-        "max_tokens": max_tokens,
-    }
-
-    # Anthropic uses a different message format
-    provider = detect_provider(os.environ.get("HIVE_API_BASE", ""))
-    if provider == "anthropic":
-        # Convert OpenAI-style messages to Anthropic format
-        anthropic_messages = []
-        system_content = None
-        for msg in messages:
-            if msg["role"] == "system":
-                system_content = msg["content"]
-            else:
-                anthropic_messages.append({"role": msg["role"], "content": msg["content"]})
-
-        payload = {
-            "model": model,
-            "messages": anthropic_messages,
-            "system": system_content or "You are a helpful assistant.",
-            "temperature": temperature,
-            "max_tokens": max_tokens,
-        }
-
-    return payload
+    style = wire_style(api_style, api_base if api_base is not None else os.environ.get("HIVE_API_BASE", ""))
+    if llm_providers is not None:
+        return llm_providers.build_payload(style, messages, model, temperature, max_tokens)
+    return {"model": model, "messages": messages,
+            "temperature": temperature, "max_tokens": max_tokens}
 
 
-def build_headers(api_base: str, api_key: str | None = None) -> dict[str, str]:
-    """Build headers for the API request based on provider detection."""
-    provider = detect_provider(api_base)
-    config = PROVIDER_CONFIGS.get(provider, PROVIDER_CONFIGS["openai"])
-
-    headers = {}
-    for key, value in config["headers_template"].items():
-        if "{api_key}" in value:
-            # Only add auth header if we have a key
-            if api_key:
-                headers[key] = value.format(api_key=api_key)
-        else:
-            headers[key] = value
-
+def build_headers(api_base: str, api_key: str | None = None,
+                  api_style: str | None = None,
+                  provider: str = "") -> dict[str, str]:
+    """Build headers for the API request (auth header per wire dialect)."""
+    style = wire_style(api_style, api_base)
+    if llm_providers is not None:
+        return llm_providers.build_headers(style, api_key, provider=provider)
+    headers = {"Content-Type": "application/json"}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
     return headers
 
 
-def parse_response(resp: httpx.Response) -> dict[str, Any]:
+def parse_response(resp: httpx.Response, api_style: str | None = None,
+                   api_base: str | None = None) -> dict[str, Any]:
     """Parse the API response into a standardized format.
 
-    Handles both OpenAI and Anthropic response formats.
+    Handles every wire dialect (openai / anthropic / gemini).
     Returns a dict with ok/content/model/usage/error keys.
     """
     try:
@@ -394,64 +383,16 @@ def parse_response(resp: httpx.Response) -> dict[str, Any]:
             "error": f"Invalid JSON response: {resp.text[:200]}",
         }
 
-    provider = detect_provider(os.environ.get("HIVE_API_BASE", ""))
-
-    # Anthropic format
-    if provider == "anthropic":
-        content_blocks = data.get("content", [])
-        content_parts = []
-        for block in content_blocks:
-            if isinstance(block, dict) and block.get("type") == "text":
-                content_parts.append(block.get("text", ""))
-
-        return {
-            "ok": True,
-            "content": "\n".join(content_parts),
-            "model": data.get("model", "anthropic"),
-            "usage": {
-                "prompt_tokens": data.get("usage", {}).get("input_tokens", 0),
-                "completion_tokens": data.get("usage", {}).get("output_tokens", 0),
-                "total_tokens": (data.get("usage", {}).get("input_tokens", 0) +
-                                data.get("usage", {}).get("output_tokens", 0)),
-            },
-        }
-
-    # OpenAI format (default)
+    style = wire_style(api_style, api_base if api_base is not None else os.environ.get("HIVE_API_BASE", ""))
+    if llm_providers is not None:
+        return llm_providers.parse_response_body(style, data)
+    # Fallback: openai shape only.
     choices = data.get("choices", [])
     if not choices:
-        return {
-            "ok": False,
-            "error": "No choices in response",
-        }
-
-    message = choices[0].get("message", {})
-    content = message.get("content", "")
-
-    # Extract token usage
-    usage = data.get("usage", {})
-    total_cost_usd = 0.0
-    if usage:
-        prompt_tokens = usage.get("prompt_tokens", 0)
-        completion_tokens = usage.get("completion_tokens", 0)
-        # Rough cost estimation (varies by model)
-        if "gpt-4" in data.get("model", "").lower():
-            total_cost_usd = (prompt_tokens * 0.00003 + completion_tokens * 0.00006) / 1000
-        elif "gpt-3.5" in data.get("model", "").lower():
-            total_cost_usd = (prompt_tokens * 0.0000015 + completion_tokens * 0.000002) / 1000
-        elif any(m in data.get("model", "").lower() for m in ["anthropic"]):
-            total_cost_usd = (prompt_tokens * 0.000003 + completion_tokens * 0.000015) / 1000
-
-    return {
-        "ok": True,
-        "content": content or "",
-        "model": data.get("model", "unknown"),
-        "usage": {
-            "prompt_tokens": usage.get("prompt_tokens", 0),
-            "completion_tokens": usage.get("completion_tokens", 0),
-            "total_tokens": usage.get("total_tokens", 0),
-            "total_cost_usd": total_cost_usd,
-        },
-    }
+        return {"ok": False, "error": "No choices in response"}
+    return {"ok": True, "content": choices[0].get("message", {}).get("content", "") or "",
+            "model": data.get("model", "unknown"),
+            "usage": data.get("usage", {})}
 
 
 def call_llm_api(
@@ -462,23 +403,32 @@ def call_llm_api(
     temperature: float | None = None,
     max_tokens: int | None = None,
     retries: int = 3,
+    api_style: str | None = None,
+    provider: str | None = None,
 ) -> dict[str, Any]:
-    """Call an OpenAI-compatible LLM API with retry logic.
+    """Call an LLM API with retry logic, in the provider's native wire shape.
 
-    Supports multiple providers (OpenAI, Anthropic, Ollama, OpenRouter, Groq).
-    Falls back to local inference if no API config is provided.
+    Supports every registered provider (B.2): openai, anthropic, groq,
+    openrouter, ollama, google. The wire dialect comes from `api_style`
+    (explicit provider selection, the primary path since B.2) or falls
+    back to detection from the base URL.
 
     Args:
         messages: Conversation history as list of {role, content} dicts.
         api_base: Base URL for the LLM API (e.g., https://api.openai.com/v1).
-        model: Model name to use (e.g., gpt-4o, gemini-pro).
+        model: Model name to use (e.g., gpt-4o, gemini-2.0-flash).
         api_key: API key for authentication.
         temperature: Sampling temperature (0.0-2.0). Default 0.7.
         max_tokens: Maximum tokens in response. Default 8192.
         retries: Number of retry attempts for transient failures. Default 3.
+        api_style: Wire dialect ("openai" | "anthropic" | "gemini");
+            resolved from the explicit provider when omitted.
+        provider: Provider name (for attribution headers + error reports).
 
     Returns:
-        Dict with ok/content/model/usage/error keys.
+        Dict with ok/content/model/usage/error keys. On failure the error
+        names the provider and base URL attempted, the HTTP status, and a
+        truncated response body.
     """
     base = api_base or os.environ.get("HIVE_API_BASE")
     mdl = model or os.environ.get("HIVE_MODEL", "gpt-4o")
@@ -489,7 +439,9 @@ def call_llm_api(
     if not base:
         return {
             "ok": False,
-            "error": "No LLM API configured (set HIVE_API_BASE and optionally HIVE_API_KEY)",
+            "error": ("No LLM API configured — set HIVE_PROVIDER + HIVE_MODEL + "
+                      "HIVE_API_BASE (+ HIVE_API_KEY) or the [llm] section of "
+                      "config.toml"),
             "model": mdl,
         }
 
@@ -500,118 +452,73 @@ def call_llm_api(
             "model": mdl,
         }
 
-    headers = build_headers(base, key)
-    payload = build_request_payload(messages, mdl, temp, max_tok)
+    style = wire_style(api_style, base)
+    headers = build_headers(base, key, api_style=style, provider=provider or "")
+    payload = build_request_payload(messages, mdl, temp, max_tok, api_style=style)
+
+    if llm_providers is not None:
+        url = llm_providers.endpoint_url(base, style, mdl)
+    else:  # pragma: no cover - import path depends on caller
+        url = f"{base.rstrip('/')}/chat/completions"
+    if not url:
+        return {
+            "ok": False,
+            "error": (f"Cannot derive request URL (provider={provider or style}, "
+                      f"base_url={base}) — this wire style needs a model name"),
+            "model": mdl,
+        }
+
+    def _err(status: int, body: str, extra: str = "") -> dict:
+        return {
+            "ok": False,
+            "error": (f"LLM API failed (provider={provider or style}, "
+                      f"base_url={base}{extra}, HTTP {status}): {body[:300]}"),
+            "model": mdl,
+        }
 
     last_error = None
     for attempt in range(retries):
         try:
             with _httpx.Client(timeout=120.0) as client:
-                resp = client.post(f"{base}/chat/completions", json=payload, headers=headers)
+                resp = client.post(url, json=payload, headers=headers)
 
                 if resp.status_code == 429:  # Rate limit
                     retry_after = int(resp.headers.get("Retry-After", 2 ** attempt))
                     import time as _time
                     _time.sleep(retry_after)
+                    last_error = _err(429, resp.text, " (rate limited)")
                     continue
 
                 if resp.status_code not in (200, 201):
-                    last_error = f"HTTP {resp.status_code}: {resp.text[:300]}"
+                    last_error = _err(resp.status_code, resp.text)
                     if resp.status_code >= 500:
                         # Server error — retry
                         continue
                     break  # Client error — don't retry
 
-                return parse_response(resp)
+                return parse_response(resp, api_style=style, api_base=base)
 
         except _httpx.TimeoutException:
-            last_error = "Request timed out"
+            last_error = _err(0, "request timed out")
             continue
         except _httpx.ConnectError as e:
-            last_error = f"Connection error: {e}"
+            last_error = _err(0, f"connection error: {e}")
             if attempt < retries - 1:
                 import time as _time
                 _time.sleep(2 ** attempt)  # Exponential backoff
             continue
         except Exception as e:
-            last_error = f"{type(e).__name__}: {e}"
+            last_error = _err(0, f"{type(e).__name__}: {e}")
             break  # Non-retryable error
 
     return {
         "ok": False,
-        "error": f"LLM API failed after {retries} attempts: {last_error}",
+        "error": f"LLM API failed after {retries} attempts: "
+                 f"{last_error.get('error') if isinstance(last_error, dict) else last_error}",
         "model": mdl,
     }
 
 
-def stream_llm_api(
-    messages: list[dict],
-    api_base: str | None = None,
-    model: str | None = None,
-    api_key: str | None = None,
-    temperature: float | None = None,
-    max_tokens: int | None = None,
-) -> tuple[str, dict[str, Any]]:
-    """Call the LLM API with streaming support.
-
-    Yields chunks of text as they arrive and returns the full response
-    when complete. Useful for real-time output display.
-
-    Returns:
-        Tuple of (full_response_text, usage_dict).
-    """
-    base = api_base or os.environ.get("HIVE_API_BASE")
-    mdl = model or os.environ.get("HIVE_MODEL", "gpt-4o")
-    key = api_key or os.environ.get("HIVE_API_KEY")
-
-    if not base:
-        return "", {"error": "No LLM API configured"}
-
-    if _httpx is None:
-        return "", {"error": "httpx not installed"}
-
-    headers = build_headers(base, key)
-    payload = build_request_payload(messages, mdl,
-                                     temperature or float(os.environ.get("HIVE_TEMPERATURE", "0.7")),
-                                     max_tokens or int(os.environ.get("HIVE_MAX_TOKENS", "8192")))
-    payload["stream"] = True
-
-    full_content = ""
-    usage = {}
-
-    try:
-        with _httpx.Client(timeout=300.0) as client:
-            with client.stream("POST", f"{base}/chat/completions", json=payload, headers=headers) as resp:
-                if resp.status_code != 200:
-                    return "", {"error": f"HTTP {resp.status_code}: {resp.text[:200]}"}
-
-                for line in resp.iter_lines():
-                    if not line or not line.startswith("data: "):
-                        continue
-                    data_str = line[6:]  # Remove "data: " prefix
-                    if data_str.strip() == "[DONE]":
-                        break
-
-                    try:
-                        chunk = json.loads(data_str)
-                        delta = chunk.get("choices", [{}])[0].get("delta", {})
-                        content = delta.get("content")
-                        if content:
-                            full_content += content
-                    except json.JSONDecodeError:
-                        continue
-
-                # Get usage from last chunk
-                if chunk and "usage" in chunk:
-                    usage = chunk["usage"]
-
-    except Exception as e:
-        return full_content, {"error": f"Streaming error: {e}"}
-
-    return full_content, usage
-
-
-# ---------------------------------------------------------------------------
 # Agent conversation loop
 # ---------------------------------------------------------------------------
 
@@ -665,6 +572,8 @@ def run_agent(
     api_key: str | None = None,
     temperature: float | None = None,
     max_tokens: int | None = None,
+    provider: str | None = None,
+    api_style: str | None = None,
 ) -> dict[str, Any]:
     """Run the agent conversation loop.
 
@@ -707,6 +616,8 @@ def run_agent(
             api_key=api_key or os.environ.get("HIVE_API_KEY"),
             temperature=temperature,
             max_tokens=max_tokens,
+            provider=provider,
+            api_style=api_style,
         )
 
         if not llm_result.get("ok"):
@@ -832,18 +743,24 @@ def main() -> int:
     parser.add_argument("--api-key", default=None, help="API key (overrides HIVE_API_KEY)")
     parser.add_argument("--temperature", type=float, default=None, help="Sampling temperature 0.0-2.0")
     parser.add_argument("--max-tokens", type=int, default=None, help="Max response tokens")
+    parser.add_argument("--provider", default=None,
+                        help="LLM provider name (openai, anthropic, groq, openrouter, "
+                             "ollama, google, unsloth; overrides HIVE_PROVIDER/[llm].provider)")
+    parser.add_argument("--api-style", dest="api_style", default=None,
+                        help="Wire style override (openai, anthropic, gemini)")
     args = parser.parse_args()
 
     # Resolve LLM provider config: CLI args > HIVE_* env > [llm] config
     # > provider defaults (lib/core/llm_providers.py). Warnings go to
     # stderr; the result JSON on stdout is untouched.
-    try:
-        from llm_providers import resolve as _resolve_llm
-    except ImportError:
-        _resolve_llm = None
-    if _resolve_llm is not None:
-        resolved = _resolve_llm()
+    if llm_providers is not None:
+        resolved = llm_providers.resolve()
+        cli_explicit = bool(args.api_base)
         for _w in resolved.warnings:
+            # CLI-provided --api-base/--model make the config explicit even
+            # when env/config are silent — don't warn about that.
+            if cli_explicit and "No LLM provider configured" in _w:
+                continue
             print(f"[agent-harness] warning: {_w}", file=sys.stderr)
         if not args.api_base:
             args.api_base = resolved.base_url or None
@@ -851,6 +768,10 @@ def main() -> int:
             args.model = resolved.model or None
         if not args.api_key:
             args.api_key = resolved.api_key or None
+        if not args.provider:
+            args.provider = resolved.provider or None
+        if not args.api_style:
+            args.api_style = resolved.api_style or None
 
     # Read prompt from arg or stdin
     if args.prompt:
@@ -882,6 +803,8 @@ def main() -> int:
         api_key=args.api_key,
         temperature=args.temperature,
         max_tokens=args.max_tokens,
+        provider=args.provider,
+        api_style=args.api_style,
     )
 
     # Output as JSON (stream-json format for log consumers)

@@ -19,14 +19,18 @@ import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
-# Registry of known providers. "unsloth" is added in B.3 (it carries no
-# default base_url: the operator always supplies one).
+# Registry of known providers (B.2). "unsloth" is added in B.3 (it carries
+# no default base_url: the operator always supplies one). api_style names the
+# wire dialect: "openai" (POST {base}/chat/completions), "anthropic"
+# (POST {base}/v1/messages), "gemini" (POST {base}/models/{model}:generateContent).
 PROVIDERS = {
     "openai": {"api_style": "openai", "base_url": "https://api.openai.com/v1", "model": "gpt-4o", "key_env": "OPENAI_API_KEY", "needs_key": True},
     "anthropic": {"api_style": "anthropic", "base_url": "https://api.anthropic.com", "model": "", "key_env": "ANTHROPIC_API_KEY", "needs_key": True},
     "groq": {"api_style": "openai", "base_url": "https://api.groq.com/openai/v1", "model": "", "key_env": "GROQ_API_KEY", "needs_key": True},
-    "openrouter": {"api_style": "openai", "base_url": "https://openrouter.ai/api/v1", "model": "", "key_env": "OPENROUTER_API_KEY", "needs_key": True},
+    "openrouter": {"api_style": "openai", "base_url": "https://openrouter.ai/api/v1", "model": "", "key_env": "OPENROUTER_API_KEY", "needs_key": True,
+                   "extra_headers": {"HTTP-Referer": "https://github.com/fredjt/hive", "X-Title": "Hive Agent Harness"}},
     "ollama": {"api_style": "openai", "base_url": "http://127.0.0.1:11434/v1", "model": "", "key_env": "", "needs_key": False},
+    "google": {"api_style": "gemini", "base_url": "https://generativelanguage.googleapis.com/v1beta", "model": "", "key_env": "GEMINI_API_KEY", "needs_key": True},
 }
 
 
@@ -84,6 +88,126 @@ def detect_provider(base_url: str) -> str:
     if "11434" in u or "ollama" in u:
         return "ollama"
     return "custom"
+
+
+def style_for_provider(provider: str) -> str:
+    """Map a provider name to its wire dialect ("openai" for unknown)."""
+    return (PROVIDERS.get(provider) or {}).get("api_style", "openai")
+
+
+def endpoint_url(base_url: str, api_style: str, model: str = "") -> str:
+    """Full request URL for a wire dialect."""
+    b = (base_url or "").rstrip("/")
+    if not b:
+        return ""
+    if api_style == "anthropic":
+        return b + "/messages" if b.endswith("/v1") else b + "/v1/messages"
+    if api_style == "gemini":
+        if not model:
+            return ""
+        return f"{b}/models/{model}:generateContent"
+    return b + "/chat/completions"
+
+
+def build_headers(api_style: str, api_key: str | None = None,
+                  provider: str = "") -> dict:
+    """Request headers for a wire dialect (auth header only if a key exists)."""
+    headers = {"Content-Type": "application/json"}
+    if api_style == "anthropic":
+        if api_key:
+            headers["x-api-key"] = api_key
+        headers["anthropic-version"] = "2023-06-01"
+    elif api_style == "gemini":
+        if api_key:
+            headers["x-goog-api-key"] = api_key
+    elif api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+    for k, v in (PROVIDERS.get(provider) or {}).get("extra_headers", {}).items():
+        headers[k] = v
+    return headers
+
+
+def build_payload(api_style: str, messages: list[dict], model: str,
+                  temperature: float = 0.7, max_tokens: int = 8192) -> dict:
+    """Request body in the wire dialect's native shape."""
+    if api_style == "anthropic":
+        system_text = ""
+        conv = []
+        for m in messages:
+            if m["role"] == "system":
+                system_text += ("\n" if system_text else "") + m["content"]
+            else:
+                conv.append({"role": "user" if m["role"] == "user" else "assistant",
+                             "content": m["content"]})
+        return {"model": model, "system": system_text,
+                "messages": conv, "temperature": temperature,
+                "max_tokens": max_tokens}
+    if api_style == "gemini":
+        system_text = ""
+        contents = []
+        for m in messages:
+            if m["role"] == "system":
+                system_text += ("\n" if system_text else "") + m["content"]
+            else:
+                contents.append({"role": "user" if m["role"] == "user" else "model",
+                                 "parts": [{"text": m["content"]}]})
+        payload = {"contents": contents,
+                   "generationConfig": {"temperature": temperature,
+                                        "maxOutputTokens": max_tokens}}
+        if system_text:
+            payload["systemInstruction"] = {"parts": [{"text": system_text}]}
+        return payload
+    # openai style
+    return {"model": model, "messages": messages, "temperature": temperature,
+            "max_tokens": max_tokens}
+
+
+def parse_response_body(api_style: str, data: dict) -> dict:
+    """Parse a provider response body into {ok, content, model, usage, error}."""
+    if api_style == "anthropic":
+        content = "".join(
+            block.get("text", "") for block in data.get("content", [])
+            if isinstance(block, dict) and block.get("type") == "text")
+        usage = data.get("usage", {})
+        return {"ok": True, "content": content, "model": data.get("model", "anthropic"),
+                "usage": {"prompt_tokens": usage.get("input_tokens", 0),
+                          "completion_tokens": usage.get("output_tokens", 0),
+                          "total_tokens": usage.get("input_tokens", 0) + usage.get("output_tokens", 0)}}
+    if api_style == "gemini":
+        candidates = data.get("candidates", [])
+        text = ""
+        if candidates:
+            parts = (candidates[0].get("content") or {}).get("parts", [])
+            text = "".join(p.get("text", "") for p in parts if isinstance(p, dict))
+        meta = data.get("usageMetadata", {})
+        return {"ok": bool(candidates), "content": text,
+                "model": data.get("modelVersion", "gemini"),
+                "usage": {"prompt_tokens": meta.get("promptTokenCount", 0),
+                          "completion_tokens": meta.get("candidatesTokenCount", 0),
+                          "total_tokens": meta.get("totalTokenCount", 0)}}
+    # openai style
+    choices = data.get("choices", [])
+    if not choices:
+        return {"ok": False, "error": "No choices in response"}
+    message = choices[0].get("message", {})
+    usage = data.get("usage", {})
+    total_cost_usd = 0.0
+    if usage:
+        prompt_tokens = usage.get("prompt_tokens", 0)
+        completion_tokens = usage.get("completion_tokens", 0)
+        # Rough cost estimation (varies by model)
+        if "gpt-4" in data.get("model", "").lower():
+            total_cost_usd = (prompt_tokens * 0.00003 + completion_tokens * 0.00006) / 1000
+        elif "gpt-3.5" in data.get("model", "").lower():
+            total_cost_usd = (prompt_tokens * 0.0000015 + completion_tokens * 0.000002) / 1000
+        elif any(m in data.get("model", "").lower() for m in ["anthropic"]):
+            total_cost_usd = (prompt_tokens * 0.000003 + completion_tokens * 0.000015) / 1000
+    return {"ok": True, "content": message.get("content", "") or "",
+            "model": data.get("model", "unknown"),
+            "usage": {"prompt_tokens": usage.get("prompt_tokens", 0),
+                      "completion_tokens": usage.get("completion_tokens", 0),
+                      "total_tokens": usage.get("total_tokens", 0),
+                      "total_cost_usd": total_cost_usd}}
 
 
 @dataclass
