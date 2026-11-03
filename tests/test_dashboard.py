@@ -332,6 +332,32 @@ class TestLicense:
         content = Path("LICENSE").read_text()
         assert len(content.strip()) > 10
 
+    def test_license_is_complete_mit(self):
+        """B.1: LICENSE must be the full, usable MIT text.
+
+        The pre-0.7.0 LICENSE was a truncated MIT (324 bytes): the grant
+        clause ended mid-sentence and both the conditions block and the
+        IN-NO-EVENT liability clause were missing, so as written it was
+        not a usable license. All three clause markers must be present.
+        """
+        # Collapse whitespace so the clause checks don't depend on the
+        # exact line wrapping of the license text.
+        content = re.sub(r"\s+", " ", Path("LICENSE").read_text())
+        assert "Permission is hereby granted, free of charge" in content, \
+            "MIT grant clause missing"
+        assert ("The above copyright notice and this permission notice "
+                "shall be included") in content, \
+            "MIT conditions clause (retain the copyright notice) missing"
+        assert ("IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE "
+                "LIABLE") in content, \
+            "MIT IN-NO-EVENT liability clause missing"
+
+    def test_license_names_a_copyright_holder(self):
+        """B.1: the copyright line must exist and carry a year + holder."""
+        content = Path("LICENSE").read_text()
+        assert re.search(r"Copyright \(c\) \d{4} \S+", content), \
+            "LICENSE has no 'Copyright (c) <year> <holder>' line"
+
 
 class TestInstallDoc:
     """Test the INSTALL file."""
