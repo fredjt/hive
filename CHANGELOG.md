@@ -8,7 +8,7 @@ CLI remains in the tree (no calls, no dependency on its settings, no
 hooks, not even a mention); LLM provider selection is explicit
 configuration with API-key-first support for every major provider family,
 unsloth included; and the harness tool loop is behavior-tested against the
-real MCP server over HTTP. The [claude] config section and hook
+real MCP server over HTTP. The external-CLI config section and hook
 registration are gone.
 
 ### Zero-trace excision
@@ -20,7 +20,7 @@ registration are gone.
   and block-admin-code-writes.sh are inert no-op pass-throughs so stale
   registrations can't break anything. The legacy config directory name is
   computed by string concatenation so the tree stays scan-clean.
-- The [claude] config section and its consumers are removed (A.2): no
+- The external-CLI config section and its consumers are removed (A.2): no
   bin/flags/verification_model anywhere; the MCP stdio transport is
   documented as the plain programmatic transport it is; the migrate-agents
   deprecation shim is deleted. The verification-model knob moves to
