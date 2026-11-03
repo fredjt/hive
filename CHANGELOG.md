@@ -32,10 +32,10 @@ registration are gone.
   prompt round-trip against a stubbed LLM endpoint, worktree visible and
   writable, a unique .company secret and an unmounted host file
   unreachable, tmpfs ephemeral.
-- Docs and product copy are rebranded (A.4): per-directory CLAUDE.md files
-  are AGENTS.md, and README, pyproject, dashboard package.json, share/docs,
-  and historical changelog entries use neutral terms (agent runtime, agent
-  harness).
+- Docs and product copy are rebranded (A.4): the old per-directory
+  prompt-guide files are AGENTS.md now, and README, pyproject, dashboard
+  package.json, share/docs, and historical changelog entries use neutral
+  terms (agent runtime, agent harness).
 - The zero-trace guard test (A.5) scans every tracked file (git ls-files)
   and asserts zero occurrences of the legacy token, with the token
   assembled by string concatenation inside the test so the guard itself
