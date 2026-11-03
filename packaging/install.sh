@@ -90,6 +90,21 @@ echo "  Symlinked $BIN_LINK → $INSTALL_DIR/bin/hive"
 #     0.6.0 may have left hook entries in the operator's agent settings
 #     file — uninstall.sh's one-time legacy cleanup removes them.
 
+# 3b. Per-machine user config — scaffold from the tracked template so the
+#     config is VISIBLE from install time. hive doctor points the operator
+#     at this file for [llm]; a stranger must not have to invent a file
+#     that no documentation shows. Never overwrite an existing file — it
+#     may hold operator edits.
+USER_CONFIG="${HIVE_USER_CONFIG:-$HOME/.config/hive/config.toml}"
+if [ -f "$USER_CONFIG" ]; then
+  echo "  User config: $USER_CONFIG (kept as-is)"
+else
+  mkdir -p "$(dirname "$USER_CONFIG")"
+  cp "$INSTALL_DIR/etc/config.template.toml" "$USER_CONFIG"
+  chmod 600 "$USER_CONFIG"
+  echo "  Wrote $USER_CONFIG (edit the [llm] section, then run hive doctor)"
+fi
+
 # 4. PATH check
 case ":$PATH:" in
   *":$(dirname "$BIN_LINK"):"*) ;;
@@ -149,17 +164,19 @@ echo "  hive init <project-dir> --brief 'description'"
 echo "  hive             # launches the dashboard"
 
 # 5. Env-file hint — daemons started via nohup/systemd don't read .zshrc/.bashrc,
-#    so endpoint config (ANTHROPIC_BASE_URL etc.) belongs in this file.
+#    so shell-level per-machine env belongs in this file. LLM settings do NOT
+#    belong here — they live in $USER_CONFIG ([llm] section, scaffolded in 3b);
+#    env.sh is for PATH additions and GITHUB_TOKEN (publisher auth when you
+#    don't use `gh auth login`).
 HIVE_ENV_FILE_HINT="${HIVE_ENV_FILE:-$HOME/.config/hive/env.sh}"
 if [ ! -f "$HIVE_ENV_FILE_HINT" ]; then
   echo ""
   echo "  TIP: hive sources $HIVE_ENV_FILE_HINT on every spawn (if it exists)."
-  echo "  Put per-machine LLM / model endpoint config there so daemons inherit"
-  echo "  it without depending on your interactive shell rc files. Example:"
+  echo "  Use it for shell-level daemon env only — LLM settings go in"
+  echo "  $USER_CONFIG ([llm] section). Example:"
   echo "      mkdir -p \"\$(dirname '$HIVE_ENV_FILE_HINT')\""
   echo "      cat > '$HIVE_ENV_FILE_HINT' <<'ENVEOF'"
-  echo "      export ANTHROPIC_BASE_URL=\"http://localhost:8080\""
-  echo "      export ANTHROPIC_API_KEY='sk-no-key-required'"
-  echo "      export LLM_TINY_URL=http://localhost:8081/v1/chat/completions"
+  echo "      export PATH=\"\$HOME/.npm-global/bin:\$HOME/.local/bin:\$PATH\""
+  echo "      # export GITHUB_TOKEN=...   # only if the publisher shouldn't use gh auth"
   echo "      ENVEOF"
 fi

@@ -398,3 +398,75 @@ class TestStageAdvanceStages:
 class TestSprintStateIsExecutable:
     def test_sprint_state_is_executable(self):
         assert os.access("lib/tools/sprint-state.sh", os.X_OK)
+
+
+class TestInstallScaffoldsUserConfig:
+    """C3: the installer creates ~/.config/hive/config.toml from the tracked
+    template — a visible config with every key defaulted at install time —
+    and never overwrites an existing file. The env-file hint must point at
+    $HOME/.config/hive/env.sh for shell-level env only, and stop
+    recommending the retired ANTHROPIC_*/LLM_TINY_* variable names."""
+
+    @staticmethod
+    def _run_install(home: Path, tmp_path: Path) -> subprocess.CompletedProcess:
+        repo = _repo_root()
+        # Stage a minimal tree — the same surface the release tarball
+        # carries — so the test is fast and deterministic, and local
+        # scratch state (venv/, dist/, scratch projects) in a dev checkout
+        # can't drag along a 100MB+ copy or a stale venv.
+        tree = tmp_path / "hive-src"
+        tree.mkdir()
+        for d in ("bin", "lib", "etc", "packaging", "share"):
+            dst = tree / d
+            subprocess.run(["cp", "-r", str(repo / d), str(dst)], check=True)
+            for junk in dst.rglob("__pycache__"):
+                subprocess.run(["rm", "-rf", str(junk)])
+        (tree / "VERSION").write_text(
+            (repo / "VERSION").read_text() if (repo / "VERSION").is_file()
+            else "0.0.0-dev\n")
+        return subprocess.run(
+            ["bash", str(tree / "packaging" / "install.sh"),
+             "--bin-link", str(home / ".local" / "bin" / "hive")],
+            capture_output=True, text=True, timeout=300,
+            cwd=str(tree),
+            env={**os.environ, "HOME": str(home)},
+        )
+
+    def test_install_creates_user_config_from_template(self, tmp_path):
+        home = tmp_path / "home"
+        home.mkdir()
+        r = self._run_install(home, tmp_path)
+        assert r.returncode == 0, r.stdout + "\n" + r.stderr
+        user = home / ".config" / "hive" / "config.toml"
+        assert user.is_file(), \
+            "the installer must scaffold the user config — a stranger must " \
+            "not have to invent a file no documentation shows"
+        assert user.read_text() == (_repo_root() / "etc" / "config.template.toml").read_text()
+        try:
+            import tomllib
+        except ImportError:
+            import tomli as tomllib
+        data = tomllib.loads(user.read_text())
+        assert set(data["llm"]) == {"provider", "model", "base_url", "api_key",
+                                    "api_style", "verification_model"}
+
+    def test_install_never_overwrites_existing_user_config(self, tmp_path):
+        home = tmp_path / "home"
+        user = home / ".config" / "hive" / "config.toml"
+        user.parent.mkdir(parents=True)
+        edited = '[llm]\nprovider = "ollama"\nmodel = "my-model"\n'
+        user.write_text(edited)
+        r = self._run_install(home, tmp_path)
+        assert r.returncode == 0, r.stdout + "\n" + r.stderr
+        assert user.read_text() == edited, \
+            "an existing user config holds operator edits — install must keep it"
+
+    def test_env_hint_drops_retired_llm_variables(self):
+        install = (_repo_root() / "packaging" / "install.sh").read_text()
+        assert "ANTHROPIC_BASE_URL" not in install, \
+            "installer hint still recommends the retired ANTHROPIC_* vars"
+        assert "ANTHROPIC_API_KEY" not in install
+        assert "LLM_TINY_URL" not in install
+        assert "$USER_CONFIG" in install, \
+            "the env-file hint must point at the scaffolded config.toml"
+        assert "LLM settings go in" in install
