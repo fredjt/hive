@@ -175,13 +175,14 @@ class TestLegacyHookCleanup:
 
 
 class TestSpawnPathNoExternalCliSection:
-    """A.2: a full init + spawn path works with no external-CLI config
-    section anywhere. The spawn path (agent-spawn.sh -> agent-harness.py)
-    must run cleanly against a scratch company dir even with no LLM
-    provider configured — no external CLI binary is invoked, no retired
-    config section is read."""
+    """A.2/B.4: the spawn path (agent-spawn.sh -> agent-harness.py) runs
+    against a scratch company dir with no external-CLI config section
+    anywhere and no external binary invoked. With no LLM provider
+    configured, B.4 requires the path to fail fast: a non-zero exit and
+    one actionable line saying what to set and where — not a
+    mid-loop apology."""
 
-    def test_spawn_path_runs_cleanly_without_provider(self, tmp_company_dir):
+    def test_spawn_path_fails_fast_without_provider(self, tmp_company_dir):
         repo = _repo_root()
         env = {
             **os.environ,
@@ -195,18 +196,27 @@ class TestSpawnPathNoExternalCliSection:
         env.pop("HIVE_API_BASE", None)
         env.pop("HIVE_API_KEY", None)
         env.pop("HIVE_MODEL", None)
+        env.pop("HIVE_PROVIDER", None)
         env.pop("HIVE_VERIFICATION_MODEL", None)
         r = subprocess.run(
             ["bash", str(repo / "lib" / "core" / "agent-spawn.sh"), "--no-mcp", "--", "say hello"],
             capture_output=True, text=True, timeout=60,
             cwd=str(tmp_company_dir.parent), env=env,
         )
-        assert r.returncode == 0, f"spawn path failed: {r.stdout[-500:]} {r.stderr[-500:]}"
+        # B.4: no provider -> fail fast with exit code 2
+        assert r.returncode == 2, f"spawn path must fail fast (rc=2): {r.stdout[-500:]} {r.stderr[-500:]}"
+        combined = (r.stdout + r.stderr)
+        assert "no LLM provider configured" in combined, \
+            "fail-fast line must say what is missing"
+        assert "HIVE_PROVIDER" in combined, \
+            "fail-fast line must name the env vars to set"
         streams = list((tmp_company_dir / "logs" / "streams").glob("*.jsonl"))
         assert streams, "agent-spawn.sh did not write a stream file"
         last = streams[0].read_text().strip().splitlines()[-1]
         result = json.loads(last)
         assert result.get("type") == "result"
+        assert result.get("subtype") == "llm-not-configured"
+        assert result.get("is_error") is True
 
     def test_agent_spawn_does_not_read_retired_cli_config(self):
         """Static guard: the spawn path must not reference the retired

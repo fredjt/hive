@@ -125,6 +125,7 @@ Config layers: `etc/config.defaults.toml` (shipped) → `~/.config/hive/config.t
 ## Diagnostics
 
 ```
-hive doctor                       # check agent harness, jq, git, node, venv, MCP server
+hive doctor                       # check agent harness, jq, git, node, venv, MCP server, LLM provider
+hive doctor --deep                # + probe LLM endpoint reachability (uses network)
 hive version
 ```

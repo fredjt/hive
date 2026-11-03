@@ -28,6 +28,24 @@ def _check(name: str, ok: bool, detail: str = "") -> bool:
     return ok
 
 
+def _probe_endpoint(base_url: str, timeout: float = 5.0) -> tuple[bool, str]:
+    """B.4 --deep: TCP-connect probe of the LLM endpoint. Deliberately
+    transport-level (no LLM request, no token spend): it answers 'can a
+    daemon reach the endpoint at all', which is the failure class that
+    otherwise surfaces mid-sprint as unreachable-agent errors."""
+    import socket
+    from urllib.parse import urlparse
+    u = urlparse(base_url)
+    if not u.hostname:
+        return False, f"no host in base_url {base_url!r}"
+    port = u.port or (443 if u.scheme == "https" else 80)
+    try:
+        with socket.create_connection((u.hostname, port), timeout=timeout):
+            return True, f"TCP {u.hostname}:{port} reachable"
+    except Exception as e:
+        return False, f"TCP {u.hostname}:{port} failed: {e}"
+
+
 def _publisher_from_config(text: str) -> str:
     """Extract publisher_script the same way release-publish-runner.sh does
     (first `publisher_script = "..."` line; value trimmed, surrounding
@@ -204,6 +222,12 @@ def handle(args) -> int:
                              "of config.toml")
         for w in llm_res.warnings:
             print("  warning: " + w)
+        # B.4: optional reachability probe — behind --deep so a plain
+        # `hive doctor` stays offline-safe.
+        deep = getattr(args, "deep", False)
+        if deep and llm_res.is_configured and llm_res.base_url:
+            ok, detail = _probe_endpoint(llm_res.base_url)
+            all_ok &= _check("LLM endpoint reachable (--deep)", ok, detail)
     except Exception as e:
         all_ok &= _check("LLM provider resolution", False, str(e))
 

@@ -621,7 +621,22 @@ def run_agent(
         )
 
         if not llm_result.get("ok"):
-            # No LLM backend — return an error result
+            if num_turns == 0:
+                # B.4: fail fast — the endpoint is missing or unreachable
+                # before any work has happened; don't finish "successfully"
+                # with an apology. The error already names the provider,
+                # the base URL, and the status/body.
+                end_time = datetime.now(timezone.utc)
+                return {
+                    "type": "result",
+                    "is_error": True,
+                    "subtype": "llm-unavailable",
+                    "num_turns": 0,
+                    "duration_ms": int((end_time - start_time).total_seconds() * 1000),
+                    "total_cost_usd": 0.0,
+                    "result": f"LLM unavailable: {llm_result.get('error', 'unknown error')}",
+                }
+            # Mid-loop failure — report it and stop.
             messages.append({"role": "assistant", "content": f"Error: {llm_result.get('error', 'Unknown')}. Cannot proceed without an LLM backend."})
             break
 
@@ -773,6 +788,40 @@ def main() -> int:
         if not args.api_style:
             args.api_style = resolved.api_style or None
 
+        # B.4: fail fast — if the effective config cannot call an LLM, exit
+        # now (before any work happens) with one actionable line naming
+        # what to set and where. CLI-provided base+model count as
+        # configured even when env/config are silent.
+        if not resolved.is_configured and not (args.api_base and args.model):
+            missing = []
+            if not (resolved.provider or args.provider):
+                missing.append("HIVE_PROVIDER (one of: "
+                               + ", ".join(sorted(llm_providers.PROVIDERS)) + ")")
+            if not (resolved.model or args.model):
+                missing.append("HIVE_MODEL")
+            if not (resolved.base_url or args.api_base):
+                missing.append("HIVE_API_BASE")
+            if resolved.needs_key and not (resolved.api_key or args.api_key):
+                missing.append("HIVE_API_KEY")
+            what = " / ".join(missing) if missing else \
+                "HIVE_PROVIDER, HIVE_MODEL, HIVE_API_BASE, HIVE_API_KEY"
+            print("[agent-harness] error: no LLM provider configured — set "
+                  + what + " (env vars) or the [llm] section of "
+                  "~/.config/hive/config.toml — see share/docs/LLM-PROVIDERS.md",
+                  file=sys.stderr)
+            # Keep the stream log's last line machine-readable (the
+            # dashboard and log consumers parse it as the result event).
+            print(json.dumps({
+                "type": "result",
+                "is_error": True,
+                "subtype": "llm-not-configured",
+                "num_turns": 0,
+                "duration_ms": 0,
+                "total_cost_usd": 0.0,
+                "result": f"No LLM provider configured — set {what}",
+            }))
+            return 2
+
     # Read prompt from arg or stdin
     if args.prompt:
         prompt = args.prompt
@@ -806,6 +855,12 @@ def main() -> int:
         provider=args.provider,
         api_style=args.api_style,
     )
+
+    if result.get("is_error"):
+        # stderr first: the stream log's last line stays the JSON result
+        # event (machine-readable for the dashboard and log consumers).
+        print(f"[agent-harness] error: {result.get('result', 'failed')}",
+              file=sys.stderr)
 
     # Output as JSON (stream-json format for log consumers)
     print(json.dumps(result))

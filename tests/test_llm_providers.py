@@ -1,5 +1,6 @@
 """B.1/B.2: explicit LLM provider configuration + provider wire shapes."""
 import json
+import subprocess
 import sys
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -469,3 +470,115 @@ class TestUnslothProvider:
         assert "model=u-model" in out, out
         assert "SECRET-DO-NOT-PRINT" not in out, "key leaked into doctor output"
         assert "key=env UNSLOTH_API_KEY" in out, out
+
+
+class TestHarnessFailFast:
+    """B.4: no provider -> exit 2 with one actionable line before any work;
+    unreachable endpoint -> exit 1 naming the URL and the failure."""
+
+    def _run(self, tmp_path, env_extra, prompt="hi", timeout=90):
+        env = {"PATH": "/usr/bin:/bin", "HOME": str(tmp_path / "home")}
+        env.update(env_extra)
+        return subprocess.run(
+            [sys.executable, str(REPO / "lib" / "core" / "agent-harness.py"),
+             "--no-mcp", "--", prompt],
+            capture_output=True, text=True, timeout=timeout, env=env)
+
+    def test_unconfigured_exits_2_with_actionable_line(self, tmp_path):
+        r = self._run(tmp_path, {})
+        assert r.returncode == 2, r.stderr
+        assert "no LLM provider configured" in r.stderr
+        assert "HIVE_PROVIDER" in r.stderr
+        assert "[llm]" in r.stderr
+        out = r.stdout.strip().splitlines()
+        assert out, "result event expected on stdout"
+        ev = json.loads(out[-1])
+        assert ev["type"] == "result"
+        assert ev["subtype"] == "llm-not-configured"
+        assert ev["is_error"] is True
+
+    def test_unreachable_endpoint_exits_1_with_url_and_status(self, tmp_path):
+        r = self._run(tmp_path, {
+            "HIVE_PROVIDER": "openai",
+            "HIVE_API_BASE": "http://127.0.0.1:9",
+            "HIVE_MODEL": "gpt-4o",
+            "HIVE_API_KEY": "k",
+        })
+        assert r.returncode == 1, r.stderr
+        assert "127.0.0.1:9" in r.stderr
+        assert "provider=openai" in r.stderr
+        out = r.stdout.strip().splitlines()
+        assert out, "result event expected on stdout"
+        ev = json.loads(out[-1])
+        assert ev["subtype"] == "llm-unavailable"
+        assert ev["is_error"] is True
+        assert ev["num_turns"] == 0
+
+    def test_cli_explicit_config_is_not_flagged_unconfigured(self, tmp_path):
+        # --api-base + --model + --api-key via CLI count as configured even
+        # when env/config are silent — no false fail-fast, and the call
+        # actually goes out.
+        canned = b'{"model": "m", "choices": [{"message": {"content": "ok"}}]}'
+        base_url, server = _start_stub(canned=canned)
+        try:
+            env = {"PATH": "/usr/bin:/bin", "HOME": str(tmp_path / "home")}
+            r = subprocess.run(
+                [sys.executable, str(REPO / "lib" / "core" / "agent-harness.py"),
+                 "--no-mcp", "--api-base", base_url, "--model", "m",
+                 "--api-key", "k", "--", "hi"],
+                capture_output=True, text=True, timeout=60, env=env)
+            assert r.returncode == 0, r.stderr
+            assert "no LLM provider configured" not in r.stderr
+            assert server.last_request is not None, "LLM call never made"
+        finally:
+            server.shutdown()
+            server.server_close()
+
+
+class TestDoctorDeep:
+    """B.4: doctor's reachability probe is behind --deep; plain doctor
+    stays offline-safe."""
+
+    def _run_doctor(self, deep, extra_env):
+        code = (
+            "import sys; sys.path.insert(0, 'lib');\n"
+            "import os;\n"
+            + "".join(f"os.environ['{k}']='{v}';\n" for k, v in extra_env.items())
+            + "from hive_cli.commands import doctor;\n"
+            "doctor.HIVE_INSTALL_DIR = __import__('pathlib').Path(os.getcwd());\n"
+            "doctor.HIVE_ROOT = __import__('pathlib').Path(os.getcwd());\n"
+            "import types;\n"
+            f"doctor.handle(types.SimpleNamespace(deep={deep}))\n"
+        )
+        return subprocess.run(
+            [sys.executable, "-c", code],
+            capture_output=True, text=True, timeout=90, cwd=str(REPO))
+
+    def test_plain_doctor_does_not_probe(self, tmp_path):
+        r = self._run_doctor(False, {
+            "HIVE_PROVIDER": "openai", "HIVE_API_BASE": "http://127.0.0.1:9",
+            "HIVE_MODEL": "m", "HIVE_API_KEY": "k"})
+        assert "LLM endpoint reachable" not in r.stdout, \
+            "plain doctor must stay offline-safe"
+
+    def test_deep_doctor_reports_unreachable(self, tmp_path):
+        r = self._run_doctor(True, {
+            "HIVE_PROVIDER": "openai", "HIVE_API_BASE": "http://127.0.0.1:9",
+            "HIVE_MODEL": "m", "HIVE_API_KEY": "k"})
+        out = r.stdout
+        assert "LLM endpoint reachable (--deep)" in out, out
+        assert "failed" in out
+        assert "✗" in out
+
+    def test_deep_doctor_reports_reachable(self, tmp_path):
+        base_url, server = _start_stub()
+        try:
+            r = self._run_doctor(True, {
+                "HIVE_PROVIDER": "openai", "HIVE_API_BASE": base_url,
+                "HIVE_MODEL": "m", "HIVE_API_KEY": "k"})
+            out = r.stdout
+            assert "LLM endpoint reachable (--deep)" in out, out
+            assert "TCP" in out and "reachable" in out
+        finally:
+            server.shutdown()
+            server.server_close()
