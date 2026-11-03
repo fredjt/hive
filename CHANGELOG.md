@@ -1,5 +1,94 @@
 # Changelog
 
+## 0.6.0
+
+Provider-native agent runtime. **Breaking release**: the agent runtime is
+the built-in harness end to end — zero trace of the retired external agent
+CLI remains in the tree (no calls, no dependency on its settings, no
+hooks, not even a mention); LLM provider selection is explicit
+configuration with API-key-first support for every major provider family,
+unsloth included; and the harness tool loop is behavior-tested against the
+real MCP server over HTTP. The [claude] config section and hook
+registration are gone.
+
+### Zero-trace excision
+- The hook story is dead (A.1): install.sh no longer writes agent
+  settings; uninstall.sh gains a one-time legacy cleanup that removes hook
+  entries previous installs may have registered in the operator's existing
+  settings file (scratch-HOME round-trip test: legacy entries present ->
+  absent after uninstall, other entries untouched); block-company-writes.sh
+  and block-admin-code-writes.sh are inert no-op pass-throughs so stale
+  registrations can't break anything. The legacy config directory name is
+  computed by string concatenation so the tree stays scan-clean.
+- The [claude] config section and its consumers are removed (A.2): no
+  bin/flags/verification_model anywhere; the MCP stdio transport is
+  documented as the plain programmatic transport it is; the migrate-agents
+  deprecation shim is deleted. The verification-model knob moves to
+  [llm].verification_model (B.1).
+- The container image is agent-in-a-box (A.3): debian base + python3 + the
+  harness + httpx in a throwaway venv. Same isolation model as before —
+  worktree mounted rw at /work, no .company/, host filesystem invisible,
+  /root an ephemeral tmpfs — with the smoke tests ported: build, trivial
+  prompt round-trip against a stubbed LLM endpoint, worktree visible and
+  writable, a unique .company secret and an unmounted host file
+  unreachable, tmpfs ephemeral.
+- Docs and product copy are rebranded (A.4): per-directory CLAUDE.md files
+  are AGENTS.md, and README, pyproject, dashboard package.json, share/docs,
+  and historical changelog entries use neutral terms (agent runtime, agent
+  harness).
+- The zero-trace guard test (A.5) scans every tracked file (git ls-files)
+  and asserts zero occurrences of the legacy token, with the token
+  assembled by string concatenation inside the test so the guard itself
+  stays clean. Any future mention fails CI the moment it lands.
+
+### Provider layer
+- Explicit provider configuration (B.1): [llm] provider / model / base_url
+  / api_key / api_style / verification_model in config.defaults.toml.
+  Precedence per value: HIVE_* env vars > config file > provider
+  defaults. Selection is EXPLICIT — base-URL sniffing is a warned fallback
+  only. `hive doctor` reports the resolved provider/model and whether a
+  key is present (the key value is never printed).
+- Provider registry with native wire shapes (B.2): openai and anthropic
+  (Bearer vs x-api-key + version header), groq, openrouter, ollama, and
+  google/gemini. Per-provider env fallback for keys (OPENAI_API_KEY,
+  ANTHROPIC_API_KEY, GROQ_API_KEY, GEMINI_API_KEY) when config is silent.
+  Uniform error surfacing: which provider + base URL was attempted, the
+  HTTP status, a truncated body. Each provider shape is verified against a
+  stub HTTP server (payload, auth header, key resolution order, error
+  path).
+- unsloth is a named, documented provider (B.3): provider = "unsloth" with
+  api_style = "openai" | "anthropic", base_url, api_key; UNSLOTH_API_KEY
+  (or HIVE_API_KEY) as env fallback. share/docs/LLM-PROVIDERS.md documents
+  every provider with copy-paste config blocks.
+- Fail fast, say why (B.4): no provider configured -> the harness exits
+  immediately with one actionable line (what to set, where) instead of a
+  mid-loop error after work has started; a configured-but-unreachable
+  endpoint -> the same, with URL + status. Doctor gains an "LLM provider"
+  check and an optional reachability probe behind --deep, so plain
+  `hive doctor` stays offline-safe.
+
+### Harness tool framework
+- The tool loop is behavior-tested (C.1): a stubbed LLM endpoint (canned
+  3-turn script: call a write tool, call a read tool, answer) drives the
+  REAL MCP server over HTTP on an ephemeral port through the harness —
+  the write lands in a scratch .company, the read returns it, and the
+  stream log contains the tool events. The work also fixes the harness's
+  broken MCP session handshake.
+- One MCP client, two consumers (C.2): the JSON-RPC protocol handling is
+  extracted into a shared, SDK-free module (httpx only — the harness keeps
+  running under plain python3 with no mcp SDK installed); the CLI client
+  keeps its SDK-backed fast path. Tested: the harness completes a tool
+  round-trip with the mcp SDK uninstalled.
+- The dashboard drops the /proc scan (C.3): spawn inventory is tagged-only
+  (logs/active/*.json, which the harness writes), the event parser points
+  at the harness event shape, and UI copy loses the branding.
+
+### Hygiene
+- The test suite is rewritten to the new reality (D.1): the legacy hook
+  round-trip test is the A.1 cleanup test, the docker class is the A.3
+  class, the spawn tests exercise [llm].verification_model, and doctor's
+  provider check replaces the retired bin check.
+
 ## 0.5.17
 
 Third round: reproducible, verifiable release packages; one coherent
