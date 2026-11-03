@@ -1,10 +1,10 @@
-# CLAUDE.md
+# AGENTS.md
 
-This file provides guidance for working within the `lib/hive_cli/` module.
+This file documents the `lib/hive_cli/` area of the Hive project — what it does, how it works, and the conventions for extending it.
 
 ## Role
 
-`hive_cli` is the Python CLI dispatcher for the Hive framework. It parses argparse subcommands and routes them to handler modules, which in turn call the MCP server (via `mcp_client`) to execute tools. It is the human-facing interface — the dashboard and spawned Claude agents use the MCP server directly.
+`hive_cli` is the Python CLI dispatcher for the Hive framework. It parses argparse subcommands and routes them to handler modules, which in turn call the MCP server (via `mcp_client`) to execute tools. It is the human-facing interface — the dashboard and spawned agents use the MCP server directly.
 
 ## Structure
 
@@ -88,6 +88,6 @@ No venv required — `mcp_client` falls back to importing the server module dire
 
 ## See also
 
-- Parent `CLAUDE.md` — Framework-level architecture, common commands
-- `lib/CLAUDE.md` — Cross-module data flow
-- `lib/hive_cli/commands/CLAUDE.md` — Per-subcommand handler patterns
+- Parent `AGENTS.md` — Framework-level architecture, common commands
+- `lib/AGENTS.md` — Cross-module data flow
+- `lib/hive_cli/commands/AGENTS.md` — Per-subcommand handler patterns

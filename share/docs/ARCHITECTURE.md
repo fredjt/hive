@@ -11,7 +11,7 @@
 | `lib/core/init.sh` | Bash | Workspace initialization. Replaces SKILL.md Steps 1-3. |
 | `lib/core/orchestrator.sh` | Bash | Initial CEO build + transition to perpetual mode. Replaces SKILL.md Steps 4-7. |
 | `lib/tools/*.sh` | Bash | The actual implementations (ticket lifecycle, chat, gates, derived state, sprint mgmt, etc.). Mostly unchanged from the company skill. |
-| `lib/agents/*.md` | Markdown | Claude agent prompts (CEO, VPs, ICs, verification, marketing). Each has a `🐝 HIVE MCP TOOLS` header instructing the agent to prefer MCP tools. |
+| `lib/agents/*.md` | Markdown | Agent prompts (CEO, VPs, ICs, verification, marketing). Each has a `🐝 HIVE MCP TOOLS` header instructing the agent to prefer MCP tools. |
 | `lib/dashboard/server.js` | Node.js | Web dashboard with kanban, chat viewer, git browser, verification queue, company start/stop. Reads `.company/` files directly; writes go through MCP. |
 
 ## State
@@ -104,16 +104,16 @@ skip never reads like a pass. A skip means *never scanned*, not
 
 ## Backend abstraction
 
-There is exactly **one** point where Hive talks to the LLM: `agent-spawn.sh`.
-It wraps `claude -p` with:
-- An MCP config pointing at hive's HTTP MCP server (so spawned agents can call
+There is exactly **one** point where Hive talks to the LLM: `agent-spawn.sh`,
+which execs the built-in agent harness (`lib/core/agent-harness.py`). The
+harness is plain Python that:
+- Calls the configured LLM provider API (provider, model, base URL, and
+  API key come from the HIVE_* env vars and the `[llm]` config section)
+- Reaches hive's HTTP MCP server (so spawned agents can call
   `ticket_create`, `chat_send`, etc. as tools)
-- `--dangerously-skip-permissions` (spawned agents have no UI to approve)
-- `--output-format json` (parseable by callers)
-- Logging to `.company/logs/spawns.log`
-
-A future second backend (Anthropic API direct, OpenAI-compatible) would
-extend this script. None today.
+- Executes `bash:` blocks with safety limits and emits stream-json events
+  for dashboard replay
+- Logs every spawn to `.company/logs/spawns.log`
 
 ## Process model
 
@@ -144,21 +144,22 @@ PIDs recorded in `.company/processes.json`. `hive stop` kills them all.
 |-------|-------------------|
 | Tool scripts (ticket-*, chat-*) | Bash. Already worked; rewriting in Python would be busywork. |
 | Daemons | Bash. Same. |
-| `claude -p` wrapper | Bash. Closest to the binary it wraps. |
+| Spawn wrapper | Bash. Thinnest possible layer over the harness exec. |
 | MCP server | Python. SDK is mature (`mcp` package). |
 | CLI dispatcher | Python. argparse beats nested case statements. |
 | Dashboard | Node.js. Already built (~2000 lines, zero npm deps), reused as-is with surgical mutation tweaks. |
 
-## Why Hive isn't a Claude Code skill anymore
+## Why Hive is a standalone application
 
-It outgrew the skill format:
+Hive is a standalone app, not a skill for an external tool:
 - 50+ shell scripts
 - 16 agent prompts
 - A web dashboard
 - Strict quality gates
-- A swappable LLM backend
+- A swappable LLM provider layer
 - An MCP server
+- Its own agent runtime (the harness)
 
-A skill is meant to add a capability *to* Claude Code; Hive is more like
-a system that *uses* Claude Code as a building block. The old skills now
-exist as 5-line shims that forward to `hive init`.
+A skill is meant to add a capability *to* another tool; Hive instead
+*is* the system — the harness, the MCP server, the daemons, and the
+dashboard together.

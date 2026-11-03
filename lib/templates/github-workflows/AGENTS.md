@@ -1,6 +1,6 @@
-# CLAUDE.md
+# AGENTS.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+This file documents the `this directory` area of the Hive project — what it does, how it works, and the conventions for extending it.
 
 ## What is here
 
@@ -46,6 +46,6 @@ Both workflows target `ubuntu-latest`. No matrix builds or cross-platform testin
 
 ## See also
 
-- `../CLAUDE.md` — Template overview
-- `publishers/CLAUDE.md` — Release publishers
-- Parent `CLAUDE.md` — Framework-level architecture
+- `../AGENTS.md` — Template overview
+- `publishers/AGENTS.md` — Release publishers
+- Parent `AGENTS.md` — Framework-level architecture

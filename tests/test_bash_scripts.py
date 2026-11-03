@@ -853,7 +853,7 @@ class TestCoreScripts:
     def test_core_orchestrator_sh_exists(self):
         assert Path(f"{CORE_DIR}/orchestrator.sh").exists()
 
-    def test_core_claude_spawn_sh_exists(self):
+    def test_core_agent_spawn_sh_exists(self):
         assert Path(f"{CORE_DIR}/agent-spawn.sh").exists()
 
 

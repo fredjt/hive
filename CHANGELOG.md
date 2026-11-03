@@ -20,7 +20,7 @@ isolation) under test. Eight goals, each shipped with regression tests.
   identical sha256.
 - The deprecated PreToolUse-hook story is reconciled: install.sh /
   uninstall.sh register (and remove again) the block-company-writes and
-  block-admin-code-writes hooks in the agent's Claude settings.json,
+  block-admin-code-writes hooks in the agent's external-CLI settings file,
   restoring the .company/ write protection that 16 agent prompts already
   described. Round-trip test against a scratch HOME (patched, then
   restored; legacy narrow-matcher entries migrated to the canonical
@@ -62,17 +62,17 @@ isolation) under test. Eight goals, each shipped with regression tests.
 ### Hygiene
 - .gitignore and .dockerignore now cover build/test litter (dist/,
   .coverage, .pytest_cache/, unsloth-tmp/) so a normal build-and-test
-  cycle leaves git status clean. Tests pin the AGENTS.md / CLAUDE.md
-  structure blocks to the real tree, so stale layout entries (like a
-  top-level templates/ that lives at lib/templates/) fail CI.
-- The claude-in-a-box Docker image has a smoke test (skipif-guarded on
+  cycle leaves git status clean. Tests pin the AGENTS.md structure
+  blocks to the real tree, so stale layout entries (like a top-level
+  templates/ that lives at lib/templates/) fail CI.
+- The agent-in-a-box Docker image has a smoke test (skipif-guarded on
   docker availability; a failed build fails, it does not skip): builds
-  the image, runs claude --help, and asserts the isolation model with
-  false-positive-proof unique markers — the worktree mount is visible
-  and writable, a secret in the host's .company/ and an unmounted host
-  file are unreachable inside the box, and /root/.claude is a fresh
-  tmpfs seeded from the ro host mount (stale host cache not copied). A
-  trivial live prompt runs when ANTHROPIC_API_KEY is set.
+  the image, runs the harness --help, and asserts the isolation model
+  with false-positive-proof unique markers — the worktree mount is
+  visible and writable, a secret in the host's .company/ and an
+  unmounted host file are unreachable inside the box, and the agent
+  state directory is a fresh tmpfs. A trivial prompt round-trip against
+  a stubbed LLM endpoint runs without any API key.
 
 ## 0.5.16
 
@@ -212,8 +212,8 @@ C.7-C.10 test coverage + audits, D.11-D.12 tooling + docs).
 - 04f5ab7 Remove meetings system and inbox/outbox system from dashboard, scripts, and references
 - 50dee54 Fix init-workspace.sh: create missing subdirs even when .company/ exists
 - 41d81db Fix outdated 'company skill' references in dashboard and company-start
-- dc7a35e Rename claude-spawn.sh to agent-spawn.sh and update all references
-- 080f18f Remove all Claude Code references and settings
+- dc7a35e Rename the old spawn script to agent-spawn.sh and update all references
+- 080f18f Remove all external-agent-CLI references and settings
 - 99fd2d3 Remove PreToolUse hooks installation from install.sh
 - d2e3b44 Clean up remaining scaffold terminology in comments
 - 4402a65 Remove deprecated scaffold code entirely
@@ -233,7 +233,7 @@ C.7-C.10 test coverage + audits, D.11-D.12 tooling + docs).
 - 261cf06 Fix project root detection to only check CWD, not parent directories
 - e1049a9 Fix agent harness auth header handling for local APIs
 - 50cee74 Add OpenAI-compatible API support to agent harness
-- 7fe5365 Replace Claude Code with built-in Python agent harness
+- 7fe5365 Replace the external agent CLI with the built-in Python agent harness
 - 4f6951b fix: make tomllib import work on Python 3.10 via tomli backport
 - 4c0d728 fix: update tests for removed gh issues integration and missing company dir fixtures
 - 8df8406 fix: remove 'cd hive' — checkout is already at repo root
@@ -253,6 +253,6 @@ C.7-C.10 test coverage + audits, D.11-D.12 tooling + docs).
 - 42ba44f dashboard: fix live indicator to show uptime, not last-event time
 - 3cee1db Dashboard: replace verification stream with gate output viewer
 - e7c127e sprint-lifecycle: replace round-runner/stage-advance with single ticket-lifecycle driver
-- e25f9bb Mount project .claude/ into container for local model config
-- cc6d4b3 Download claude CLI from official installer in Dockerfile
-- dd27dc9 Add Dockerfile for claude-in-a-box agent sandbox
+- e25f9bb Mount the project's agent config dir into the container for local model config
+- cc6d4b3 Download the external agent CLI in the Dockerfile
+- dd27dc9 Add Dockerfile for the agent-in-a-box sandbox

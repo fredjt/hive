@@ -125,6 +125,6 @@ Config layers: `etc/config.defaults.toml` (shipped) → `~/.config/hive/config.t
 ## Diagnostics
 
 ```
-hive doctor                       # check claude bin, jq, git, node, venv, MCP server
+hive doctor                       # check agent harness, jq, git, node, venv, MCP server
 hive version
 ```

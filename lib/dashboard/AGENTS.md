@@ -1,6 +1,6 @@
-# CLAUDE.md
+# AGENTS.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+This file documents the `this directory` area of the Hive project — what it does, how it works, and the conventions for extending it.
 
 ## What is Hive Dashboard
 
@@ -42,7 +42,7 @@ Vanilla JS SPA with client-side routing. Panels: Dashboard, Board (Kanban), Chat
 - **No external dependencies** — adding one requires updating `package.json` and justifying the need.
 - **No build step** — the file is edited and served directly.
 - **All API responses are JSON** (GET/POST) except `/api/events` (SSE) and the root route (HTML).
-- **Ticket statuses/types/priorities**: see root `CLAUDE.md` for the full list.
+- **Ticket statuses/types/priorities**: see root `AGENTS.md` for the full list.
 - **MCP write methods:** `ticket_create`, `ticket_move`, `ticket_comment`, `ticket_approve`, `inbox_write`, `gates_run`, `gates_check`
 
 ## Common operations
@@ -67,5 +67,5 @@ node server.js --dir .company --port 3456
 
 ## See also
 
-- Parent `CLAUDE.md` — Framework-level architecture, common commands
-- `lib/CLAUDE.md` — Cross-module data flow, module map
+- Parent `AGENTS.md` — Framework-level architecture, common commands
+- `lib/AGENTS.md` — Cross-module data flow, module map

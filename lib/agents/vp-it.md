@@ -218,7 +218,7 @@ IT is the steward of the project-local hive scaffold at
 - `.hive/lib/agents/*.md`         agent prompts (CEO, VPs, ICs, verifier, release-IC, ...)
 - `.hive/lib/tools/*.sh`          ~100 operational scripts (sprint-fill, gh-pr-merge, crash-recovery, release-publish-runner, scaffold-extract, ...)
 - `.hive/lib/templates/`          PR template, GitHub workflows, publisher scripts
-- `.hive/lib/core/`               claude-spawn.sh, init.sh, orchestrator.sh
+- `.hive/lib/core/`               agent-spawn.sh, agent-harness.py, init.sh, orchestrator.sh
 - `.hive/config.toml`             per-project config defaults
 
 When CEO direction or a sprint review surfaces friction with hive itself

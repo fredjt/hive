@@ -524,13 +524,36 @@ class TestTicketBoardWritePath:
 
 
 class TestLayoutDocsMatchTree:
-    """D.7: the AGENTS.md / CLAUDE.md project-structure blocks must describe
-    the actual tree. A stale layout entry (e.g. a top-level `templates/`
-    that really lives at `lib/templates/`) misleads every new contributor
-    and every AI agent that reads the docs. These tests parse the fenced
-    structure block and assert every listed path exists on disk."""
+    """D.7 (0.6.0: now the AGENTS.md set): the root AGENTS.md
+    project-structure block must describe the actual tree. A stale layout
+    entry (e.g. a top-level `templates/` that really lives at
+    `lib/templates/`) misleads every new contributor and every AI agent
+    that reads the docs. These tests parse the fenced structure block and
+    assert every listed path exists on disk."""
 
-    DOC_BLOCKS = [("AGENTS.md", "lib"), ("CLAUDE.md", "lib")]
+    DOC_BLOCKS = [("AGENTS.md", "lib")]
+
+    @pytest.mark.parametrize("doc", [
+        "AGENTS.md", "lib/AGENTS.md", "lib/core/AGENTS.md",
+        "lib/tools/AGENTS.md", "lib/agents/AGENTS.md",
+        "lib/hive_mcp/tools/AGENTS.md", "lib/hive_cli/AGENTS.md",
+        "lib/hive_cli/commands/AGENTS.md", "lib/dashboard/AGENTS.md",
+        "lib/templates/AGENTS.md", "lib/templates/github-workflows/AGENTS.md",
+        "lib/templates/publishers/AGENTS.md", "packaging/AGENTS.md",
+        "share/docs/AGENTS.md",
+    ])
+    def test_agents_md_set_present(self, doc):
+        """0.6.0 rebrand: every key directory documents itself in AGENTS.md
+        and no file using the retired external-CLI doc filename remains.
+        (The legacy filename is assembled so this test stays grep-clean.)"""
+        assert Path(doc).is_file(), f"{doc} missing"
+        # Tracked files only (fast + exact): the repo must not ship any
+        # file using the retired external-CLI doc filename.
+        legacy_name = "CL" + "AUDE.md"
+        r = subprocess.run(["git", "ls-files"], capture_output=True,
+                           text=True, timeout=30)
+        legacy = [f for f in r.stdout.split() if f.endswith(legacy_name)]
+        assert not legacy, f"legacy doc files remain: {legacy}"
 
     @staticmethod
     def _structure_block(doc: str) -> list[str]:

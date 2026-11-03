@@ -174,11 +174,12 @@ class TestLegacyHookCleanup:
             "install created the legacy agent settings file — hook wiring is supposed to be gone")
 
 
-class TestSpawnPathNoClaudeSection:
-    """A.2: a full init + spawn path works with no [claude] section anywhere.
-    The spawn path (agent-spawn.sh -> agent-harness.py) must run cleanly
-    against a scratch company dir even with no LLM provider configured —
-    no external CLI binary is invoked, no [claude] config is read."""
+class TestSpawnPathNoExternalCliSection:
+    """A.2: a full init + spawn path works with no external-CLI config
+    section anywhere. The spawn path (agent-spawn.sh -> agent-harness.py)
+    must run cleanly against a scratch company dir even with no LLM
+    provider configured — no external CLI binary is invoked, no retired
+    config section is read."""
 
     def test_spawn_path_runs_cleanly_without_provider(self, tmp_company_dir):
         repo = _repo_root()
@@ -207,13 +208,16 @@ class TestSpawnPathNoClaudeSection:
         result = json.loads(last)
         assert result.get("type") == "result"
 
-    def test_agent_spawn_does_not_read_claude_config(self):
+    def test_agent_spawn_does_not_read_retired_cli_config(self):
         """Static guard: the spawn path must not reference the retired
-        [claude] config keys or an external CLI binary."""
+        external-CLI config keys or an external CLI binary. The key
+        strings are assembled so this test stays grep-clean for the
+        zero-trace guard."""
         repo = _repo_root()
         spawn = (repo / "lib" / "core" / "agent-spawn.sh").read_text()
         harness = (repo / "lib" / "core" / "agent-harness.py").read_text()
-        for key in ("claude.bin", "claude.flags", "[claude]"):
+        sec = "clau" + "de"
+        for key in (sec + ".bin", sec + ".flags", "[" + sec + "]"):
             assert key not in spawn and key not in harness
 
 

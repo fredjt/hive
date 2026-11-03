@@ -1,6 +1,6 @@
-# CLAUDE.md
+# AGENTS.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working within the `lib/hive_mcp/tools/` module.
+This file documents the `lib/hive_mcp/tools/` area of the Hive project — what it does, how it works, and the conventions for extending it.
 
 ## Role
 
@@ -48,7 +48,7 @@ Key conventions:
 - **`register(server)`** — the only required top-level function. Called by `server.py` during `build_server()`.
 - **`company_dir: str | None = None`** — every tool that touches project state accepts this optional kwarg. FastMCP auto-injects it from the MCP session.
 - **`run("script-name", *args, company_dir=company_dir).to_dict()`** — the standard return pattern. `run()` shims to `lib/tools/script-name.sh`, handles path resolution, env setup, timeout, and JSON parsing.
-- **Docstrings are agent-facing** — they describe args, expected values, and side effects. The spawned Claude agents read these to decide which tool to call.
+- **Docstrings are agent-facing** — they describe args, expected values, and side effects. The spawned agents read these to decide which tool to call.
 
 ## When to read from files directly vs. shell out
 
@@ -68,7 +68,7 @@ Direct file reads are appropriate when the operation is simple (parse a JSON fil
 2. **Create the bash script**: Add `<project>/.hive/lib/tools/<script-name>.sh` (or the global install equivalent).
 3. **Add the tool**: Create the `@server.tool()` function inside `register()`. Follow the pattern above.
 4. **Register the module** (new file only): Add the module name to `TOOL_MODULES` in `lib/hive_mcp/server.py`.
-5. **Document**: Update this CLAUDE.md's structure table if new.
+5. **Document**: Update this AGENTS.md's structure table if new.
 
 ## Adding a new module
 
@@ -86,8 +86,8 @@ Direct file reads are appropriate when the operation is simple (parse a JSON fil
 
 ## See also
 
-- Parent `CLAUDE.md` — Framework-level architecture, common commands
-- `lib/CLAUDE.md` — Cross-module data flow, module map
+- Parent `AGENTS.md` — Framework-level architecture, common commands
+- `lib/AGENTS.md` — Cross-module data flow, module map
 - `lib/hive_mcp/server.py` — Server bootstrap, tool module registration
-- `lib/hive_cli/CLAUDE.md` — CLI dispatcher that proxies to these tools
-- `lib/tools/CLAUDE.md` — Bash scripts called by these tools
+- `lib/hive_cli/AGENTS.md` — CLI dispatcher that proxies to these tools
+- `lib/tools/AGENTS.md` — Bash scripts called by these tools

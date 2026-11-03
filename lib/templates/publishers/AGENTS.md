@@ -1,6 +1,6 @@
-# CLAUDE.md
+# AGENTS.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+This file documents the `this directory` area of the Hive project — what it does, how it works, and the conventions for extending it.
 
 ## What is here
 
@@ -45,6 +45,6 @@ The runner sets `HIVE_PR_OP_AUTHORIZED=1` when invoking the publisher, which byp
 
 ## See also
 
-- `../CLAUDE.md` — Template overview
-- `../github-workflows/CLAUDE.md` — Release workflow
-- Parent `CLAUDE.md` — Framework-level architecture
+- `../AGENTS.md` — Template overview
+- `../github-workflows/AGENTS.md` — Release workflow
+- Parent `AGENTS.md` — Framework-level architecture

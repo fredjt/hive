@@ -1,10 +1,10 @@
-# CLAUDE.md
+# AGENTS.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+This file documents the `this directory` area of the Hive project — what it does, how it works, and the conventions for extending it.
 
 ## What lives here
 
-`lib/` is the runtime core of the Hive framework — a virtual company orchestration system that spawns Claude Code agents as departmental roles. It contains five major modules plus scaffold templates, each with its own CLAUDE.md for deeper detail:
+`lib/` is the runtime core of the Hive framework — a virtual company orchestration system that spawns AI agents as departmental roles. It contains five major modules plus scaffold templates, each with its own AGENTS.md for deeper detail:
 
 ```
 lib/
@@ -16,7 +16,7 @@ lib/
     commands/            One module per CLI subcommand (20 handlers)
   tools/                 101 bash scripts (~13k lines) — the operational engine
   core/                  5 foundational scripts — agent-spawn, orchestrator, init, hooks
-  agents/                24 Claude agent prompt files — role definitions for each IC/VP
+  agents/                24 agent prompt files — role definitions for each IC/VP
   dashboard/             Single-file Node.js SPA (~5800 lines) — web UI, zero dependencies
   templates/             GitHub PR template, CI/release workflows, release publishers
 ```
@@ -65,12 +65,12 @@ Agents spawned by the sprint-lifecycle **never write `.company/` directly**. The
 
 ## See also
 
-- [`core/CLAUDE.md`](core/) — Foundational scripts, agent spawning, PreToolUse hooks
-- [`tools/CLAUDE.md`](tools/) — Bash scripts by category, conventions, state files, serialization
-- [`hive_mcp/tools/CLAUDE.md`](hive_mcp/tools/) — Tool modules, shell.py bridge, adding tools
-- [`hive_cli/CLAUDE.md`](hive_cli/) — CLI dispatcher, handler patterns, mcp_client
-- [`hive_cli/commands/CLAUDE.md`](hive_cli/commands/) — Per-subcommand handler patterns
-- [`agents/CLAUDE.md`](agents/) — Agent prompt architecture, role hierarchy
-- [`dashboard/CLAUDE.md`](dashboard/) — Node.js SPA architecture, SSE, API endpoints
-- [`templates/CLAUDE.md`](templates/) — GitHub PR template, CI workflows, release publishers
-- Parent `CLAUDE.md` — Framework-level architecture, installation, common commands
+- [`core/AGENTS.md`](core/) — Foundational scripts, agent spawning, PreToolUse hooks
+- [`tools/AGENTS.md`](tools/) — Bash scripts by category, conventions, state files, serialization
+- [`hive_mcp/tools/AGENTS.md`](hive_mcp/tools/) — Tool modules, shell.py bridge, adding tools
+- [`hive_cli/AGENTS.md`](hive_cli/) — CLI dispatcher, handler patterns, mcp_client
+- [`hive_cli/commands/AGENTS.md`](hive_cli/commands/) — Per-subcommand handler patterns
+- [`agents/AGENTS.md`](agents/) — Agent prompt architecture, role hierarchy
+- [`dashboard/AGENTS.md`](dashboard/) — Node.js SPA architecture, SSE, API endpoints
+- [`templates/AGENTS.md`](templates/) — GitHub PR template, CI workflows, release publishers
+- Parent `AGENTS.md` — Framework-level architecture, installation, common commands

@@ -1,9 +1,10 @@
 # Hive 🐝
 
-A standalone framework for orchestrating a swarm of Claude Code agents as a
-virtual company on a software project. Hive uses Claude Code as its LLM
-backend (so you keep all of Claude's tool use, context, memory, hooks, and
-permissions) but runs as its own application — not as a Claude Code skill.
+A standalone framework for orchestrating a swarm of AI agents as a
+virtual company on a software project. Hive's agent runtime is the
+built-in agent harness — plain Python that calls LLM provider APIs
+directly and reaches the hive MCP server over localhost HTTP — so no
+external agent CLI is installed, invoked, or required.
 
 ## What it is
 
@@ -15,7 +16,7 @@ permissions) but runs as its own application — not as a Claude Code skill.
   — see all departments, ticket boards, agent activity, run/stop the company,
   approve verification, etc.
 - **An MCP server** (~55 tools) that the dashboard, the CLI, and spawned
-  Claude agents all share. Structured tool calls instead of long bash
+  agents all share. Structured tool calls instead of long bash
   invocations — saves output tokens (the slow part on local llama.cpp).
 - **Strict quality gates**: deterministic gates (tests, lint, security,
   contract compliance) plus an adversarial verification IC review. Tickets
@@ -33,7 +34,7 @@ symlinks `~/.local/bin/hive` to the launcher. Add `~/.local/bin` to your
 PATH if it isn't already.
 
 Dependencies: Python 3.10+ with `mcp`, `fastapi`, `uvicorn`, `httpx` (auto-
-installed in the venv); `claude` CLI on PATH; `git`, `jq`, `node` for the
+installed in the venv); `git`, `jq`, `node` for the
 dashboard, `bash`.
 
 ## Quick start
@@ -58,7 +59,7 @@ hive stop
 ```
 ┌─────────────┐  ┌─────────────────────────┐  ┌──────────────────┐
 │  Dashboard  │  │   hive (CLI - Python)   │  │ Spawned agents   │
-│  (Node.js)  │  │                         │  │ (Claude Code)    │
+│  (Node.js)  │  │                         │  │ (agent harness)  │
 └──────┬──────┘  └────────────┬────────────┘  └────────┬─────────┘
        │ HTTP                  │ HTTP / stdio          │ HTTP (MCP)
        └────────────┬──────────┴───────────────────────┘
@@ -84,7 +85,7 @@ See `MCP-TOOLS.md` for the MCP tool catalog.
 
 ## Why MCP
 
-Spawned Claude agents see hive's tools via the MCP server (configured
+Spawned agents see hive's tools via the MCP server (wired by
 automatically by `lib/core/agent-spawn.sh`). Instead of generating multi-line
 bash invocations like:
 
@@ -114,8 +115,8 @@ for audit. There is no other way out.
 
 ## Backward compatibility
 
-The old Claude Code skills `/skill company` and `/skill company-seq` still
-work — they're now thin shims that forward to `hive init`.
+Hive is not a skill and never ships one — `hive init` is the entry
+point for standing up a company on a project.
 
 ## Files / layout
 
@@ -124,7 +125,7 @@ work — they're now thin shims that forward to `hive init`.
 - `lib/hive_cli/` — CLI dispatcher (Python)
 - `lib/core/` — bash glue (agent-spawn, init, orchestrator, hook)
 - `lib/tools/` — bash tool scripts
-- `lib/agents/` — Claude agent prompts
+- `lib/agents/` — agent prompts
 - `lib/dashboard/` — Node.js web dashboard
 - `etc/config.defaults.toml` — default config
 - `~/.config/hive/config.toml` — your overrides
@@ -133,6 +134,5 @@ work — they're now thin shims that forward to `hive init`.
 
 ## Status
 
-Working. Built incrementally as an extraction from the company skill at
-`~/.claude/skills/company/`. See `~/.claude/plans/modular-riding-dove.md`
-for the full extraction plan.
+Working. Started life as an extraction of the company-skill prototype
+and has since grown into a standalone framework.

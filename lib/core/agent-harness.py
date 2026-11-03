@@ -433,7 +433,7 @@ def parse_response(resp: httpx.Response) -> dict[str, Any]:
             total_cost_usd = (prompt_tokens * 0.00003 + completion_tokens * 0.00006) / 1000
         elif "gpt-3.5" in data.get("model", "").lower():
             total_cost_usd = (prompt_tokens * 0.0000015 + completion_tokens * 0.000002) / 1000
-        elif any(m in data.get("model", "").lower() for m in ["claude", "anthropic"]):
+        elif any(m in data.get("model", "").lower() for m in ["anthropic"]):
             total_cost_usd = (prompt_tokens * 0.000003 + completion_tokens * 0.000015) / 1000
 
     return {

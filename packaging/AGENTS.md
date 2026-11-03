@@ -1,6 +1,6 @@
-# CLAUDE.md
+# AGENTS.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this directory.
+This file documents the `packaging/` directory of the Hive project — what it does, how it works, and the conventions for extending it.
 
 ## What is here
 
@@ -10,11 +10,10 @@ This directory contains the packaging artifacts: installers, the build script, a
 
 | File | Purpose |
 |---|---|
-| `install.sh` | Main installer — creates Python venv (uv or stdlib), installs deps, chmods scripts, symlinks `hive` onto PATH, registers PreToolUse hooks in `~/.claude/settings.json` |
+| `install.sh` | Main installer — creates Python venv (uv or stdlib), installs deps, chmods scripts, symlinks `hive` onto PATH. Does NOT touch agent settings (0.6.0: the built-in harness is the agent runtime) |
 | `install-online.sh` | Remote one-liner installer (`curl | sh`) — downloads a tarball, verifies checksum, delegates to `install.sh` |
 | `build-package.sh` | Produces a redistributable `dist/hive-<version>.tar.gz` + `.sha256` from the source tree |
-| `uninstall.sh` | Removes the `hive` symlink and venv and unregisters the PreToolUse hooks; leaves source tree and `.company/` workspaces untouched |
-| `hooks.sh` | PreToolUse hook register/unregister logic (jq), shared by install.sh and uninstall.sh |
+| `uninstall.sh` | Removes the `hive` symlink and venv and runs the one-time legacy cleanup of stale agent hook registrations; leaves source tree and `.company/` workspaces untouched |
 | `pyproject.toml` | Python project metadata (setuptools) — defines `hive-os` package, entry point `hive → hive_cli.main:main` |
 | `requirements.txt` | Pinned minimum Python dependencies: mcp, fastapi, uvicorn, httpx, tomli |
 
@@ -25,7 +24,7 @@ This directory contains the packaging artifacts: installers, the build script, a
 - **Idempotent**: re-running upgrades the venv and re-creates the symlink without touching project workspaces.
 - **Two modes**: installs in-place by default; pass `--copy-to <dir>` to copy the tree first (the typical production flow).
 - **Venv creation**: prefers `uv venv --seed`, falls back to `python3 -m venv`.
-- **Hook registration** (via `hooks.sh`): uses `jq` to patch `~/.claude/settings.json` with two PreToolUse hooks (`block-company-writes.sh`, `block-admin-code-writes.sh`) under matcher `Write|Edit|NotebookEdit|Bash`. Includes migration logic to replace old narrow-match registrations.
+- **Legacy hook cleanup** (in `uninstall.sh`): installs prior to 0.6.0 registered PreToolUse hooks for the retired external agent CLI in the operator's agent settings file. Uninstall strips the hive entries (jq, best-effort — never fails the uninstall) so old installs leave no residue. The legacy config directory name is assembled from string parts inside the script on purpose.
 - **Daemon detection**: after install, prints a warning if the MCP server or sprint-lifecycle are still running with old code, suggesting `hive stop && hive start`.
 
 ### build-package.sh
@@ -76,4 +75,4 @@ bash packaging/uninstall.sh
 ## See also
 
 - `share/docs/PACKAGING.md` — Release/distribution guide
-- Parent `CLAUDE.md` — Framework-level architecture, common commands
+- Parent `AGENTS.md` — Framework-level architecture, common commands

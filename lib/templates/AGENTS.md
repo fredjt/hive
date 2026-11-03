@@ -1,6 +1,6 @@
-# CLAUDE.md
+# AGENTS.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+This file documents the `this directory` area of the Hive project — what it does, how it works, and the conventions for extending it.
 
 ## What is here
 
@@ -17,7 +17,7 @@ templates/
 └── publishers/
     ├── github.sh                     → <project>/.hive/publishers/github.sh (default)
     ├── local-only.sh                 → <project>/.hive/publishers/local-only.sh
-    └── CLAUDE.md                     (publisher docs)
+    └── AGENTS.md                     (publisher docs)
 ```
 
 ## The three template families
@@ -41,11 +41,11 @@ Bash scripts invoked by `release-publish-runner.sh` (stage 8 of the sprint cycle
 
 Changes affect **all future project initializations**. Existing projects have their own copy and won't be updated automatically.
 
-- **GitHub workflows** (`github-workflows/CLAUDE.md`): The CI workflow's language detection and gate list should stay in sync with `lib/tools/verification-gates.sh`. The release workflow assumes `packaging/build-package.sh` and a `VERSION` file exist.
-- **Publishers** (`publishers/CLAUDE.md`): Custom publishers follow the 4-arg signature.
+- **GitHub workflows** (`github-workflows/AGENTS.md`): The CI workflow's language detection and gate list should stay in sync with `lib/tools/verification-gates.sh`. The release workflow assumes `packaging/build-package.sh` and a `VERSION` file exist.
+- **Publishers** (`publishers/AGENTS.md`): Custom publishers follow the 4-arg signature.
 
 ## See also
 
-- `github-workflows/CLAUDE.md` — CI and release workflow details
-- `publishers/CLAUDE.md` — Release publisher scripts
-- Parent `CLAUDE.md` — Framework-level architecture, common commands
+- `github-workflows/AGENTS.md` — CI and release workflow details
+- `publishers/AGENTS.md` — Release publisher scripts
+- Parent `AGENTS.md` — Framework-level architecture, common commands

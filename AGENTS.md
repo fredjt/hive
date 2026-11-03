@@ -1,6 +1,151 @@
-# AGENTS.md — How Hive Is Developed
+# AGENTS.md — Hive
 
-This file documents the development workflow for the **Hive** project: how to add features, fix bugs, run tests, and ship changes. If you are an AI agent or a human contributor, follow these guidelines to keep the codebase healthy and regression-free.
+This file is the single guide for working on the **Hive** project: what it
+is, how it is built, and how to develop it (add features, fix bugs, run
+tests, ship changes). If you are an AI agent or a human contributor, follow
+these guidelines to keep the codebase healthy and regression-free.
+
+## What is Hive
+
+Hive is a standalone framework for orchestrating a swarm of AI agents as a
+virtual company on a software project. It runs as its own application. Its
+agent runtime is the **built-in agent harness** (`lib/core/agent-harness.py`):
+plain Python that calls LLM provider APIs directly and reaches the hive MCP
+server over localhost HTTP. No external agent CLI is installed, invoked, or
+required anywhere.
+
+## Directory layout
+
+```
+bin/hive                              CLI launcher (bash)
+lib/                                  Runtime core (see lib/AGENTS.md for details)
+  hive_mcp/                           MCP server (Python, FastMCP)
+  hive_cli/                           CLI dispatcher (Python)
+  core/                               Foundational bash scripts (agent-spawn, init)
+  tools/                              ~100 bash scripts (~13k lines)
+  agents/                             Agent prompt files
+  dashboard/                          Node.js web dashboard (single-file SPA)
+  templates/                          GitHub PR template, CI/release workflows
+packaging/                            Install scripts, build, metadata
+tests/                                pytest test suite
+docs/                                 Developer notes
+share/docs/                           Human-readable documentation
+etc/config.defaults.toml              Default configuration
+```
+
+Each key subdirectory has its own `AGENTS.md` with deeper detail. See the
+**See also** section at the bottom.
+
+## Key architecture concepts
+
+### Two-root design
+
+- **HIVE_INSTALL_DIR** (~/.local/share/hive): Global install — venv, MCP
+  server, CLI, dashboard. Read-only from inside agents.
+- **HIVE_ROOT** (<project>/.hive/): Per-project tweakable scaffold — agents,
+  tools, templates, config.toml. Created by `hive init` via scaffold-extract.
+
+### Runtime paths
+
+- **PROJECT_ROOT**: The project directory containing `.company/`
+- **COMPANY_DIR** ($PROJECT_ROOT/.company): Live runtime state — tickets,
+  chat, roster, sprint state, logs. Agents read freely but MUST NOT write
+  directly; all writes go through MCP tools or bash scripts.
+
+### Two-transport MCP server
+
+The MCP server (`lib/hive_mcp/server.py`) supports two transports:
+- **http** (port 7891): Used by the dashboard, the CLI, and spawned agents
+  (the harness calls tools over localhost HTTP).
+- **stdio**: A plain programmatic transport — run the server as a child
+  process from a script, test, or interactive session and talk JSON-RPC
+  over its stdin/stdout.
+
+### Agent runtime (the harness)
+
+Every spawned agent goes through `lib/core/agent-spawn.sh`, which execs
+`lib/core/agent-harness.py`. The harness runs a conversation loop against
+the configured LLM provider (HIVE_* env vars and the `[llm]` config section
+drive provider/model/base_url/api_key), executes `bash:` blocks with safety
+limits, calls MCP tools from `mcp:` blocks over HTTP, and writes
+stream-json events that the dashboard replays.
+
+### Sprint-staged lifecycle
+
+The round-runner serially walks through stages:
+1. ceo-plan → 2. vp-plan → 2.5 sprint-fill → 3. tdd-red → 4. tdd-green →
+5. verify → (loop back to 3) → 6. build-and-test → 7. release-verify →
+8. release-publish → (loop back to 6a) → 9. vp-review → archive → next
+sprint
+
+### Important conventions
+
+- Ticket statuses: `backlog` → `sprint-current` → `in-progress` →
+  `in-review` → `done` → `archive`
+- Ticket types: `feature`, `bug`, `improvement`, `chore`,
+  `infrastructure`, `research`
+- Priorities: `critical`, `high`, `medium`, `low`
+- Agent roles: CEO, VPs (per dept), ICs (engineer, tester, infra, admin),
+  Verification IC, Release IC
+- Worktrees: per-ticket at `$PROJECT_ROOT/.worktrees/$TID` on branch
+  `feature/$TID`
+- The `.company/` directory is live state treated as a database — agents
+  read freely, writes go through MCP tools or scripts only
+- **Derived state**: `roster.json` and per-dept `status.json` are rebuilt
+  every 60s from ticket directories, VP log mtimes, and git worktrees —
+  nothing else writes them
+
+## Common commands
+
+### Installation (from extracted archive)
+```bash
+bash packaging/install.sh --copy-to ~/.local/share/hive
+# Verify:
+hive doctor
+```
+
+### Per-project usage
+```bash
+cd /path/to/project
+hive init . --brief "Project description"
+hive                     # Launches dashboard at http://localhost:3456
+hive start               # Starts all daemons (MCP server, round-runner, pulse, orphan-recovery, roster/status rebuild)
+hive status              # Show derived department status
+hive stop                # Kill all daemon processes
+hive ticket list backend # List tickets
+```
+
+### MCP server (standalone)
+```bash
+# HTTP transport (default port 7891)
+python -m hive_mcp.server --transport http --host 127.0.0.1 --port 7891
+# stdio transport (plain programmatic consumers)
+python -m hive_mcp.server --transport stdio
+```
+
+### CLI (from source, without install)
+```bash
+PYTHONPATH=lib python -m hive_cli.main --help
+```
+
+### Dashboard
+```bash
+# From source (Node.js, no build step)
+node lib/dashboard/server.js --dir .company --port 3456
+```
+
+## Configuration
+
+- Defaults: `etc/config.defaults.toml`
+- Overrides: `~/.config/hive/config.toml`
+- Environment (for daemons): `~/.config/hive/env.sh` — set the LLM
+  endpoint config there (`HIVE_API_BASE`, `HIVE_API_KEY`, `HIVE_MODEL`)
+  so daemons spawned via nohup/systemd inherit it without depending on
+  interactive shell rc files.
+
+## Python dependencies
+
+`packaging/requirements.txt`: mcp, fastapi, uvicorn[standard], httpx, tomli
 
 ---
 
@@ -37,9 +182,9 @@ lib/                                  Runtime core
   hive_cli/                           CLI dispatcher (Python)
     main.py                           Subcommand routing
     commands/                         Per-subcommand handlers
-  core/                               Foundational bash scripts (agent-spawn, init, hooks)
+  core/                               Foundational bash scripts (agent-spawn, init)
   tools/                              ~101 bash scripts (~13k lines)
-  agents/                             Claude agent prompt files
+  agents/                             Agent prompt files
   dashboard/                          Node.js web dashboard (single-file SPA)
   templates/                          GitHub PR template, CI/release workflows
 packaging/                            Install scripts, build, metadata
@@ -317,8 +462,13 @@ Before committing any change:
 
 ## See Also
 
-- [`CLAUDE.md`](CLAUDE.md) — Project overview, architecture, commands
-- [`lib/CLAUDE.md`](lib/CLAUDE.md) — Cross-module map, data flow
-- [`lib/tools/CLAUDE.md`](lib/tools/CLAUDE.md) — Bash script conventions
-- [`lib/hive_mcp/tools/CLAUDE.md`](lib/hive_mcp/tools/) — MCP tool modules
-- [`packaging/CLAUDE.md`](packaging/) — Installer, build process
+- [`lib/AGENTS.md`](lib/) — Cross-module map, data flow, serialization points
+- [`lib/core/AGENTS.md`](lib/core/) — Foundational scripts: agent-spawn, orchestrator, init
+- [`lib/tools/AGENTS.md`](lib/tools/) — Bash script conventions
+- [`lib/hive_mcp/tools/AGENTS.md`](lib/hive_mcp/tools/) — MCP tool modules
+- [`lib/hive_cli/AGENTS.md`](lib/hive_cli/) — CLI dispatcher, command handlers
+- [`lib/agents/AGENTS.md`](lib/agents/) — Agent prompt architecture, role hierarchy
+- [`lib/dashboard/AGENTS.md`](lib/dashboard/) — Single-file Node.js SPA architecture
+- [`lib/templates/AGENTS.md`](lib/templates/) — GitHub PR template, CI workflows, publishers
+- [`packaging/AGENTS.md`](packaging/) — Installer behavior, build, uninstall
+- [`share/docs/AGENTS.md`](share/docs/) — Documentation corpus, cross-references

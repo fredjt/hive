@@ -1,6 +1,6 @@
-# CLAUDE.md
+# AGENTS.md
 
-This file provides guidance for Claude Code when working with CLI subcommand handlers in this directory.
+This file documents the `this directory` area of the Hive project — what it does, how it works, and the conventions for extending it.
 
 ## Purpose
 
@@ -81,10 +81,10 @@ proc = subprocess.Popen(
 
 ## The mcp_client module
 
-The client (`lib/hive_cli/mcp_client.py`) auto-selects transport (HTTP → stdio fallback). See `lib/hive_cli/CLAUDE.md` for details.
+The client (`lib/hive_cli/mcp_client.py`) auto-selects transport (HTTP → stdio fallback). See `lib/hive_cli/AGENTS.md` for details.
 
 ## See also
 
-- Parent `CLAUDE.md` — Framework-level architecture, common commands
-- `lib/CLAUDE.md` — Cross-module data flow
-- `lib/hive_cli/CLAUDE.md` — CLI dispatcher, mcp_client, path resolution
+- Parent `AGENTS.md` — Framework-level architecture, common commands
+- `lib/AGENTS.md` — Cross-module data flow
+- `lib/hive_cli/AGENTS.md` — CLI dispatcher, mcp_client, path resolution

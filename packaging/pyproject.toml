@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "hive-os"
 version = "0.5.17"
-description = "Hive — orchestrate a virtual company of Claude agents on a project"
+description = "Hive — orchestrate a virtual company of AI agents on a project"
 readme = "../share/docs/README.md"
 requires-python = ">=3.10"
 dependencies = [

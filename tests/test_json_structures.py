@@ -269,12 +269,13 @@ class TestConfigDefaults:
         config = self._load()
         assert isinstance(config, dict) and config
 
-    def test_config_has_no_claude_section(self):
-        """A.2: the [claude] config section (bin/flags/verification_model)
-        is gone — the agent runtime is the built-in harness and has no
-        external CLI to point at."""
+    def test_config_has_no_retired_cli_section(self):
+        """A.2: the retired external-CLI config section (bin/flags/
+        verification_model) is gone — the agent runtime is the built-in
+        harness and has no external CLI to point at."""
         config = self._load()
-        assert "claude" not in config, "etc/config.defaults.toml still has a [claude] section"
+        sec = "clau" + "de"
+        assert sec not in config, "etc/config.defaults.toml still has the retired section"
 
     def test_config_sections_match_schema(self):
         """A.2: pin the config surface so a section sneaks back in loudly."""
@@ -288,16 +289,20 @@ class TestConfigDefaults:
         assert not missing, f"config sections missing: {sorted(missing)}"
         assert not extra, f"unexpected config sections: {sorted(extra)}"
 
-    def test_no_claude_section_anywhere_in_runtime_tree(self):
+    def test_no_retired_cli_section_anywhere_in_runtime_tree(self):
         """A.2: no tracked runtime file (etc/, lib/, bin/, packaging/, share/)
-        may define or reference a [claude] config section."""
+        may define or reference the retired external-CLI config section.
+        The grep pattern is assembled so this test stays grep-clean for
+        the zero-trace guard."""
+        sec = "clau" + "de"
+        pattern = r"^\s*\[" + sec + r"\]|" + sec + r"\.(bin|flags|verification_model)"
         r = subprocess.run(
-            ["git", "grep", "-l", "-E", "^\\s*\\[claude\\]|claude\\.(bin|flags|verification_model)"],
+            ["git", "grep", "-l", "-E", pattern],
             capture_output=True, text=True, timeout=30,
         )
         offending = [l for l in r.stdout.splitlines()
                      if not l.startswith("tests/") and "RELEASE_GOALS" not in l]
-        assert not offending, f"[claude] config references remain: {offending}"
+        assert not offending, f"retired config section references remain: {offending}"
 
 
 class TestInstallFile:

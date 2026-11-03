@@ -1,6 +1,6 @@
-# CLAUDE.md
+# AGENTS.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+This file documents the `this directory` area of the Hive project — what it does, how it works, and the conventions for extending it.
 
 ## Purpose
 
@@ -119,6 +119,6 @@ release-ic.md       →  reviews release readiness before publish
 
 ## See also
 
-- Parent `CLAUDE.md` — Framework-level architecture, sprint lifecycle
-- `lib/core/CLAUDE.md` — Agent spawning via agent-spawn.sh
-- `lib/tools/CLAUDE.md` — Agent spawning scripts (ic-spawn.sh, load-agent-prompt.sh)
+- Parent `AGENTS.md` — Framework-level architecture, sprint lifecycle
+- `lib/core/AGENTS.md` — Agent spawning via agent-spawn.sh
+- `lib/tools/AGENTS.md` — Agent spawning scripts (ic-spawn.sh, load-agent-prompt.sh)

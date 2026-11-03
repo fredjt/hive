@@ -9,6 +9,6 @@
   "scripts": {
     "start": "node server.js"
   },
-  "keywords": ["ticket", "kanban", "company", "claude"],
+  "keywords": ["ticket", "kanban", "company", "mcp"],
   "license": "MIT"
 }

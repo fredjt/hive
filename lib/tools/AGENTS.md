@@ -1,6 +1,6 @@
-# CLAUDE.md
+# AGENTS.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with the `lib/tools/` directory — bash scripts that form the operational engine of the Hive agent orchestration framework.
+This file documents the `this directory` area of the Hive project — what it does, how it works, and the conventions for extending it.
 
 ## What this directory is
 
@@ -119,11 +119,11 @@ Ticket loop (one ticket at a time):
 
 ## See also
 
-- [`core/CLAUDE.md`](core/) — Foundational scripts, agent spawning, PreToolUse hooks
-- [`hive_mcp/tools/CLAUDE.md`](hive_mcp/tools/) — Tool modules, shell.py bridge, adding tools
-- [`hive_cli/CLAUDE.md`](hive_cli/) — CLI dispatcher, handler patterns, mcp_client
-- [`hive_cli/commands/CLAUDE.md`](hive_cli/commands/) — Per-subcommand handler patterns
-- [`agents/CLAUDE.md`](agents/) — Agent prompt architecture, role hierarchy
-- [`dashboard/CLAUDE.md`](dashboard/) — Node.js SPA architecture, SSE, API endpoints
-- [`templates/CLAUDE.md`](templates/) — GitHub PR template, CI workflows, release publishers
-- Parent `CLAUDE.md` — Framework-level architecture, installation, common commands
+- [`core/AGENTS.md`](core/) — Foundational scripts, agent spawning, PreToolUse hooks
+- [`hive_mcp/tools/AGENTS.md`](hive_mcp/tools/) — Tool modules, shell.py bridge, adding tools
+- [`hive_cli/AGENTS.md`](hive_cli/) — CLI dispatcher, handler patterns, mcp_client
+- [`hive_cli/commands/AGENTS.md`](hive_cli/commands/) — Per-subcommand handler patterns
+- [`agents/AGENTS.md`](agents/) — Agent prompt architecture, role hierarchy
+- [`dashboard/AGENTS.md`](dashboard/) — Node.js SPA architecture, SSE, API endpoints
+- [`templates/AGENTS.md`](templates/) — GitHub PR template, CI workflows, release publishers
+- Parent `AGENTS.md` — Framework-level architecture, installation, common commands
