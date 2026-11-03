@@ -22,16 +22,40 @@ external agent CLI is installed, invoked, or required.
   contract compliance) plus an adversarial verification IC review. Tickets
   cannot reach `done/` without explicit IC approval with rationale.
 
-## Install
+## Get Hive
+
+Latest release: **v0.7.0**.
+
+**Release tarball** (no git required):
+
+1. Download `hive-0.7.0.tar.gz` and its `hive-0.7.0.sha256` sidecar
+   from the [releases page](https://github.com/fredjt/hive/releases).
+2. Verify the download before installing:
+   `sha256sum -c hive-0.7.0.sha256` (the sidecar carries the expected hash).
+3. Extract and install:
+
+   ```bash
+   tar xzf hive-0.7.0.tar.gz
+   bash hive-0.7.0/packaging/install.sh --copy-to ~/.local/share/hive
+   ```
+
+**From source**:
 
 ```bash
-bash ~/.local/share/hive/packaging/install.sh
-hive doctor                           # verify
+git clone https://github.com/fredjt/hive.git
+bash hive/packaging/install.sh --copy-to ~/.local/share/hive
 ```
 
-The installer creates a Python venv at `~/.local/share/hive/venv` and
-symlinks `~/.local/bin/hive` to the launcher. Add `~/.local/bin` to your
-PATH if it isn't already.
+Then run the doctor gate — it must pass before you point a project at
+the install:
+
+```bash
+hive doctor
+```
+
+The installer copies the tree to `~/.local/share/hive`, creates a Python
+venv there with the required packages, and symlinks `~/.local/bin/hive`
+to the launcher. Add `~/.local/bin` to your PATH if it isn't already.
 
 Dependencies: Python 3.10+ with `mcp`, `fastapi`, `uvicorn`, `httpx` (auto-
 installed in the venv); `git`, `jq`, `node` for the

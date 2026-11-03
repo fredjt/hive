@@ -1023,6 +1023,71 @@ class TestBuildPackageReproducibility:
         assert result.returncode == 0, f"sidecar mismatch: {result.stdout}{result.stderr}"
 
 
+class TestBuildPackagePublicSurface:
+    """D.2: the tarball must ship the tracked public-surface files
+    verbatim — no regenerated copies.
+
+    Regression: build-package.sh used to regenerate INSTALL (re-pinning a
+    version header the repo had de-pinned in B.2) and LICENSE (the
+    truncated 324-byte MIT the repo had replaced with the full text in
+    B.1) from hardcoded heredocs, so every published tarball contradicted
+    the repo's own public surface. The build now copies the tracked
+    files; this test builds for real and compares bytes.
+    """
+
+    install_dir = Path(__file__).resolve().parent.parent
+
+    @classmethod
+    def _build_and_extract(cls, tmp_path):
+        out = tmp_path / "out"
+        result = subprocess.run(
+            ["bash", str(cls.install_dir / "packaging" / "build-package.sh"),
+             "--out-dir", str(out)],
+            capture_output=True, text=True, timeout=300,
+            cwd=str(cls.install_dir), env=os.environ.copy(),
+        )
+        assert result.returncode == 0, f"build failed: {result.stderr}"
+        tarballs = list(out.glob("hive-*.tar.gz"))
+        assert len(tarballs) == 1, f"expected one tarball, got {tarballs}"
+        extract = tmp_path / "x"
+        extract.mkdir()
+        result = subprocess.run(
+            ["tar", "xzf", str(tarballs[0]), "-C", str(extract)],
+            capture_output=True, text=True, timeout=60,
+        )
+        assert result.returncode == 0, f"extract failed: {result.stderr}"
+        pkg = next(iter(extract.iterdir()))
+        assert pkg.is_dir()
+        return pkg
+
+    def test_tarball_installs_the_tracked_install_doc(self, tmp_path):
+        pkg = self._build_and_extract(tmp_path)
+        shipped = (pkg / "INSTALL").read_text()
+        tracked = (self.install_dir / "INSTALL").read_text()
+        assert shipped == tracked, \
+            "tarball INSTALL must be the tracked file verbatim (no " \
+            "regenerated version-pinned header)"
+
+    def test_tarball_ships_the_full_license(self, tmp_path):
+        pkg = self._build_and_extract(tmp_path)
+        shipped = (pkg / "LICENSE").read_text()
+        tracked = (self.install_dir / "LICENSE").read_text()
+        assert shipped == tracked, \
+            "tarball LICENSE must be the tracked file verbatim"
+        norm = re.sub(r"\s+", " ", shipped)
+        assert ("IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE "
+                "LIABLE") in norm, \
+            "shipped license is missing the IN-NO-EVENT clause"
+
+    def test_tarball_readme_has_the_acquisition_path(self, tmp_path):
+        pkg = self._build_and_extract(tmp_path)
+        readme = (pkg / "README.md").read_text()
+        assert "Get Hive" in readme, \
+            "tarball README must document how a stranger obtains Hive"
+        assert "sha256sum -c" in readme, \
+            "tarball README must document the sidecar verification step"
+
+
 class TestCompanyHealthRestartPolicy:
     """B.3: a failing daemon restarts up to HIVE_MAX_RESTARTS, is then
     marked dead IN processes.json (dead=true, dead_reason), and is never

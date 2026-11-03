@@ -65,30 +65,13 @@ for d in bin lib etc share packaging VERSION; do
   fi
 done
 
-# Top-level README + LICENSE + INSTALL convenience files
+# Top-level public-surface files: ship the tracked repo files VERBATIM.
+# Regenerating INSTALL/LICENSE from heredocs here is how a stale
+# version-pinned INSTALL header and the truncated 324-byte LICENSE got
+# back into published tarballs after the repo files were fixed (D.2).
 cp "$SOURCE_DIR/share/docs/README.md" "$STAGE/$PKG_NAME/README.md"
-cat > "$STAGE/$PKG_NAME/INSTALL" <<EOF
-Hive $VERSION — installation
-
-  1. Extract this archive (you've already done this)
-  2. Run: bash packaging/install.sh --copy-to ~/.local/share/hive
-  3. Verify: hive doctor
-
-That copies the tree to ~/.local/share/hive, creates a Python venv there with
-required packages, and symlinks ~/.local/bin/hive → bin/hive.
-
-For more docs, see share/docs/README.md, ARCHITECTURE.md, CLI.md, MCP-TOOLS.md.
-EOF
-cat > "$STAGE/$PKG_NAME/LICENSE" <<EOF
-Hive — orchestration framework for AI agents
-Copyright (c) 2026
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND.
-EOF
+cp "$SOURCE_DIR/INSTALL" "$STAGE/$PKG_NAME/INSTALL"
+cp "$SOURCE_DIR/LICENSE" "$STAGE/$PKG_NAME/LICENSE"
 
 # Prune things that shouldn't ship
 echo "Pruning build artifacts and caches..."
