@@ -265,11 +265,19 @@ def detect_provider(api_base: str) -> str:
         return "custom"
 
     lower = api_base.lower()
-    for name, config in PROVIDER_CONFIGS.items():
-        if name in lower or config["base_url"] in lower:
-            return name
+    if llm_providers is not None:
+        # The registry (B.2) is the canonical source: match the provider
+        # name or its default base URL against the given base. Entries
+        # without a default base (unsloth) still match by name.
+        for name, config in llm_providers.PROVIDERS.items():
+            if name in lower:
+                return name
+            default_base = (config.get("base_url") or "").lower()
+            if default_base and default_base in lower:
+                return name
 
-    # Check for common patterns
+    # Check for common patterns (also the only path when the
+    # llm_providers sibling module is unavailable)
     if "openai" in lower:
         return "openai"
     if "anthropic" in lower:

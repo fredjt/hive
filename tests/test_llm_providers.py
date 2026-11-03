@@ -1,5 +1,6 @@
 """B.1/B.2: explicit LLM provider configuration + provider wire shapes."""
 import json
+import shutil
 import subprocess
 import sys
 import threading
@@ -24,7 +25,10 @@ def _write_config(tmp_path, text):
 
 class TestLlmConfigSection:
     def test_defaults_have_llm_section(self):
-        import tomllib
+        try:
+            import tomllib
+        except ImportError:  # Python 3.10 (CI matrix) — CI installs tomli
+            import tomli as tomllib
         config = tomllib.loads((REPO / "etc" / "config.defaults.toml").read_text())
         assert "llm" in config
         llm = config["llm"]
@@ -674,3 +678,86 @@ class TestVerificationModel:
         finally:
             server.shutdown()
             server.server_close()
+
+
+class TestHarnessWithoutSiblingModules:
+    """Regression (CI 2026-11-03): the container image originally shipped
+    ONLY agent-harness.py, so the harness's by-name sibling imports
+    (llm_providers, mcp_http) silently degraded to None inside the
+    container. In that state, an env-only LLM config (HIVE_API_BASE / KEY /
+    MODEL with no explicit api_style) crashed on a cold process with
+    `NameError: name 'PROVIDER_CONFIGS' is not defined` — detect_provider
+    still referenced the pre-B.2 registry name. Fixed: detect_provider
+    reads llm_providers.PROVIDERS when available and falls back to its
+    pattern list when not, and the Dockerfile now ships the siblings (see
+    tests/test_dashboard.py for the image tests). These pins keep the
+    harness working in the worst case (siblings absent) in a fresh
+    interpreter — the same cold-process technique as TestHarnessImport
+    Fallback."""
+
+    @staticmethod
+    def _isolate(tmp_path):
+        """Copy the harness alone into a fresh dir — the exact layout the
+        pre-fix Dockerfile produced inside the image."""
+        isolated = tmp_path / "isolated" / "lib" / "core"
+        isolated.mkdir(parents=True)
+        shutil.copy(CORE / "agent-harness.py", isolated / "agent-harness.py")
+        return isolated / "agent-harness.py"
+
+    def test_detect_provider_without_registry(self, tmp_path):
+        harness = self._isolate(tmp_path)
+        code = (
+            "import importlib.util\n"
+            "spec = importlib.util.spec_from_file_location('h', {path!r})\n"
+            "m = importlib.util.module_from_spec(spec)\n"
+            "spec.loader.exec_module(m)\n"
+            "assert m.llm_providers is None, 'expected sibling modules absent'\n"
+            "assert m.mcp_http is None, 'expected sibling modules absent'\n"
+            "assert m.detect_provider('') == 'custom'\n"
+            "assert m.detect_provider('http://127.0.0.1:1/v1') == 'custom'\n"
+            "assert m.detect_provider('https://api.openai.com/v1') == 'openai'\n"
+            "assert m.wire_style(None, 'http://127.0.0.1:1/v1') == 'openai'\n"
+            "print('ISO-OK')\n"
+        ).format(path=str(harness))
+        # cwd = tmp_path, -I: lib/core is NOT on sys.path, so the harness
+        # cannot find its siblings — the branch under test.
+        r = subprocess.run(
+            [sys.executable, "-I", "-c", code],
+            capture_output=True, text=True, timeout=60, cwd=str(tmp_path))
+        assert r.returncode == 0, r.stderr
+        assert "ISO-OK" in r.stdout
+
+    def test_env_only_round_trip_without_registry(self, tmp_path):
+        """The exact CI failure mode: env-only config (no api_style, no
+        provider, no sibling modules) must still hit
+        {base}/chat/completions and parse the OpenAI-style answer."""
+        harness = self._isolate(tmp_path)
+        canned = json.dumps({
+            "id": "chatcmpl-test", "object": "chat.completion",
+            "model": "stub-model",
+            "choices": [{"index": 0,
+                         "message": {"role": "assistant", "content": "OK"},
+                         "finish_reason": "stop"}],
+        }).encode()
+        base_url, server = _start_stub(style="openai", canned=canned)
+        try:
+            code = (
+                "import importlib.util\n"
+                "spec = importlib.util.spec_from_file_location('h', {path!r})\n"
+                "m = importlib.util.module_from_spec(spec)\n"
+                "spec.loader.exec_module(m)\n"
+                "r = m.call_llm_api([{{'role': 'user', 'content': 'hi'}}],\n"
+                "    api_base={base!r}, model='stub-model', api_key='k')\n"
+                "assert r.get('ok'), r\n"
+                "print('RT-OK')\n"
+            ).format(path=str(harness), base=base_url)
+            r = subprocess.run(
+                [sys.executable, "-I", "-c", code],
+                capture_output=True, text=True, timeout=60, cwd=str(tmp_path))
+        finally:
+            server.shutdown()
+            server.server_close()
+        assert r.returncode == 0, r.stderr
+        assert "RT-OK" in r.stdout
+        assert server.last_request is not None, "stub saw no request"
+        assert server.last_request["path"].endswith("/chat/completions")

@@ -9,10 +9,25 @@
 #                                               / HIVE_MODEL env vars)
 # with the container on --network host, so 127.0.0.1 endpoints work.
 #
+# Dual mode:
+#   /entrypoint.sh "<prompt>"          run the harness with that prompt
+#                                      (from the arguments, or stdin)
+#   /entrypoint.sh <command> [args...] exec the command directly — a first
+#   argument that resolves to a program (absolute path or on PATH) is
+#   executed as-is, with no LLM involved. The isolation smoke tests use
+#   this to probe the container with `bash -c '...'`.
+#
 # Usage (from Dockerfile run example):
 #   /entrypoint.sh "<prompt>"
 
 set -euo pipefail
+
+if [ "$#" -gt 0 ]; then
+    first="$1"
+    if [ -x "$first" ] || command -v "$first" >/dev/null 2>&1; then
+        exec "$@"
+    fi
+fi
 
 PROMPT="$*"
 if [ -z "$PROMPT" ] && [ ! -t 0 ]; then

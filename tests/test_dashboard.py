@@ -705,6 +705,21 @@ class TestDockerAgentInABox:
         return subprocess.run(args, capture_output=True, text=True,
                               timeout=timeout)
 
+    def test_dockerfile_ships_harness_and_siblings(self):
+        """Regression (CI 2026-11-03): the image originally copied ONLY
+        agent-harness.py, so its by-name sibling imports (llm_providers,
+        mcp_http) silently degraded to None inside the container — env-only
+        LLM configs died with a NameError and MCP tool calls were disabled.
+        The Dockerfile must copy every lib/core module the harness imports.
+        No docker needed — this pins the COPY list itself."""
+        dockerfile = (Path(__file__).resolve().parent.parent
+                      / "Dockerfile").read_text()
+        copied = set(re.findall(
+            r"^COPY\s+lib/core/([\w.-]+\.py)\s+/opt/hive/lib/core/",
+            dockerfile, re.M))
+        for mod in ("agent-harness.py", "llm_providers.py", "mcp_http.py"):
+            assert mod in copied, f"Dockerfile does not copy lib/core/{mod}"
+
     def test_harness_help_smoke(self, hive_image):
         """Default CMD is `agent-harness.py --help` — the harness is installed
         and runs without an API key or network."""

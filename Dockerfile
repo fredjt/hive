@@ -46,8 +46,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         python3-venv \
     && rm -rf /var/lib/apt/lists/*
 
-# The harness, plus a venv holding its single runtime dependency (httpx).
+# The harness plus its two sibling modules — llm_providers.py (provider
+# registry + wire shapes) and mcp_http.py (SDK-free MCP client). The
+# harness imports them by name, so they must sit next to it in the image.
 COPY lib/core/agent-harness.py /opt/hive/lib/core/agent-harness.py
+COPY lib/core/llm_providers.py /opt/hive/lib/core/llm_providers.py
+COPY lib/core/mcp_http.py /opt/hive/lib/core/mcp_http.py
 RUN python3 -m venv /opt/hive/venv \
     && /opt/hive/venv/bin/pip install --no-cache-dir --quiet httpx
 
