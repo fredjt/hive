@@ -221,8 +221,15 @@ except ImportError:  # pragma: no cover - import path depends on caller
             _os.path.join(_os.path.dirname(_os.path.abspath(__file__)),
                           "llm_providers.py"))
         llm_providers = _ilu.module_from_spec(_spec)  # type: ignore
+        # Register BEFORE exec: llm_providers uses @dataclass, and
+        # dataclasses resolves cls.__module__ through sys.modules. Without
+        # this entry the exec raises AttributeError, the handler below
+        # swallows it, and the harness silently degrades to the openai-only
+        # wire fallback.
+        sys.modules["llm_providers"] = llm_providers
         _spec.loader.exec_module(llm_providers)
     except Exception:  # pragma: no cover
+        sys.modules.pop("llm_providers", None)
         llm_providers = None  # type: ignore
 
 
@@ -234,11 +241,14 @@ except ImportError:  # pragma: no cover - import path depends on caller
     try:
         _specm = _ilm.spec_from_file_location(
             "mcp_http",
-            _osm.path.join(_osm.dirname(_osm.abspath(__file__)),
+            _osm.path.join(_osm.path.dirname(_osm.path.abspath(__file__)),
                            "mcp_http.py"))
         mcp_http = _ilm.module_from_spec(_specm)  # type: ignore
+        # Same sys.modules-before-exec requirement as llm_providers above.
+        sys.modules["mcp_http"] = mcp_http
         _specm.loader.exec_module(mcp_http)
     except Exception:  # pragma: no cover
+        sys.modules.pop("mcp_http", None)
         mcp_http = None  # type: ignore
 
 

@@ -364,6 +364,47 @@ class TestHarnessWireShapes:
         assert req is not None
 
 
+class TestHarnessFallbackImports:
+    """Regression: the harness's path-based fallback import of the shared
+    protocol modules must register them in sys.modules BEFORE exec_module.
+    llm_providers uses @dataclass, and dataclasses resolves cls.__module__
+    through sys.modules — without the entry the exec raises, the handler
+    swallows it, and the harness silently runs the openai-only wire
+    fallback (anthropic/gemini requests hit /chat/completions). The bug is
+    invisible when something else has already imported llm_providers into
+    the process — under xdist, whether a worker's process is cold is a
+    matter of test distribution luck, so the cold case is pinned here in
+    a fresh interpreter subprocess."""
+
+    def test_cold_interpreter_loads_shared_modules(self):
+        code = (
+            "import importlib.util, sys\n"
+            "spec = importlib.util.spec_from_file_location('h', {path!r})\n"
+            "m = importlib.util.module_from_spec(spec)\n"
+            "spec.loader.exec_module(m)\n"
+            "assert m.llm_providers is not None, 'llm_providers fallback failed'\n"
+            "assert m.mcp_http is not None, 'mcp_http fallback failed'\n"
+            "assert m.wire_style('anthropic', 'http://x') == 'anthropic'\n"
+            "assert m.llm_providers.endpoint_url('http://x', 'anthropic', 'mm')"
+            " == 'http://x/v1/messages'\n"
+            "assert m.llm_providers.endpoint_url('http://x', 'gemini', 'gm')"
+            " == 'http://x/models/gm:generateContent'\n"
+            "print('COLD-OK')\n"
+        ).format(path=str(CORE / "agent-harness.py"))
+        # cwd = repo root (not lib/core): with `-I` the child has no
+        # PYTHONPATH and '' -> cwd on sys.path, so lib/core is NOT
+        # importable and the harness must take the path-based fallback —
+        # the branch under test.
+        r = subprocess.run(
+            [sys.executable, "-I", "-c", code],
+            capture_output=True, text=True, timeout=60,
+            cwd=str(REPO),
+        )
+        assert r.returncode == 0, (
+            f"cold-interpreter harness load failed: {r.stderr.strip()}")
+        assert "COLD-OK" in r.stdout
+
+
 class TestUnslothProvider:
     """B.3: unsloth is a named provider — operator endpoint, operator-chosen
     wire style (openai | anthropic), UNSLOTH_API_KEY env fallback."""
