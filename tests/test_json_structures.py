@@ -305,6 +305,55 @@ class TestConfigDefaults:
         assert not offending, f"retired config section references remain: {offending}"
 
 
+class TestConfigTemplate:
+    """C1: etc/config.template.toml seeds the user config.
+
+    The installer copies this file to ~/.config/hive/config.toml, so a
+    stranger gets a visible, complete config at install time. It must be
+    valid TOML, cover every key the defaults define (no silent drift),
+    and carry the working default values verbatim."""
+
+    @staticmethod
+    def _load(path) -> dict:
+        try:
+            import tomllib
+        except ImportError:
+            import tomli as tomllib
+        return tomllib.loads(Path(path).read_text())
+
+    def test_template_exists_and_parses(self):
+        t = self._load("etc/config.template.toml")
+        assert isinstance(t, dict) and t
+
+    def test_template_covers_every_default_key(self):
+        d = self._load("etc/config.defaults.toml")
+        t = self._load("etc/config.template.toml")
+        missing = {s: sorted(set(d[s]) - set(t.get(s, {})))
+                   for s in d
+                   if isinstance(d[s], dict) and set(d[s]) - set(t.get(s, {}))}
+        assert not missing, f"template is missing default keys: {missing}"
+
+    def test_template_values_match_defaults(self):
+        """The template ships working defaults — a value that drifts from
+        the defaults file would silently change behavior for every
+        fresh install."""
+        d = self._load("etc/config.defaults.toml")
+        t = self._load("etc/config.template.toml")
+        drift = []
+        for s, dv in d.items():
+            if not isinstance(dv, dict):
+                continue
+            for k, val in dv.items():
+                if k in t.get(s, {}) and t[s][k] != val:
+                    drift.append(f"{s}.{k}: default={val!r} template={t[s][k]!r}")
+        assert not drift, "template values drifted from defaults:\n" + "\n".join(drift)
+
+    def test_template_llm_section_has_all_keys(self):
+        t = self._load("etc/config.template.toml")
+        assert set(t["llm"]) == {"provider", "model", "base_url", "api_key",
+                                 "api_style", "verification_model"}
+
+
 class TestInstallFile:
     """Test INSTALL file."""
 

@@ -1,0 +1,122 @@
+# Hive configuration — per-machine, created by the installer.
+#
+# This file is YOUR overrides. Every key below already holds the working
+# default, copied from etc/config.defaults.toml — change only what you need,
+# then run `hive doctor` to verify. The installer never overwrites a file
+# that already exists.
+#
+# Precedence (highest wins):
+#   HIVE_* env vars  >  this file  >  etc/config.defaults.toml  >  provider built-ins
+# Env vars: HIVE_PROVIDER, HIVE_MODEL, HIVE_API_BASE, HIVE_API_KEY,
+# HIVE_VERIFICATION_MODEL, HIVE_API_STYLE — useful for one-shot runs; put
+# persistent settings HERE.
+#
+# Tooling:
+#   hive config edit     open this file in $EDITOR
+#   hive config show     print the effective (merged) config
+#   hive config get K    e.g. `hive config get llm.provider`
+#   hive config set K V  e.g. `hive config set llm.base_url http://127.0.0.1:11434/v1`
+#
+# Shell-level daemon environment (PATH additions, GITHUB_TOKEN for the
+# publisher) belongs in ~/.config/hive/env.sh, which daemons source on
+# every spawn. LLM settings belong in THIS file.
+
+[paths]
+# Root of the hive install. Auto-detected; only override if running from a
+# non-standard location.
+hive_root = "~/.local/share/hive"
+
+[llm]
+# REQUIRED to run agents — the only section with no working default.
+# Point Hive at any LLM endpoint:
+#   - provider names the API family: openai, anthropic, groq, openrouter,
+#     ollama, google, unsloth
+#   - model / base_url / api_key override that family's defaults
+#   - api_style ("openai" or "anthropic") applies only to provider = "unsloth"
+#   - verification_model (optional): a stronger model for the verification
+#     IC (stage 5). Verification reviews diffs and logic; a weak model
+#     produces high bounce rates. Leave empty to use `model`.
+# Example (local llama.cpp / vLLM OpenAI-compatible endpoint):
+#   provider = "openai"  model = "qwen3-27b"  base_url = "http://127.0.0.1:8080/v1"  api_key = "<key>"
+# Example (Ollama, no key needed):
+#   provider = "ollama"  model = "qwen2.5-coder:32b"
+provider           = ""
+model              = ""
+base_url           = ""
+api_key            = ""
+api_style          = ""   # unsloth only: "openai" or "anthropic"
+verification_model = ""
+
+[mcp]
+# HTTP transport for the dashboard, the CLI, and parallel-spawned agents.
+# stdio is also available for plain programmatic consumers; spawned agents
+# always use HTTP.
+host = "127.0.0.1"
+port = 7891
+
+[dashboard]
+host = "127.0.0.1"
+port = 3456
+# `hive` (no args) opens this in a browser. Set false to start the server only.
+auto_open = true
+
+[logs]
+# All daemon and spawn logs go under .company/logs/<name>.log.
+# Set to true to also tee to the systemd journal (hive run via systemd unit).
+journal = false
+
+[github]
+# Used by the gh-*.sh scripts. All of them no-op cleanly when no remote is
+# configured, so leaving this section default is safe.
+# Auth: GITHUB_TOKEN in ~/.config/hive/env.sh takes precedence; falls back
+# to the gh CLI's stored credentials (`gh auth login`).
+remote                     = "origin"
+default_branch             = "main"
+post_status_comments       = true
+issue_label_prefix_dept    = "dept:"
+issue_label_prefix_type    = "type:"
+issue_label_prefix_priority = "priority:"
+
+[release]
+# Release runs as stages 6-8 of every sprint (build-and-test ->
+# release-verify -> release-publish). No CEO request needed.
+require_clean_main        = true
+require_changelog_section = true
+# release-ic adversarial review (stage 7)
+adversarial_smoke_test    = true
+# Pluggable publisher: absolute path to a script with the signature
+#   publisher.sh <version> <tarball> <sha256> <changelog_section>
+# empty = default github publisher (lib/templates/publishers/github.sh)
+publisher_script          = ""
+# Loop B cap: 3 bug-fix attempts then give up
+max_release_retries       = 3
+
+[sprint]
+# Cap on tickets per dept that sprint-fill promotes from backlog -> sprint-current.
+max_active_tickets       = 5
+# Loop A safety valve: after this many iterations, unfinished tickets are
+# DEFERRED TO BACKLOG (verification rejection still stands; PRs/branches
+# preserved). Set 0 to disable. Never auto-completes a rejected ticket.
+max_loop_iterations      = 100
+# Per-ticket verification bounce limit (same deferral mechanism).
+max_verification_bounces = 5
+
+[worktree]
+# Stale worktree cleanup interval (seconds); 0 disables.
+cleanup_interval = 300
+# Maximum worktrees before a one-time warning.
+max_worktrees    = 50
+
+[health]
+# Disk usage thresholds (percent of filesystem capacity); 0 disables.
+disk_usage_warn_pct = 80
+disk_usage_crit_pct = 90
+# Disk-usage report interval for done/ + archive/ ticket dirs (report only).
+ticket_disk_report_interval = 300
+
+[tdd]
+# Hard-split TDD: the first commit on a ticket branch must touch a test file.
+hard_split         = true
+applies_to_agents  = ["ic-engineer", "ic-infra"]
+red_commit_prefix  = "[TDD-RED]"
+green_commit_prefix = "[TDD-GREEN]"
