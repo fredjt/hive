@@ -1,5 +1,4 @@
 """Integration tests."""
-import sys
 import json, os, subprocess
 from pathlib import Path
 import pytest

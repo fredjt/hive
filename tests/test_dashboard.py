@@ -446,6 +446,18 @@ class TestContributorDocs:
                 f".github/ISSUE_TEMPLATE/{name} missing"
 
 
+class TestCILintScope:
+    """C.3: the ruff job must cover the full Python surface."""
+
+    WORKFLOW = Path(".github/workflows/ci.yml")
+
+    def test_lint_job_covers_lib_and_tests(self):
+        text = self.WORKFLOW.read_text()
+        assert "ruff check --select F401,E722 lib/ tests/" in text, \
+            "lint job must run ruff over lib/ + tests/ (the full Python " \
+            "surface), not just the MCP/CLI packages"
+
+
 class TestCISecretScan:
     """C.1: CI must run a permanent secret scan — a secret can never
     land in history again."""

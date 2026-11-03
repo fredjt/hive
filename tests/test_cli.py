@@ -1,5 +1,4 @@
 """Tests for hive_cli.main — CLI argument parsing."""
-import argparse
 import sys
 from pathlib import Path
 

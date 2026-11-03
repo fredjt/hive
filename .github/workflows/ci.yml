@@ -147,7 +147,9 @@ jobs:
         run: |
           # Only flag actual bugs, not style nitpicks (line length,
           # single-line ifs, etc.) that the codebase already has.
-          ruff check --select F401,E722 lib/hive_cli/ lib/hive_mcp/
+          # C.3: the full Python surface — lib/ (all Python, including
+          # the harness core) plus tests/ — under the same selection.
+          ruff check --select F401,E722 lib/ tests/
           # F401 = unused import (real bug)
           # E722 = do not use bare 'except' (security risk)
 

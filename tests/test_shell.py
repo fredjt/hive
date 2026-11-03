@@ -1,9 +1,6 @@
 """Tests for hive_mcp.shell — subprocess helper."""
-import json
-import os
 from pathlib import Path
 
-import pytest
 
 # Ensure we can find hive_mcp when running from within the hive/ directory
 _hive_lib = str(Path(__file__).resolve().parent.parent / "lib")

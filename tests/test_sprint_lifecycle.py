@@ -14,7 +14,6 @@ import shutil
 import subprocess
 from pathlib import Path
 
-import pytest
 
 INSTALL_DIR = Path(__file__).resolve().parent.parent
 LIFECYCLE = INSTALL_DIR / "lib" / "tools" / "sprint-lifecycle.sh"

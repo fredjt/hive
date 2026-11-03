@@ -221,7 +221,6 @@ class TestConfigCommand:
     """Test config command."""
 
     def test_config_get_exists(self):
-        from hive_cli.commands.config import handle
         # The handle function should process 'get' action
         pass  # Hard to test without actual config file
 

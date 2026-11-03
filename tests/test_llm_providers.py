@@ -214,7 +214,6 @@ class TestDoctorReportsProvider:
         # doctor reads llm config from the repo; feed it via env so the
         # resolved provider/model surface, and confirm the key value never
         # appears in the output.
-        import importlib
         code = (
             "import sys; sys.path.insert(0, 'lib');\n"
             "import os;\n"

@@ -64,7 +64,7 @@ class TestToolRegistration:
             os.environ["PYTHONPATH"] = sys_path + (":" + old_path if old_path else "")
 
         try:
-            from hive_mcp.server import build_server, TOOL_MODULES
+            from hive_mcp.server import build_server
             server = build_server()
             tools = list(server._tool_manager._tools.keys())
 

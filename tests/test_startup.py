@@ -1,5 +1,4 @@
 """Tests for the startup flow: hive (no args) → dashboard only, Start Company → daemons."""
-import subprocess
 from pathlib import Path
 
 
