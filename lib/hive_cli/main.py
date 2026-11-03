@@ -179,6 +179,7 @@ def _add_config(sub) -> None:
     psr = sp.add_parser("set"); psr.add_argument("key"); psr.add_argument("value")
     sp.add_parser("edit", help="Open ~/.config/hive/config.toml in $EDITOR")
     sp.add_parser("show", help="Print effective config")
+    sp.add_parser("path", help="Print the effective user-config path and its state")
     p.set_defaults(_handler=config.handle)
 
 

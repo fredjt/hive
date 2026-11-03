@@ -427,6 +427,50 @@ class TestConfigIntegrity:
         assert data.get("_unknown_keys", []) == []
 
 
+class TestConfigPath:
+    """A3: `hive config path` answers the where-is-my-config question in
+    one line — the effective user-config path (the HIVE_CONFIG override
+    wins, per A2's single spelling) plus its state: created vs missing
+    (with the `hive config edit` hint)."""
+
+    install_dir = Path(__file__).resolve().parent.parent
+
+    @staticmethod
+    def _run(home, *args, extra=None):
+        env = {**os.environ, "HOME": str(home),
+               "HIVE_ROOT": str(TestConfigPath.install_dir),
+               "PYTHONPATH": str(TestConfigPath.install_dir / "lib")
+               + os.pathsep + os.environ.get("PYTHONPATH", "")}
+        env.update(extra or {})
+        return subprocess.run(
+            [sys.executable, "-m", "hive_cli.main", "config", *args],
+            capture_output=True, text=True, env=env,
+            cwd=str(TestConfigPath.install_dir), timeout=60,
+        )
+
+    def test_path_matches_hive_config_override(self, tmp_path):
+        override = tmp_path / "custom" / "cfg.toml"
+        override.parent.mkdir()
+        override.write_text('[llm]\nprovider = "openai"\n')
+        r = self._run(tmp_path, "path", extra={"HIVE_CONFIG": str(override)})
+        assert r.returncode == 0, r.stderr
+        assert str(override) in r.stdout, \
+            "the HIVE_CONFIG override must be the reported path"
+        assert "created at install" in r.stdout, \
+            "an existing file reports its created state"
+        default = str(tmp_path / ".config" / "hive" / "config.toml")
+        assert default not in r.stdout
+
+    def test_path_missing_prints_edit_hint(self, tmp_path):
+        r = self._run(tmp_path, "path")
+        assert r.returncode == 0, r.stderr
+        expected = str(tmp_path / ".config" / "hive" / "config.toml")
+        assert expected in r.stdout
+        assert "missing" in r.stdout
+        assert "hive config edit" in r.stdout, \
+            "the missing variant must point at the command that creates it"
+
+
 class TestStatusDaemonSection:
     """B.3: `hive status` surfaces per-daemon liveness, restart_count, and
     the supervisor's dead state (restart budget exhausted) read straight

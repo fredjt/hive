@@ -12,6 +12,7 @@
 # persistent settings HERE.
 #
 # Tooling:
+#   hive config path     where this file is (and whether it exists yet)
 #   hive config edit     open this file in $EDITOR
 #   hive config show     print the effective (merged) config
 #   hive config get K    e.g. `hive config get llm.provider`

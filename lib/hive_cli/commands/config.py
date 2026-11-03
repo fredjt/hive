@@ -19,6 +19,13 @@ DEFAULT_CONFIG = HIVE_ROOT / "etc" / "config.defaults.toml"
 TEMPLATE = HIVE_ROOT / "etc" / "config.template.toml"
 
 
+def _user_config_path() -> Path:
+    """The effective user-config location (A2/A3): the HIVE_CONFIG env var
+    (the one spelling doctor and the publish runner read) wins over the
+    default ~/.config/hive/config.toml."""
+    return Path(os.environ.get("HIVE_CONFIG") or USER_CONFIG)
+
+
 def _template_seed() -> str:
     """Seed text for a new user config: the tracked template, so a fresh
     file carries every key with its working default (C1)."""
@@ -70,8 +77,9 @@ def _load() -> dict:
     config = {}
     if DEFAULT_CONFIG.is_file():
         config = tomllib.loads(DEFAULT_CONFIG.read_text())
-    if USER_CONFIG.is_file():
-        user = tomllib.loads(USER_CONFIG.read_text())
+    user_path = _user_config_path()
+    if user_path.is_file():
+        user = tomllib.loads(user_path.read_text())
         for k, v in user.items():
             if isinstance(v, dict) and isinstance(config.get(k), dict):
                 config[k].update(v)
@@ -80,9 +88,10 @@ def _load() -> dict:
     return config
 
 
-def _user_cfg() -> dict:
+def _user_cfg(path: Path | None = None) -> dict:
     """Parse the user config file ({} when missing/unparseable)."""
-    if USER_CONFIG.is_file():
+    path = path or _user_config_path()
+    if path.is_file():
         try:
             return tomllib.loads(USER_CONFIG.read_text()) or {}
         except Exception:
@@ -113,6 +122,15 @@ def _walk(d: dict, key: str):
 
 
 def handle(args) -> int:
+    user_cfg_path = _user_config_path()
+    if args.action == "path":
+        # A3: the where-is-my-config question, one line.
+        if user_cfg_path.is_file():
+            print(f"{user_cfg_path} (created at install — "
+                  f"or by 'hive config edit'; run 'hive config edit' to change it)")
+        else:
+            print(f"{user_cfg_path} (missing — run 'hive config edit' to create it)")
+        return 0
     if args.action == "show":
         import json as _json
         merged = _load()
@@ -120,7 +138,7 @@ def handle(args) -> int:
         if unknowns:
             merged["_unknown_keys"] = unknowns
             for u in unknowns:
-                print(f"warning: unknown key {u} — edit {USER_CONFIG}",
+                print(f"warning: unknown key {u} — edit {user_cfg_path}",
                       file=sys.stderr)
         print(_json.dumps(merged, indent=2))
         return 0
@@ -137,8 +155,8 @@ def handle(args) -> int:
                   f"got {args.key!r}", file=sys.stderr)
             return 1
         section, k = args.key.rsplit(".", 1)
-        USER_CONFIG.parent.mkdir(parents=True, exist_ok=True)
-        base = USER_CONFIG.read_text() if USER_CONFIG.is_file() else _template_seed()
+        user_cfg_path.parent.mkdir(parents=True, exist_ok=True)
+        base = user_cfg_path.read_text() if user_cfg_path.is_file() else _template_seed()
         new_text = _upsert(base, section, k, _toml_value(args.value))
         try:
             tomllib.loads(new_text)
@@ -146,15 +164,15 @@ def handle(args) -> int:
             print(f"error: refusing to write invalid TOML ({e}); "
                   f"file left unchanged", file=sys.stderr)
             return 1
-        USER_CONFIG.write_text(new_text)
-        print(f"Wrote {section}.{k} = {args.value} to {USER_CONFIG}")
+        user_cfg_path.write_text(new_text)
+        print(f"Wrote {section}.{k} = {args.value} to {user_cfg_path}")
         return 0
     if args.action == "edit":
         editor = os.environ.get("EDITOR", "vi")
-        USER_CONFIG.parent.mkdir(parents=True, exist_ok=True)
-        if not USER_CONFIG.is_file():
+        user_cfg_path.parent.mkdir(parents=True, exist_ok=True)
+        if not user_cfg_path.is_file():
             # Seed from the tracked template so the editor shows every key
             # with its working default — not a blank comment (C2).
-            USER_CONFIG.write_text(_template_seed())
-        return subprocess.call([editor, str(USER_CONFIG)])
+            user_cfg_path.write_text(_template_seed())
+        return subprocess.call([editor, str(user_cfg_path)])
     return 1
