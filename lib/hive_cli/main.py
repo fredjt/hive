@@ -198,10 +198,10 @@ def _add_killall(sub) -> None:
 
 
 def _add_llm(sub) -> None:
-    p = sub.add_parser("llm", help="Inspect small-model (llm-tiny) usage")
+    p = sub.add_parser("llm", help="LLM usage (stats/tail) + endpoint test")
     sp = p.add_subparsers(dest="action", required=True)
     sp.add_parser("stats", help="Counts by caller and mode over last 24h/1h")
-    pt = sp.add_parser("tail", help="Tail recent llm-tiny calls")
+    pt = sp.add_parser("tail", help="Tail recent LLM calls")
     pt.add_argument("-n", type=int, default=20, help="number of recent calls to show")
     sp.add_parser("test", help="One-shot round trip through the configured endpoint (B1)")
     p.set_defaults(_handler=llm.handle)

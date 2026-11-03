@@ -1,8 +1,10 @@
 """Local classification helpers (keyword heuristics, no external model).
 
-Replaced the llm-tiny.sh small-model provider with local bash/python
-implementations. These tools wrap the same scripts but now use keyword
-heuristics instead of HTTP calls to an external tiny model.
+Replaced the retired small-model provider with local bash/python
+implementations. These tools wrap the same scripts but use keyword
+heuristics instead of HTTP calls to an external model. (Module formerly
+llm_tiny — B2 retired the 'tiny' naming together with the tool registry.
+Tool names are unchanged.)
 """
 
 from __future__ import annotations

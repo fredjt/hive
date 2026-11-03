@@ -39,7 +39,7 @@ TOOL_MODULES = [
     "sprint",
     "rounds",
     "reports",
-    "llm_tiny",
+    "llm_usage",
     "github",
     "release",
 ]

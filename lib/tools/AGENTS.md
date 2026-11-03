@@ -78,7 +78,6 @@ These scripts are the **runtime core** of Hive. They are called by the MCP serve
 | Script | Role |
 |---|---|
 | `load-agent-prompt.sh` | Loads an agent's `.md` prompt file with framework primer. |
-| `llm-tiny.sh` | Calls a cheaper/faster LLM endpoint for lightweight tasks. |
 
 ### Background daemons
 | Script | Role |

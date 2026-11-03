@@ -54,7 +54,7 @@ if [ -z "$PICKS" ]; then
 fi
 
 # Group by priority - if top group has only one ticket, just emit it.
-# If multiple, ask small model to pick the most important.
+# If multiple, break ties by age (deterministic — no model involved).
 TOP_RANK=$(echo "$PICKS" | head -1 | cut -f1)
 TOP_GROUP=$(echo "$PICKS" | awk -F'\t' -v r="$TOP_RANK" '$1 == r')
 TOP_COUNT=$(echo "$TOP_GROUP" | wc -l)

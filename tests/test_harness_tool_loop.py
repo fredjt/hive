@@ -245,6 +245,73 @@ def _run_round_trip(mcp_url, company_dir, llm_base, llm_server, extra_env=None):
     )
 
 
+class _SingleTurnLLMHandler(BaseHTTPRequestHandler):
+    """One-turn canned LLM: answers without tool blocks, so the harness
+    loop exits after a single call."""
+
+    def do_POST(self):
+        n = int(self.headers.get("Content-Length", 0))
+        self.rfile.read(n)
+        payload = json.dumps({"model": "stub",
+                              "choices": [{"message": {"content": "Done: work finished."}}]}
+                             ).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(payload)))
+        self.end_headers()
+        self.wfile.write(payload)
+
+    def log_message(self, *args):
+        pass
+
+
+def test_harness_spawn_writes_llm_usage_log(mcp_http_server):
+    """B2: a harness spawn against a stub endpoint writes
+    .company/logs/llm-usage.log — one entry per LLM call, with the caller
+    identity (HIVE_AGENT), the mode, and the reply line."""
+    mcp_url, company_dir = mcp_http_server
+
+    llm_base, llm_server = _free_http_port_and_start(_SingleTurnLLMHandler)
+    try:
+        env = {
+            "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
+            "HOME": str(Path(company_dir).parent / "home"),
+            "HIVE_ROOT": str(REPO),
+            "COMPANY_DIR": company_dir,
+            "HIVE_AGENT": "ic-engineer",
+            "HIVE_DEPT": "it",
+            "HIVE_PROVIDER": "openai",
+            "HIVE_API_BASE": llm_base,
+            "HIVE_MODEL": "stub",
+            "HIVE_API_KEY": "test-key",
+        }
+        r = subprocess.run(
+            [sys.executable, str(REPO / "lib" / "core" / "agent-harness.py"),
+             "--no-mcp", "--", "Do the work."],
+            capture_output=True, text=True, timeout=60, env=env,
+            cwd=str(Path(company_dir).parent),
+        )
+        assert r.returncode == 0, f"harness failed: {r.stderr[-800:]}"
+
+        usage_log = Path(company_dir) / "logs" / "llm-usage.log"
+        assert usage_log.is_file(), \
+            "a harness spawn must write llm-usage.log (the B2 rename of " \
+            "llm-tiny.log — the tiny naming is retired)"
+        entries = [json.loads(line) for line in usage_log.read_text().splitlines()
+                   if line.strip()]
+        assert len(entries) == 1, f"one entry per LLM call, got {len(entries)}"
+        e = entries[0]
+        assert e["caller"] == "ic-engineer", \
+            "the caller must carry the HIVE_AGENT identity for stats"
+        assert e["mode"] == "agent"
+        assert e["model"] == "stub"
+        assert "Done: work finished." in e["response"]
+        assert e["ts"].endswith("Z")
+    finally:
+        llm_server.shutdown()
+        llm_server.server_close()
+
+
 def test_round_trip_without_mcp_sdk_installed(mcp_http_server, tmp_path):
     """C.2: the harness's MCP path is SDK-free. With the mcp SDK made
     unimportable in the harness process (poison module first on

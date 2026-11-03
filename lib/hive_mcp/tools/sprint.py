@@ -16,8 +16,9 @@ def register(server: Server) -> None:
     ) -> dict:
         """Promote backlog tickets into sprint-current to maintain `min_active` per dept.
 
-        Uses `prioritize_backlog` (small-model-aware) to pick tickets when there
-        are ties at the same priority. Idempotent and safe to run frequently.
+        Uses `prioritize_backlog` (deterministic priority+age ordering) to
+        pick tickets when there are ties at the same priority. Idempotent and
+        safe to run frequently.
         """
         args = ["--min", str(min_active)]
         if dept:
@@ -45,9 +46,8 @@ def register(server: Server) -> None:
     ) -> dict:
         """Return the top N backlog tickets for a department, smart-prioritized.
 
-        Uses the small CPU model (llm-tiny) to break ties at equal priority.
-        Falls back to deterministic priority+age order if the small model is
-        unreachable.
+        Deterministic priority+age ordering (ties broken by age) — no
+        external model involved (the small-model path was retired).
         """
         return run(
             "prioritize-backlog",

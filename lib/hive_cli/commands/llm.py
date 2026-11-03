@@ -1,4 +1,8 @@
-"""hive llm stats — show small-model usage from .company/logs/llm-tiny.log."""
+"""hive llm — LLM usage (stats/tail) + endpoint test.
+
+Usage lives in .company/logs/llm-usage.log (B2: the retired llm-tiny.log
+was renamed; readers accept both names for one release).
+"""
 
 from __future__ import annotations
 
@@ -108,13 +112,26 @@ def _llm_test() -> int:
     return 0
 
 
+def _usage_log_path(cd: Path) -> Path | None:
+    """B2: the usage log is llm-usage.log; a legacy llm-tiny.log (pre-rename
+    workspaces) is still read for one release — new name wins if both exist."""
+    new = cd / "logs" / "llm-usage.log"
+    if new.is_file():
+        return new
+    legacy = cd / "logs" / "llm-tiny.log"
+    if legacy.is_file():
+        return legacy
+    return None
+
+
 def handle(args) -> int:
     if args.action == "test":
         return _llm_test()
     cd = _company_dir()
-    log_path = cd / "logs" / "llm-tiny.log"
-    if not log_path.is_file():
-        print(f"No llm-tiny.log at {log_path}.", file=sys.stderr)
+    log_path = _usage_log_path(cd)
+    if log_path is None:
+        print(f"No llm-usage.log at {cd / 'logs' / 'llm-usage.log'} "
+              f"(legacy llm-tiny.log looked for too).", file=sys.stderr)
         print("Either no calls have happened yet, or you're not in a hive project root.", file=sys.stderr)
         return 1
 
@@ -164,7 +181,7 @@ def handle(args) -> int:
         if caller not in last_call_per_caller or ts > last_call_per_caller[caller]:
             last_call_per_caller[caller] = ts
 
-    print(f"llm-tiny usage — log at {log_path}")
+    print(f"llm usage — log at {log_path}")
     print(f"  total calls logged: {len(entries)}")
     print(f"  in last 24h:        {sum(by_caller_24h.values())}")
     print(f"  in last 1h:         {sum(by_caller_1h.values())}")

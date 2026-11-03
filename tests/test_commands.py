@@ -567,6 +567,71 @@ class TestLlmTestCommand:
             "the unconfigured message must name the config file to edit"
 
 
+class TestLlmUsageLogNaming:
+    """B2: the 'tiny' naming is retired — the usage log is llm-usage.log.
+    Readers accept the legacy llm-tiny.log for one release."""
+
+    install_dir = Path(__file__).resolve().parent.parent
+
+    @staticmethod
+    def _seed_usage_log(company: Path, filename: str):
+        logs = company / "logs"
+        logs.mkdir(parents=True, exist_ok=True)
+        from datetime import datetime, timezone
+        ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        (logs / filename).write_text(
+            json.dumps({"ts": ts, "caller": "ic-engineer", "mode": "agent",
+                        "response": "OK"}) + "\n")
+
+    @staticmethod
+    def _run(company, *args):
+        env = {**os.environ, "COMPANY_DIR": str(company),
+               "HIVE_ROOT": str(TestLlmUsageLogNaming.install_dir),
+               "PYTHONPATH": str(TestLlmUsageLogNaming.install_dir / "lib")
+               + os.pathsep + os.environ.get("PYTHONPATH", "")}
+        return subprocess.run(
+            [sys.executable, "-m", "hive_cli.main", "llm", *args],
+            capture_output=True, text=True, env=env,
+            cwd=str(TestLlmUsageLogNaming.install_dir), timeout=60,
+        )
+
+    def test_stats_reads_new_usage_log(self, tmp_path):
+        company = tmp_path / ".company"
+        company.mkdir()
+        self._seed_usage_log(company, "llm-usage.log")
+        r = self._run(company, "stats")
+        assert r.returncode == 0, r.stderr
+        assert "llm-usage.log" in r.stdout
+        assert "ic-engineer" in r.stdout
+
+    def test_tail_reads_new_usage_log(self, tmp_path):
+        company = tmp_path / ".company"
+        company.mkdir()
+        self._seed_usage_log(company, "llm-usage.log")
+        r = self._run(company, "tail")
+        assert r.returncode == 0, r.stderr
+        assert "ic-engineer" in r.stdout
+
+    def test_stats_still_reads_legacy_tiny_log(self, tmp_path):
+        """A file with only the legacy name is still read — one release of
+        backward compatibility for existing .company workspaces."""
+        company = tmp_path / ".company"
+        company.mkdir()
+        self._seed_usage_log(company, "llm-tiny.log")
+        r = self._run(company, "stats")
+        assert r.returncode == 0, r.stderr
+        assert "llm-tiny.log" in r.stdout, \
+            "the legacy log must still be found and named"
+        assert "ic-engineer" in r.stdout
+
+    def test_stats_missing_log_names_the_new_log(self, tmp_path):
+        company = tmp_path / ".company"
+        company.mkdir()
+        r = self._run(company, "stats")
+        assert r.returncode == 1
+        assert "llm-usage.log" in r.stdout + r.stderr
+
+
 class TestStatusDaemonSection:
     """B.3: `hive status` surfaces per-daemon liveness, restart_count, and
     the supervisor's dead state (restart budget exhausted) read straight

@@ -70,8 +70,8 @@ for dept_path in "$DEPT_DIR"/*/; do
 
   need=$((MAX_ACTIVE - active))
 
-  # Prefer the small-model-aware prioritizer if the helper is present.
-  # Falls back to deterministic priority+age sort below if it's missing or fails.
+  # Prefer the prioritizer helper (deterministic priority+age) if present.
+  # Falls back to the inline sort below if it's missing or fails.
   PRIORITIZER="$(dirname "$0")/prioritize-backlog.sh"
   tickets=""
   if [ -x "$PRIORITIZER" ]; then

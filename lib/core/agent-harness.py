@@ -363,6 +363,34 @@ def parse_response(resp: httpx.Response, api_style: str | None = None,
             "usage": data.get("usage", {})}
 
 
+def _log_llm_usage(company_dir: str | None, caller: str, mode: str,
+                   model: str, turn: int, usage: dict, response: str) -> None:
+    """B2: append one entry to .company/logs/llm-usage.log (the rename of
+    the retired llm-tiny.log; readers accept both names for one release).
+    One entry per LLM call so `hive llm stats`/`tail` can show who burned
+    which endpoint and what came back. Fault-tolerant: a logging hiccup
+    must never break the agent loop."""
+    if not company_dir:
+        return
+    try:
+        log_dir = os.path.join(company_dir, "logs")
+        os.makedirs(log_dir, exist_ok=True)
+        first_line = (response or "").strip().splitlines()
+        entry = {
+            "ts": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "caller": caller or "harness",
+            "mode": mode,
+            "model": model or "",
+            "turn": turn,
+            "tokens": (usage or {}).get("total_tokens", 0),
+            "response": (first_line[0][:200] if first_line else ""),
+        }
+        with open(os.path.join(log_dir, "llm-usage.log"), "a") as f:
+            f.write(json.dumps(entry) + "\n")
+    except Exception:
+        pass
+
+
 def call_llm_api(
     messages: list[dict],
     api_base: str | None = None,
@@ -610,6 +638,13 @@ def run_agent(
 
         assistant_text = llm_result["content"]
         total_cost_usd += llm_result.get("usage", {}).get("total_cost_usd", 0.0)
+
+        # B2: per-call usage entry (caller = HIVE_AGENT identity, mode =
+        # agent conversation) — the data `hive llm stats`/`tail` read.
+        _log_llm_usage(
+            company_dir, os.environ.get("HIVE_AGENT", "harness"), "agent",
+            llm_result.get("model", ""), num_turns + 1,
+            llm_result.get("usage", {}), assistant_text)
 
         # C.1: stream-json event for this turn — agent-spawn tees the
         # harness stdout to .company/logs/streams/<id>.jsonl and the

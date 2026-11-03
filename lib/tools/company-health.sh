@@ -195,9 +195,11 @@ check_heartbeat() {
   done
 }
 
-# --- Tiny model check REMOVED ---
-# The llm-tiny.sh small-model provider was replaced with local keyword heuristics.
-# No external model endpoint to monitor — all classification is done locally.
+# --- LLM usage check ---
+# The retired small-model provider is gone (local keyword heuristics do the
+# classification). The agent harness logs its own LLM calls to
+# .company/logs/llm-usage.log; `hive llm stats` surfaces them — nothing to
+# monitor here.
 
 # --- Check disk usage and alert on thresholds ---
 #
@@ -522,7 +524,9 @@ PYEOF
     echo "$_wt_now" > "$_wt_last_file"
   fi
 
-  # 6. (removed — llm-tiny.sh was replaced with local keyword heuristics)
+  # 6. (removed — the small-model check went with the retired tiny naming;
+  #    LLM usage is logged by the harness to llm-usage.log and read by
+  #    `hive llm stats`)
 
   # 7. Monitor disk usage and alert on threshold breaches (dedup'd per threshold)
   check_disk_usage

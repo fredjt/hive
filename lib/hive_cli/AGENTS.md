@@ -26,7 +26,7 @@ lib/hive_cli/
     config.py        get / set / edit / show
     doctor.py        installation diagnostics + .company/ daemon health (dead daemons fail the run)
     killall.py       emergency process kill
-    llm.py           llm-tiny stats / tail
+    llm.py           LLM usage stats / tail + endpoint test (B1)
     gh.py            gh status / issues / mirror / pr open/merge/reject
     release.py       start / status / list / publish / abort
     round.py         status / next / history / get / enqueue / advance / promote

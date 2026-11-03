@@ -489,10 +489,11 @@ class TestReportsToolModule:
 
 
 @pytest.mark.skipif(not _HAS_FASTMCP, reason='mcp.server.fastmcp not available')
-class TestLLMTinyToolModule:
-    """Test the llm_tiny tool module."""
+class TestLLMUsageToolModule:
+    """Test the llm_usage tool module (formerly llm_tiny — B2 rename; the
+    tool names themselves never carried the 'tiny' naming)."""
 
-    def test_llm_tiny_tools_exist(self, install_dir):
+    def test_llm_usage_tools_exist(self, install_dir):
         sys_path = str(install_dir / "lib")
         old_path = os.environ.get("PYTHONPATH", "")
         if sys_path not in old_path:
@@ -502,11 +503,11 @@ class TestLLMTinyToolModule:
             from hive_mcp.server import build_server
             server = build_server()
             tools = list(server._tool_manager._tools.keys())
-            # The small-model (llm-tiny) tools register under their
+            # The local-classification tools register under their
             # functional names, not an llm_* prefix.
             for tool in ("classify_ticket", "triage_test_failure",
                          "narrate_status", "summarize_thread"):
-                assert tool in tools, f"Expected llm-tiny tool '{tool}' not found"
+                assert tool in tools, f"Expected llm_usage tool '{tool}' not found"
         finally:
             if old_path:
                 os.environ["PYTHONPATH"] = old_path
