@@ -1,0 +1,13 @@
+{
+  "company": "fixture-project",
+  "departments": {
+    "it": {
+      "name": "IT",
+      "vp": "VP-IT"
+    },
+    "marketing": {
+      "name": "Marketing",
+      "vp": "VP-Marketing"
+    }
+  }
+}

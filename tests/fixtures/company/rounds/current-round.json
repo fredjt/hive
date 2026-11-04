@@ -1,0 +1,47 @@
+{
+  "round_id": "round-010",
+  "source": "sprint-lifecycle",
+  "started_at": "2026-11-04T12:00:00Z",
+  "ended_at": null,
+  "entries": [
+    {
+      "id": "e1",
+      "kind": "spawn",
+      "agent": "ic-engineer-1",
+      "dept": "it",
+      "role": "engineer",
+      "ticket": "IT-0002",
+      "status": "running",
+      "started_at": "2026-11-04T12:00:10Z",
+      "started_ts": 1762339210,
+      "duration_s": null,
+      "queued_by": "sprint-lifecycle"
+    },
+    {
+      "id": "e2",
+      "kind": "spawn",
+      "agent": "agent-2",
+      "dept": "it",
+      "role": "engineer",
+      "ticket": "IT-0002",
+      "status": "done",
+      "started_at": "2026-11-04T10:00:00Z",
+      "started_ts": 1762250400,
+      "duration_s": 42,
+      "queued_by": "sprint-lifecycle"
+    },
+    {
+      "id": "e3",
+      "kind": "spawn",
+      "agent": "ic-tester-1",
+      "dept": "it",
+      "role": "tester",
+      "ticket": "IT-0003",
+      "status": "queued",
+      "started_at": null,
+      "started_ts": null,
+      "duration_s": null,
+      "queued_by": "ic-spawner"
+    }
+  ]
+}

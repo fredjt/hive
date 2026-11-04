@@ -1,0 +1,34 @@
+{
+  "round_id": "round-011",
+  "source": "ic-spawner",
+  "started_at": "2026-11-04T12:10:00Z",
+  "ended_at": null,
+  "entries": [
+    {
+      "id": "n1",
+      "kind": "spawn",
+      "agent": "ic-engineer-1",
+      "dept": "it",
+      "role": "engineer",
+      "ticket": "IT-0001",
+      "status": "queued",
+      "started_at": null,
+      "started_ts": null,
+      "duration_s": null,
+      "queued_by": "ic-spawner"
+    },
+    {
+      "id": "n2",
+      "kind": "verify",
+      "agent": "verification-ic",
+      "dept": "it",
+      "role": "verification",
+      "ticket": "IT-0003",
+      "status": "queued",
+      "started_at": null,
+      "started_ts": null,
+      "duration_s": null,
+      "queued_by": "verification-runner"
+    }
+  ]
+}

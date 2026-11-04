@@ -1,0 +1,10 @@
+{
+  "version": "v0.8.4",
+  "phase": "failed",
+  "created_at": "2026-11-04T00:00:00Z",
+  "adversarial_verdict": "NO-GO",
+  "nogo_rationale": "Tarball missing install script.",
+  "blockers": [
+    "packaging/install.sh missing from tarball"
+  ]
+}

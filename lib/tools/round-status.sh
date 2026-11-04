@@ -29,12 +29,71 @@ case "$cmd" in
 
   --history)
     LIMIT="${2:-20}"
-    LIMIT="$LIMIT" ROUNDS_DIR="$ROUNDS_DIR" python3 - <<'PYEOF'
-import json, os, sys, glob
+    LIMIT="$LIMIT" ROUNDS_DIR="$ROUNDS_DIR" COMPANY_DIR="$COMPANY_DIR" python3 - <<'PYEOF'
+import json, os, glob, datetime
 limit = int(os.environ["LIMIT"])
 rdir = os.environ["ROUNDS_DIR"]
+cdir = os.environ.get("COMPANY_DIR", "")
+
+def _parse_ts(s):
+  try:
+    return datetime.datetime.fromisoformat(str(s).replace("Z", "+00:00"))
+  except Exception:
+    return None
+
+# B3 (0.9.0): per-round cost, aggregated at query time from the LLM usage
+# log (entries whose ts falls inside the round's started_at..ended_at
+# window). No new state is written; readers without a log get 0/0/0.
+# The legacy llm-tiny.log name is accepted for one release, same
+# convention as 'hive llm stats'.
+usage = []
+uf = None
+if cdir:
+  for name in ("llm-usage.log", "llm-tiny.log"):
+    cand = os.path.join(cdir, "logs", name)
+    if os.path.isfile(cand):
+      uf = cand
+      break
+if uf:
+  try:
+    for line in open(uf):
+      line = line.strip()
+      if not line:
+        continue
+      try:
+        u = json.loads(line)
+      except Exception:
+        continue
+      ts = _parse_ts(u.get("ts", ""))
+      if ts is None:
+        continue
+      try:
+        tokens = int(u.get("tokens") or 0)
+      except (TypeError, ValueError):
+        tokens = 0
+      try:
+        cost = float(u.get("cost_usd") or 0.0)
+      except (TypeError, ValueError):
+        cost = 0.0
+      usage.append((ts, tokens, cost))
+  except Exception:
+    usage = []
+
+def _window(sa, ea):
+  calls = tokens = 0
+  cost = 0.0
+  if sa is None:
+    return calls, tokens, cost
+  for ts, t, c in usage:
+    if ts >= sa and (ea is None or ts <= ea):
+      calls += 1
+      tokens += t
+      cost += c
+  return calls, tokens, cost
+
 hist = sorted(glob.glob(os.path.join(rdir, "history", "*.json")))[-limit:]
 out = []
+totals = {"calls": 0, "tokens": 0, "cost_usd": 0.0}
 for f in reversed(hist):
   try:
     d = json.load(open(f))
@@ -46,14 +105,14 @@ for f in reversed(hist):
     s = e.get("status", "?")
     status_counts[s] = status_counts.get(s, 0) + 1
   duration = None
-  if d.get("started_at") and d.get("ended_at"):
-    try:
-      import datetime
-      sa = datetime.datetime.fromisoformat(d["started_at"].replace("Z","+00:00"))
-      ea = datetime.datetime.fromisoformat(d["ended_at"].replace("Z","+00:00"))
-      duration = int((ea - sa).total_seconds())
-    except Exception:
-      pass
+  sa = _parse_ts(d.get("started_at"))
+  ea = _parse_ts(d.get("ended_at"))
+  if sa and ea:
+    duration = int((ea - sa).total_seconds())
+  calls, tokens, cost = _window(sa, ea)
+  totals["calls"] += calls
+  totals["tokens"] += tokens
+  totals["cost_usd"] += cost
   out.append({
     "round_id":   d.get("round_id"),
     "source":     d.get("source"),
@@ -62,8 +121,12 @@ for f in reversed(hist):
     "duration_s": duration,
     "entry_count": len(entries),
     "status_counts": status_counts,
+    "calls": calls,
+    "tokens": tokens,
+    "cost_usd": round(cost, 8),
   })
-print(json.dumps({"rounds": out}, indent=2))
+totals["cost_usd"] = round(totals["cost_usd"], 8)
+print(json.dumps({"rounds": out, "totals": totals}, indent=2))
 PYEOF
     ;;
 

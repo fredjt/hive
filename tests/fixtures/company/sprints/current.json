@@ -1,0 +1,23 @@
+{
+  "sprint_id": "sprint-20261103T000000Z",
+  "started_at": "2026-11-03T00:00:00Z",
+  "stage": "release-publish",
+  "stage_started_at": "2026-11-04T11:00:00Z",
+  "loop_iteration": 0,
+  "release_retry_count": 0,
+  "tickets_in_sprint": [
+    "IT-0001",
+    "IT-0002",
+    "IT-0003",
+    "IT-0004"
+  ],
+  "ceo_direction_path": null,
+  "release": {
+    "version": "0.9.0",
+    "test_log": null,
+    "verify_log": null,
+    "tarball": "dist/hive-0.9.0.tar.gz",
+    "sha256": "dist/hive-0.9.0.sha256",
+    "publish_status": "pending"
+  }
+}

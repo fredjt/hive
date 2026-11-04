@@ -1,0 +1,6 @@
+{"ts": "2026-11-01T10:01:00Z", "caller": "ic-engineer-1", "mode": "agent", "model": "gpt-4o", "turn": 1, "tokens": 100, "cost_usd": 6e-06, "response": "ok"}
+{"ts": "2026-11-01T10:02:00Z", "caller": "ic-tester-1", "mode": "agent", "model": "gpt-4o", "turn": 2, "tokens": 200, "cost_usd": 1.2e-05, "response": "ok"}
+{"ts": "2026-11-02T09:00:00Z", "caller": "ic-engineer-0", "mode": "agent", "model": "gpt-4o", "turn": 1, "tokens": 300, "cost_usd": 1.8e-05, "response": "ok"}
+{"ts": "2026-11-02T09:01:00Z", "caller": "ic-engineer-1", "mode": "agent", "model": "gpt-4o", "turn": 2, "tokens": 400, "cost_usd": 2.4e-05, "response": "ok"}
+{"ts": "2026-11-02T09:02:00Z", "caller": "ic-engineer-2", "mode": "agent", "model": "gpt-4o", "turn": 3, "tokens": 500, "cost_usd": 3e-05, "response": "ok"}
+{"ts": "2026-11-03T09:00:00Z", "caller": "ceo", "mode": "agent", "model": "gpt-4o", "turn": 1, "tokens": 999, "cost_usd": 0.000594, "response": "ok"}

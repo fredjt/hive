@@ -1,0 +1,32 @@
+{
+  "updated_at": "2026-11-04T12:00:00Z",
+  "agents": [
+    {
+      "name": "ic-engineer-1",
+      "department": "it",
+      "role": "engineer",
+      "status": "active",
+      "agent_type": "ic",
+      "ticket_id": "IT-0002",
+      "last_active": "2026-11-04T12:00:00Z"
+    },
+    {
+      "name": "ic-tester-1",
+      "department": "it",
+      "role": "tester",
+      "status": "idle",
+      "agent_type": "ic",
+      "ticket_id": null,
+      "last_active": "2026-11-04T11:00:00Z"
+    },
+    {
+      "name": "vp-marketing",
+      "department": "marketing",
+      "role": "vp",
+      "status": "active",
+      "agent_type": "vp",
+      "ticket_id": null,
+      "last_active": "2026-11-04T10:30:00Z"
+    }
+  ]
+}

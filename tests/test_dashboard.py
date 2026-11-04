@@ -5,6 +5,8 @@ import shutil
 import subprocess
 import sys
 import os
+import time
+import urllib.request
 import uuid
 from pathlib import Path
 # Ensure lib/ is on the path when running from within hive/ directory
@@ -18,6 +20,8 @@ import pytest
 
 
 DASHBOARD_DIR = "lib/dashboard"
+REPO = Path(__file__).resolve().parent.parent
+FIXTURE_COMPANY = REPO / "tests" / "fixtures" / "company"
 
 
 class TestDashboardFiles:
@@ -1450,3 +1454,112 @@ class TestDockerAgentInABox:
             server.server_close()
         assert r.returncode == 0, (r.stderr or r.stdout)[-500:]
         assert "OK" in r.stdout, f"stub answer missing from output: {r.stdout[:300]}"
+
+
+class TestRoundsCostApi:
+    """B3 (0.9.0): /api/rounds/history prices each round from the LLM
+    usage log (entries whose timestamps fall inside the round's
+    started_at/ended_at window) and carries a cumulative `totals`
+    block — the 'this sprint' cost across the returned history
+    entries. No new state is written; with no usage log the fields
+    are 0, not missing.
+
+    Uses the SAME shared fixture company tree (tests/fixtures/company)
+    as the bash-side B3 test (test_bash_scripts.TestRoundStatusCost) —
+    one fixture tree, two consumers, so a shape rename in the log
+    breaks both in the same run (C2's contract)."""
+
+    SERVER = REPO / "lib" / "dashboard" / "server.js"
+
+    @staticmethod
+    def _free_port():
+        import socket
+        s = socket.socket()
+        s.bind(("127.0.0.1", 0))
+        port = s.getsockname()[1]
+        s.close()
+        return port
+
+    @staticmethod
+    def _get(url, timeout=15):
+        deadline = time.time() + timeout
+        last = None
+        while time.time() < deadline:
+            try:
+                with urllib.request.urlopen(url, timeout=3) as r:
+                    return json.loads(r.read().decode())
+            except Exception as e:  # server not up yet — keep polling
+                last = e
+                time.sleep(0.15)
+        raise AssertionError(f"dashboard never answered {url}: {last}")
+
+    def _api(self, company, path):
+        node = shutil.which("node")
+        if not node:
+            pytest.skip("node unavailable — cannot run the dashboard server")
+        port = self._free_port()
+        proc = subprocess.Popen(
+            [node, str(self.SERVER), "--dir", str(company), "--port", str(port)],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        try:
+            return self._get(f"http://127.0.0.1:{port}{path}")
+        finally:
+            proc.terminate()
+            try:
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+
+    def _history(self, company):
+        return self._api(company, "/api/rounds/history?limit=20")
+
+    def test_rounds_api_carries_per_round_costs_and_cumulative_total(self):
+        j = self._history(FIXTURE_COMPANY)
+        by_id = {r["round_id"]: r for r in j["rounds"]}
+        assert set(by_id) >= {"round-008", "round-009"}
+        r8 = by_id["round-008"]
+        assert (r8["calls"], r8["tokens"]) == (2, 300)
+        assert r8["cost_usd"] == pytest.approx(1.8e-05)
+        r9 = by_id["round-009"]
+        assert (r9["calls"], r9["tokens"]) == (3, 1200)
+        assert r9["cost_usd"] == pytest.approx(7.2e-05)
+        # Cumulative 'this sprint' block across the returned entries —
+        # the Nov 3 CEO entry falls outside both windows and is excluded.
+        t = j["totals"]
+        assert t["calls"] == 5
+        assert t["tokens"] == 1500
+        assert t["cost_usd"] == pytest.approx(9.0e-05)
+
+    def test_rounds_api_empty_log_fields_present_as_zero(self, tmp_path):
+        """Rounds present but no usage log: every round's cost fields
+        exist as 0 — the dashboard's rounds panel renders '-'-free.
+        (0.8.1/0.8.2 were born exactly from missing-shape crashes.)"""
+        company = tmp_path / ".company"
+        (company / "rounds" / "history").mkdir(parents=True)
+        for f in FIXTURE_COMPANY.glob("rounds/history/*.json"):
+            shutil.copy(f, company / "rounds" / "history" / f.name)
+        j = self._history(company)
+        assert j["rounds"], "expected rounds from the fixture history"
+        for r in j["rounds"]:
+            assert r["calls"] == 0
+            assert r["tokens"] == 0
+            assert r["cost_usd"] == 0
+        assert j["totals"] == {"calls": 0, "tokens": 0, "cost_usd": 0}
+
+    def test_rounds_api_matches_bash_side_on_same_fixture(self, tmp_path):
+        """The dashboard API and round-status.sh --history must price
+        the same fixture identically — they are the same feature over
+        two surfaces; drift here is the 0.8.x 'two shapes' class."""
+        bash = subprocess.run(
+            ["bash", str(REPO / "lib" / "tools" / "round-status.sh"), "--history"],
+            capture_output=True, text=True, timeout=30,
+            env={**os.environ, "COMPANY_DIR": str(FIXTURE_COMPANY)},
+            cwd=str(REPO))
+        assert bash.returncode == 0, bash.stderr
+        b = json.loads(bash.stdout)
+        j = self._history(FIXTURE_COMPANY)
+        bm = {r["round_id"]: r for r in b["rounds"]}
+        jm = {r["round_id"]: r for r in j["rounds"]}
+        for rid in ("round-008", "round-009"):
+            for key in ("calls", "tokens", "cost_usd"):
+                assert bm[rid][key] == pytest.approx(jm[rid][key]), (rid, key)

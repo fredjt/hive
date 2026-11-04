@@ -1,0 +1,21 @@
+{
+  "started_at": "2026-11-04T08:00:00Z",
+  "processes": [
+    {
+      "pid": 1001,
+      "role": "sprint-lifecycle",
+      "dept": "infrastructure",
+      "interval": "fifo-serial",
+      "started_at": "2026-11-04T08:00:00Z",
+      "restart_count": 0
+    },
+    {
+      "pid": 1002,
+      "role": "company-board",
+      "dept": "infrastructure",
+      "interval": "continuous",
+      "started_at": "2026-11-04T08:00:00Z",
+      "restart_count": 1
+    }
+  ]
+}

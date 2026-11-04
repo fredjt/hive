@@ -1,0 +1,35 @@
+{
+  "id": "MARKETING-0001",
+  "type": "research",
+  "title": "Competitor pricing survey",
+  "description": "Survey competitor pricing tiers for the Q1 report.",
+  "created_by": "fixture-gen",
+  "filed_by_department": "marketing",
+  "source": "sprint-planning",
+  "priority": "medium",
+  "status": "backlog",
+  "target_department": "marketing",
+  "assignee": {
+    "role": "unassigned",
+    "agent_id": "",
+    "name": "Unassigned"
+  },
+  "sprint": null,
+  "estimate": "medium",
+  "dependencies": [],
+  "blocked_by": [],
+  "labels": [],
+  "acceptance_criteria": [],
+  "comments": [],
+  "resolution": {
+    "status": null,
+    "resolved_at": null,
+    "resolved_by": null,
+    "git_branch": null,
+    "commit": null,
+    "notes": null
+  },
+  "created_at": "2026-11-04T19:23:51Z",
+  "updated_at": "2026-11-04T19:23:51Z",
+  "external_id": null
+}

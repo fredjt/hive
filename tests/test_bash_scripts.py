@@ -1909,3 +1909,71 @@ class TestPublisherRunnerCwd:
         state = json.loads(
             (project / ".company" / "sprints" / "current.json").read_text())
         assert state["release"]["publish_status"] == "published", state
+
+
+class TestRoundStatusCost:
+    """B3 (0.9.0): round-status.sh --history prices each round from the
+    LLM usage log — entries whose timestamps fall inside the round's
+    started_at/ended_at window. No new state is written; with no usage
+    log the cost fields are 0, not missing.
+
+    Uses the shared fixture company tree (tests/fixtures/company):
+    round-008 (Nov 1, 10:00–10:05) catches two entries; round-009
+    (Nov 2, 09:00–09:10) catches three; the Nov 3 CEO entry falls
+    outside both windows and must not be counted anywhere."""
+
+    REPO = Path(__file__).resolve().parent.parent
+    FIXTURE_COMPANY = REPO / "tests" / "fixtures" / "company"
+
+    @staticmethod
+    def _history(company):
+        r = run_script(
+            Path(SCRIPTS_DIR, "round-status.sh"), ["--history"],
+            env={"COMPANY_DIR": str(company)})
+        assert r.returncode == 0, r.stderr
+        return json.loads(r.stdout)
+
+    def test_fixture_rounds_carry_per_round_cost_and_totals(self):
+        h = self._history(self.FIXTURE_COMPANY)
+        by_id = {r["round_id"]: r for r in h["rounds"]}
+        assert set(by_id) >= {"round-008", "round-009"}
+        r8 = by_id["round-008"]
+        assert (r8["calls"], r8["tokens"]) == (2, 300)
+        assert r8["cost_usd"] == pytest.approx(1.8e-05)
+        r9 = by_id["round-009"]
+        assert (r9["calls"], r9["tokens"]) == (3, 1200)
+        assert r9["cost_usd"] == pytest.approx(7.2e-05)
+        t = h["totals"]
+        assert t["calls"] == 5
+        assert t["tokens"] == 1500
+        assert t["cost_usd"] == pytest.approx(9.0e-05)
+
+    def test_round_without_end_window_still_carries_fields(self):
+        """An in-flight round (no ended_at) must still be priced — the
+        window sums through now — and the field set is identical to a
+        finished round's."""
+        h = self._history(self.FIXTURE_COMPANY)
+        for r in h["rounds"]:
+            for key in ("calls", "tokens", "cost_usd"):
+                assert key in r, (r["round_id"], key)
+                assert r[key] >= 0
+
+    def test_missing_usage_log_fields_present_as_zero(self, tmp_path):
+        company = tmp_path / ".company"
+        (company / "rounds" / "history").mkdir(parents=True)
+        for f in self.FIXTURE_COMPANY.glob("rounds/history/*.json"):
+            shutil.copy(f, company / "rounds" / "history" / f.name)
+        h = self._history(company)
+        assert h["rounds"], "expected rounds from the fixture history"
+        for r in h["rounds"]:
+            assert (r["calls"], r["tokens"], r["cost_usd"]) == (0, 0, 0)
+        assert h["totals"] == {"calls": 0, "tokens": 0, "cost_usd": 0}
+
+    def test_no_rounds_dir_fields_still_zero(self, tmp_path):
+        """A brand-new .company with neither rounds nor logs: history is
+        empty and totals are present as zeros, not absent."""
+        company = tmp_path / ".company"
+        company.mkdir()
+        h = self._history(company)
+        assert h["rounds"] == []
+        assert h["totals"] == {"calls": 0, "tokens": 0, "cost_usd": 0}

@@ -1,0 +1,35 @@
+{
+  "id": "IT-0001",
+  "type": "feature",
+  "title": "Add login endpoint",
+  "description": "Implement /login with token auth.",
+  "created_by": "fixture-gen",
+  "filed_by_department": "it",
+  "source": "sprint-planning",
+  "priority": "high",
+  "status": "sprint-current",
+  "target_department": "it",
+  "assignee": {
+    "role": "unassigned",
+    "agent_id": "",
+    "name": "Unassigned"
+  },
+  "sprint": null,
+  "estimate": "medium",
+  "dependencies": [],
+  "blocked_by": [],
+  "labels": [],
+  "acceptance_criteria": [],
+  "comments": [],
+  "resolution": {
+    "status": null,
+    "resolved_at": null,
+    "resolved_by": null,
+    "git_branch": null,
+    "commit": null,
+    "notes": null
+  },
+  "created_at": "2026-11-04T19:23:50Z",
+  "updated_at": "2026-11-04T19:23:50Z",
+  "external_id": null
+}
