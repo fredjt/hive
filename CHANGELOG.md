@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.8.1
+
+Dashboard script parse fix.
+
+0.8.0 shipped a SyntaxError in the embedded SPA script: nine `\n`
+escapes (the ticket move/comment failure alerts and the gate-output
+line parsing) were evaluated by Node while the HTML template literal
+was built, so they reached the browser as RAW NEWLINES inside
+single-quoted JS strings — and the entire dashboard script failed to
+parse (a console-only failure: the server itself was fine, and
+`node --check server.js` parses the template as a string, so CI
+could not see it).
+
+- The nine escapes are written with doubled backslashes so the
+  browser receives a real newline escape; the trap is documented in
+  `lib/dashboard/AGENTS.md`.
+- New guard `TestEmbeddedSpaScript`: reproduces exactly the script the
+  browser receives (template evaluation included) and runs
+  `node --check` on it, so this class of error fails the suite the
+  moment it is introduced.
+
 ## 0.8.0
 
 Operator UX and config integrity.
