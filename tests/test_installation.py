@@ -1,6 +1,6 @@
 """Integration tests."""
 import sys
-import json, os, subprocess
+import json, os, shutil, subprocess
 from pathlib import Path
 import pytest
 
@@ -651,6 +651,55 @@ class TestCutReleaseScript:
         )
         assert r.returncode != 0, "a dirty tree must refuse the cut"
         assert "dirty" in r.stdout + r.stderr
+
+
+class TestCutReleaseResumeHints:
+    """D3: a failing cut-release gate ends with a 'Resume:' line naming the
+    exact command to run next (suite red, scan dirty, tag exists, publish
+    failed) — a static guard over the script's failure branches."""
+
+    def test_every_failure_branch_has_resume_line(self):
+        src = (_repo_root() / "packaging" / "cut-release.sh").read_text().splitlines()
+        def ok(marker):
+            for i, l in enumerate(src):
+                if marker in l:
+                    return any("Resume:" in x or "PUBLISH_RESUME" in x
+                               for x in src[i:i + 4])
+            return False
+        for m in ("FAIL: test suite is not green",
+                  "FAIL: tag v$VERSION already exists",
+                  "FAIL: credential patterns found",
+                  "FAIL: gh release create failed",
+                  "FAIL: gh release edit failed",
+                  "FAIL: gh release upload failed"):
+            assert ok(m), f"no Resume: line after {m!r}"
+        assert "bash packaging/cut-release.sh --version" in "\n".join(src)
+
+    def test_resume_hint_printed_on_tag_exists(self, tmp_path):
+        # Exercise the tag-exists branch for real: a minimal scratch repo
+        # carrying just the script + VERSION + CHANGELOG, pre-tagged.
+        tree = tmp_path / "cut"
+        (tree / "packaging").mkdir(parents=True)
+        shutil.copy(_repo_root() / "packaging" / "cut-release.sh",
+                    tree / "packaging" / "cut-release.sh")
+        ver = (_repo_root() / "VERSION").read_text().strip()
+        (tree / "VERSION").write_text(ver + "\n")
+        (tree / "CHANGELOG.md").write_text(f"## {ver}\n\nnotes\n")
+        env = {**os.environ, "GIT_AUTHOR_NAME": "d3", "GIT_AUTHOR_EMAIL": "d3@e.com",
+               "GIT_COMMITTER_NAME": "d3", "GIT_COMMITTER_EMAIL": "d3@e.com"}
+        subprocess.run(["git", "init", "-q"], cwd=tree, check=True)
+        subprocess.run(["git", "config", "user.email", "d3@e.com"], cwd=tree, check=True)
+        subprocess.run(["git", "config", "user.name", "d3"], cwd=tree, check=True)
+        subprocess.run(["git", "add", "-A"], cwd=tree, env=env, check=True)
+        subprocess.run(["git", "commit", "-qm", "cut"], cwd=tree, env=env, check=True)
+        subprocess.run(["git", "tag", "v" + ver], cwd=tree, check=True)
+        run = subprocess.run(
+            ["bash", str(tree / "packaging" / "cut-release.sh"), "--dry-run",
+             "--suite", "true"],
+            capture_output=True, text=True, timeout=120, cwd=str(tree))
+        assert run.returncode != 0
+        assert f"tag v{ver} already exists" in run.stdout + run.stderr
+        assert "Resume:" in run.stdout + run.stderr
 
 
 class TestTarballContentGuard:

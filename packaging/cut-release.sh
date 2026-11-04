@@ -108,6 +108,7 @@ if [ -n "$DIRTY" ]; then
 fi
 if git tag -l "v$VERSION" | grep -q .; then
   echo "FAIL: tag v$VERSION already exists" >&2
+  echo "Resume: complete the publish (gh release create v$VERSION <tarball> <sha256> --notes-file <notes>) or remove the stale tag (git tag -d v$VERSION && git push origin :refs/tags/v$VERSION), then re-run: bash packaging/cut-release.sh --version $VERSION" >&2
   exit 1
 fi
 BRANCH="$(git branch --show-current)"
@@ -118,6 +119,7 @@ echo "==> Gate 2: test suite"
 # shellcheck disable=SC2086  # SUITE is a command line, splitting is the point
 if ! $SUITE; then
   echo "FAIL: test suite is not green — the release is refused" >&2
+  echo "Resume: re-run after fixing: bash packaging/cut-release.sh --version $VERSION" >&2
   exit 1
 fi
 echo "    suite green"
@@ -177,6 +179,7 @@ HITS="$(grep -rInE "$PATTERNS" "$STAGE" || true)"
 if [ -n "$HITS" ]; then
   echo "FAIL: credential patterns found in the tarball (see $SCAN_REPORT):" >&2
   echo "$HITS" | head -20 >&2
+  echo "Resume: remove the credential from the tree, commit the fix, then re-run: bash packaging/cut-release.sh --version $VERSION" >&2
   exit 1
 fi
 echo "    scan clean — report: $SCAN_REPORT"
@@ -236,18 +239,22 @@ command -v gh >/dev/null || {
   echo "      gh release create v$VERSION --title \"$TITLE\" \"$TARBALL\" \"$CHECKSUM\""
   exit 1
 }
+PUBLISH_RESUME="Resume: the tag v$VERSION is already in place — complete the publish (gh release create v$VERSION --title \"$TITLE\" --notes-file $NOTES $TARBALL $CHECKSUM) or remove the tag (git tag -d v$VERSION && git push origin :refs/tags/v$VERSION), then re-run: bash packaging/cut-release.sh --version $VERSION"
 if gh release view "v$VERSION" >/dev/null 2>&1; then
   # Re-run against an existing release: update title/notes and
   # re-upload the assets — the cut is idempotent. (gh release create
   # has no --clobber across versions; upload does.)
   echo "    release v$VERSION exists — updating title, notes, assets"
-  gh release edit "v$VERSION" --title "$TITLE" --notes-file "$NOTES"
-  gh release upload "v$VERSION" --clobber "$TARBALL" "$CHECKSUM"
+  gh release edit "v$VERSION" --title "$TITLE" --notes-file "$NOTES" || {
+    echo "FAIL: gh release edit failed" >&2; echo "$PUBLISH_RESUME" >&2; exit 1; }
+  gh release upload "v$VERSION" --clobber "$TARBALL" "$CHECKSUM" || {
+    echo "FAIL: gh release upload failed" >&2; echo "$PUBLISH_RESUME" >&2; exit 1; }
 else
   gh release create "v$VERSION" \
     --title "$TITLE" \
     --notes-file "$NOTES" \
-    "$TARBALL" "$CHECKSUM"
+    "$TARBALL" "$CHECKSUM" || {
+    echo "FAIL: gh release create failed" >&2; echo "$PUBLISH_RESUME" >&2; exit 1; }
 fi
 
 echo ""
