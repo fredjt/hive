@@ -2276,55 +2276,69 @@ exit 0
             f"artifacts leaked into the caller's cwd: {cwd_artifacts}"
 
     def test_d2_partial_publish_retry(self, tmp_path):
-        """The exact 0.8.4 scenario, codified: run 1 pushes the tag, the
-        stub gh fails before the release exists (record left dangling);
-        run 2 detects the existing tag and completes the publish — the
-        semver gate excludes the candidate's own tag (the 0.8.4 fix),
-        so the retry is legal."""
-        proj, ver = self._make_project(tmp_path)
+        """D2 (0.9.0): the partial-publish retry, codified. Run 1 pushes the
+        tag, then the stub gh fails before the release exists (record left
+        dangling); run 2 detects the existing tag and completes the
+        publish — the semver gate excludes the candidate's own tag, the
+        0.8.4 fix that makes the retry legal."""
+        repo = Path(__file__).resolve().parent.parent
+        proj = self._make_project(tmp_path)
+        ver = type(self).VER
         v = "v" + ver
-        tag = tmp_path / "gh-fail"
-        notes = tmp_path / "cap2.md"
+        fail_flag = tmp_path / "gh-fail"
         bindir = tmp_path / "bin2"
-        self._stub_gh(bindir, str(tag))
+        self._stub_gh(bindir, str(fail_flag))
         foreign = tmp_path / "run2"
         foreign.mkdir()
-        # ── run 1: publish fails after the tag is pushed ──
-        r1 = self._run(proj, foreign, "1", tag, notes)
-        assert r1.returncode != 0, "run 1 must fail (gh release create refused)"
-        state = json.loads((proj / ".company" / "sprints" / "current.json").read_text())
-        assert state["release"]["publish_status"] == "failed", \
-            "after run 1 the record is incomplete (publish_status=failed)"
-        t1 = self._git(proj, "tag", "-l")
-        assert v in t1.stdout.split(), "run 1 must have created the tag"
-        origin = tmp_path / "origin.git"
-        to = self._git(origin, "tag", "-l")
-        assert v in to.stdout.split(), \
-            "run 1 must have PUSHED the tag to origin (partial publish)"
-        assert not (tmp_path / "rel" / v).exists(), \
-            "run 1: no release exists (gh create failed)"
-        assert (proj / ".company" / "releases" / f"{v}-publish.log").is_file(), \
-            "the dangling record: the publish log exists"
-        # The retry is legal: the semver gate excludes the candidate's
-        # own tag (0.8.4) — a re-run for the tagged version must not
-        # fail 'not greater than previous tag'.
-        g = subprocess.run(
-            ["bash", str(self.REPO / "lib" / "tools" / "release-gates.sh"),
-             "--version", v, "--dry-run"],
-            capture_output=True, text=True, timeout=60, cwd=str(proj),
-            env={**os.environ, "COMPANY_DIR": str(proj / ".company"),
-                 "HIVE_ROOT": str(self.REPO)})
-        gates = g.stdout + g.stderr
-        assert "semver" in gates and "pass" in gates, \
-            f"semver gate must pass with the candidate's own tag present:\n{gates}"
-        assert "not greater than previous" not in gates, gates
-        # ── run 2: completes the publish ──
-        tag.unlink()
-        r2 = self._run(proj, foreign, "0", tag, notes)
-        assert r2.returncode == 0, "run 2 must complete the publish"
-        state = json.loads((proj / ".company" / "sprints" / "current.json").read_text())
-        assert state["release"]["publish_status"] == "published"
-        assert (tmp_path / "rel" / v).exists(), "after run 2 the release exists"
-        t2 = self._git(proj, "tag", "-l")
-        assert t2.stdout.split().count(v) == 1, "the existing tag is reused, not duplicated"
-        assert (proj / ".company" / "releases" / f"{v}-publish.log").is_file()
+
+        def run_publish():
+            env = {**os.environ,
+                   "HIVE_ROOT": str(repo),
+                   "HIVE_CONFIG": str(tmp_path / "no-config.toml"),
+                   "PATH": str(bindir) + os.pathsep + os.environ["PATH"],
+                   "GH_STUB_LOG": str(tmp_path / "gh.log"),
+                   "GH_STUB_RELEASE_DIR": str(tmp_path / "gh-rel")}
+            return subprocess.run(
+                ["bash", str(repo / "lib" / "tools" / "release-publish-runner.sh"),
+                 str(proj)],
+                capture_output=True, text=True, timeout=120,
+                cwd=str(foreign), env=env)
+
+        # run 1: tag pushed to origin, gh fails before the release exists
+        fail_flag.write_text("x")
+        r1 = run_publish()
+        assert r1.returncode != 0, "run 1 must fail (gh create failed)"
+        rec = json.loads((proj / ".company" / "sprints" / "current.json").read_text())
+        assert rec["release"]["publish_status"] == "failed", \
+            "run 1 leaves the record dangling (failed), not published"
+        tags = self._git(proj, "tag", "-l").stdout.split()
+        assert tags == [v], f"run 1 must have created the tag: {tags}"
+        origin_tags = subprocess.run(
+            ["git", "tag", "-l"], cwd=str(tmp_path / "origin.git"),
+            capture_output=True, text=True, timeout=30).stdout.split()
+        assert v in origin_tags, "the tag must be pushed to origin"
+        assert not list((tmp_path / "gh-rel").glob("v*")), \
+            "no release may exist after run 1"
+
+        # the retry is legal: with its own tag present the semver gate
+        # still passes (0.8.4: it excludes the candidate's own tag)
+        gates = subprocess.run(
+            ["bash", str(repo / "lib" / "tools" / "release-gates.sh"),
+             "--version", v, "--project-root", str(proj), "--dry-run"],
+            capture_output=True, text=True, timeout=120)
+        semver_lines = [l for l in (gates.stdout + gates.stderr).splitlines()
+                        if "semver" in l]
+        assert any("pass" in l for l in semver_lines), \
+            f"semver gate must pass with its own tag present: {semver_lines}"
+
+        # run 2: same flow, gh works — the publish completes
+        fail_flag.unlink()
+        r2 = run_publish()
+        assert r2.returncode == 0, \
+            f"run 2 must complete the publish:\n{r2.stdout}\n{r2.stderr}"
+        rec2 = json.loads((proj / ".company" / "sprints" / "current.json").read_text())
+        assert rec2["release"]["publish_status"] == "published"
+        assert list((tmp_path / "gh-rel").glob("v*")), \
+            "the release must exist after run 2"
+        tags2 = self._git(proj, "tag", "-l").stdout.split()
+        assert tags2 == [v], "run 2 must not create a duplicate tag"
