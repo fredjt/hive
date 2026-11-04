@@ -15,7 +15,7 @@ external agent CLI is installed, invoked, or required.
 - **A web dashboard** (Node.js, GitHub-dark theme) for monitoring and control
   — see all departments, ticket boards, agent activity, run/stop the company,
   approve verification, etc.
-- **An MCP server** (~50 tools) that the dashboard, the CLI, and spawned
+- **An MCP server** (~55 tools) that the dashboard, the CLI, and spawned
   agents all share. Structured tool calls instead of long bash
   invocations — saves output tokens (the slow part on local llama.cpp).
 - **Strict quality gates**: deterministic gates (tests, lint, security,
@@ -24,18 +24,18 @@ external agent CLI is installed, invoked, or required.
 
 ## Get Hive
 
-Latest release: **v0.7.0**.
+Latest release: **v0.8.0**.
 
 **Release tarball** (no git required):
 
-1. Download `hive-0.7.0.tar.gz` and its `hive-0.7.0.sha256` sidecar
+1. Download `hive-0.8.0.tar.gz` and its `hive-0.8.0.sha256` sidecar
    from the [releases page](https://github.com/fredjt/hive/releases).
 2. Verify the download before installing:
-   `sha256sum -c hive-0.7.0.sha256` (the sidecar carries the expected hash).
+   `sha256sum -c hive-0.8.0.sha256` (the sidecar carries the expected hash).
 3. Extract and install:
 
    ```bash
-   tar xzf hive-0.7.0.tar.gz
+   tar xzf hive-0.8.0.tar.gz
    bash hive-0.7.0/packaging/install.sh --copy-to ~/.local/share/hive
    ```
 
@@ -86,12 +86,33 @@ hive stop
 
 ## Architecture (one-line tour)
 
-![Hive architecture](docs/hive-architecture.png)
-
-Clients (Dashboard, CLI, Spawned agents) connect to the MCP server (~50 tools), which executes Bash scripts in `lib/tools/*.sh` that mutate the canonical state at `.company/`.
+```
+┌─────────────┐  ┌─────────────────────────┐  ┌──────────────────┐
+│  Dashboard  │  │   hive (CLI - Python)   │  │ Spawned agents   │
+│  (Node.js)  │  │                         │  │ (agent harness)  │
+└──────┬──────┘  └────────────┬────────────┘  └────────┬─────────┘
+       │ HTTP                  │ HTTP / stdio          │ HTTP (MCP)
+       └────────────┬──────────┴───────────────────────┘
+                    ▼
+        ┌────────────────────────┐
+        │  Hive MCP server       │  (Python, FastMCP)
+        │  ~55 tools             │
+        └───────────┬────────────┘
+                    │ subprocess
+                    ▼
+        ┌────────────────────────┐
+        │  Bash tool scripts     │   tickets, chat, gates,
+        │  lib/tools/*.sh        │   roster-rebuild, etc.
+        └───────────┬────────────┘
+                    ▼
+        ┌────────────────────────┐
+        │  .company/ workspace   │   the canonical state
+        └────────────────────────┘
+```
 
 See `ARCHITECTURE.md` for details. See `CLI.md` for command reference.
-See `MCP-TOOLS.md` for the MCP tool catalog.
+See `MCP-TOOLS.md` for the MCP tool catalog. See `LLM-PROVIDERS.md`
+for the `[llm]` config and the provider registry.
 
 ## Why MCP
 
@@ -140,7 +161,7 @@ point for standing up a company on a project.
 - `etc/config.defaults.toml` — default config
 - `~/.config/hive/config.toml` — your overrides
 - `packaging/{install,uninstall}.sh` — setup scripts
-- `share/docs/` — this README + ARCHITECTURE.md + CLI.md + MCP-TOOLS.md
+- `share/docs/` — this README + ARCHITECTURE.md + CLI.md + MCP-TOOLS.md + LLM-PROVIDERS.md
 
 ## Status
 

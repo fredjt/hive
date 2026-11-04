@@ -1,5 +1,84 @@
 # Changelog
 
+## 0.8.0
+
+Operator UX and config integrity.
+
+The 0.7.1 stream made the config visible; this release closes the
+verification gaps an operator still hits: a typo in the config is
+caught in seconds, the LLM endpoint is verified before a sprint burns
+turns on it, the dashboard shows which model the agents actually talk
+to, dead config gets flagged, and cutting a release is a command.
+
+### Config integrity
+- Unknown-key validation (A1): a typo'd section or key in the user
+  config (e.g. `[llms] provder = "openai"`) can no longer ship
+  invisibly. `hive doctor` fails naming the exact offender with a
+  close-match suggestion ("did you mean llm.provider?") and `hive
+  config show` marks unknown keys.
+- One env var for the config path (A2): `HIVE_CONFIG` is the single
+  spelling (installer, doctor, publish runner); `HIVE_USER_CONFIG`
+  keeps working as a deprecated alias with a one-time note.
+- `hive config path` (A3): prints the effective user-config path and
+  its state — the where-is-my-config question in one line.
+
+### Verify the LLM before the sprint
+- `hive llm test` (B1): one small round trip through the exact resolver
+  path the harness uses — provider, model, base_url, key-source label
+  (never the key), latency, and the model's first reply line; exit
+  0/1. A dead endpoint goes from a 20-agent-turn discovery to a
+  2-second check.
+- The "tiny" naming is gone (B2): `llm-tiny.log` → `llm-usage.log`
+  (readers accept both for one release), MCP module `llm_tiny.py` →
+  `llm_usage.py`, and `hive llm` help text updated.
+
+### Operator visibility
+- `hive doctor --json` (C1): machine-readable dump of every check
+  (name, ok, detail) to stdout; exit code unchanged. No new daemon,
+  no new state file.
+- Dashboard Config & LLM panel (C2): the resolved provider/model/
+  base_url with the key shown only as its source label, the last
+  saved `hive doctor --json` dump (`.company/state/doctor.json`,
+  written by the CLI), and the last `hive llm test` result/timestamp.
+
+### Daemon hygiene
+- env.sh retirement guard (D1): doctor checks
+  `~/.config/hive/env.sh` for retired variable names
+  (ANTHROPIC_BASE_URL, ANTHROPIC_API_KEY, LLM_TINY_URL, …) and names
+  them with the migration line — LLM settings belong in
+  config.toml's [llm]; env.sh is for PATH/GITHUB_TOKEN.
+- Config-drift notice (D2): `hive status` compares the config's mtime
+  against the daemons' start times and prints one line when the config
+  changed after start ("hive stop && hive start" to apply).
+
+### Release ergonomics
+- `packaging/cut-release.sh` (E1): the release cut as a command —
+  suite green → build → tar listing check → credential-pattern scan
+  of every tarball entry → sha256 → release notes from the CHANGELOG
+  section → tag → push → `gh release create`. `--dry-run` runs every
+  gate up to the tag, so a release is fully verifiable before any
+  irreversible step. The cut commit (VERSION + changelog section) is a
+  precondition the script verifies but never makes.
+- Tarball content guard (E2): a suite test builds the package into a
+  scratch dir and asserts the listing contains every entry install.sh
+  reads at runtime — `bin/hive`, `etc/config.template.toml`,
+  `etc/config.defaults.toml`, `packaging/requirements.txt` — plus a
+  sha256 sidecar that verifies. The 0.7.1 template shipped by accident
+  of a blanket copy loop; now it is pinned.
+
+### Small, one each
+- `hive config set` list values (F1): list-typed keys (e.g.
+  `tdd.applies_to_agents`) take a JSON array or a comma-separated
+  value and are written as a real TOML array — no longer edit-only.
+  Scalar keys are untouched.
+- `hive init` preflight (F2): when the resolved LLM is unconfigured,
+  init prints the exact fix (config file + `hive config edit`) at the
+  end instead of letting the first spawn fail. Hint, not a gate —
+  exit 0, scaffold still created.
+- Install summary block (F3): install.sh ends with the 3-line
+  next-steps block — edit [llm] → `hive doctor` → `hive init` —
+  closing the onboarding loop in one screen.
+
 ## 0.7.1
 
 Config streamlining — one visible config file, created by the installer.
