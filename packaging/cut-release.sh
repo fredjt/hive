@@ -236,11 +236,19 @@ command -v gh >/dev/null || {
   echo "      gh release create v$VERSION --title \"$TITLE\" \"$TARBALL\" \"$CHECKSUM\""
   exit 1
 }
-gh release create "v$VERSION" \
-  --title "$TITLE" \
-  --notes-file "$NOTES" \
-  --clobber \
-  "$TARBALL" "$CHECKSUM"
+if gh release view "v$VERSION" >/dev/null 2>&1; then
+  # Re-run against an existing release: update title/notes and
+  # re-upload the assets — the cut is idempotent. (gh release create
+  # has no --clobber across versions; upload does.)
+  echo "    release v$VERSION exists — updating title, notes, assets"
+  gh release edit "v$VERSION" --title "$TITLE" --notes-file "$NOTES"
+  gh release upload "v$VERSION" --clobber "$TARBALL" "$CHECKSUM"
+else
+  gh release create "v$VERSION" \
+    --title "$TITLE" \
+    --notes-file "$NOTES" \
+    "$TARBALL" "$CHECKSUM"
+fi
 
 echo ""
 echo "==> Done: v$VERSION tagged, pushed, and published."
