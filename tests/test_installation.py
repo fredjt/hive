@@ -182,10 +182,16 @@ class TestSpawnPathNoExternalCliSection:
     one actionable line saying what to set and where — not a
     mid-loop apology."""
 
-    def test_spawn_path_fails_fast_without_provider(self, tmp_company_dir):
+    def test_spawn_path_fails_fast_without_provider(self, tmp_company_dir, tmp_path):
         repo = _repo_root()
+        # Isolate the user config: the test asserts the provider is
+        # UNCONFIGURED, but the host HOME may carry a real [llm] section
+        # that the harness would happily resolve. Fresh HOME + a
+        # non-existent HIVE_CONFIG means no config file on any path.
         env = {
             **os.environ,
+            "HOME": str(tmp_path / "isolated-home"),
+            "HIVE_CONFIG": str(tmp_path / "no-such-config.toml"),
             "HIVE_ROOT": str(repo),
             "COMPANY_DIR": str(tmp_company_dir),
             "HIVE_AGENT": "test-agent",

@@ -61,8 +61,13 @@ def load_config(hive_root: str | Path | None = None,
     defaults = root / "etc" / "config.defaults.toml"
     if defaults.is_file():
         config = _toml_loads(defaults.read_text()) or {}
+    # HIVE_CONFIG redirects the user-config file; every other consumer
+    # (hive config, doctor, release-publish-runner) already honors it —
+    # the resolver must agree, or `hive config set` writes to a file the
+    # LLM path never reads.
     home = (env.get("HOME") or os.path.expanduser("~")).strip()
-    user_file = Path(home) / ".config" / "hive" / "config.toml"
+    user_file = Path(env.get("HIVE_CONFIG")
+                     or (Path(home) / ".config" / "hive" / "config.toml"))
     user_cfg = {}
     if user_file.is_file():
         try:

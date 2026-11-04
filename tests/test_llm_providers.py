@@ -209,6 +209,53 @@ class TestProviderSelection:
         assert any("No LLM provider" in w for w in r.warnings)
 
 
+class TestHiveConfigOverride:
+    """HIVE_CONFIG redirects the user config file everywhere it is named
+    (hive config, doctor, release-publish-runner) — but load_config()'s
+    merge ignored it, so the LLM resolver still read
+    ~/.config/hive/config.toml. Regression: `hive config set llm.provider X`
+    under HIVE_CONFIG=alt wrote to alt.toml and the resolver never saw it.
+    """
+
+    def test_load_config_honors_hive_config(self, tmp_path):
+        sys.path.insert(0, str(CORE))
+        import llm_providers as lp
+
+        alt = tmp_path / "alt" / "config.toml"
+        alt.parent.mkdir(parents=True)
+        alt.write_text('[llm]\nprovider = "ollama"\nmodel = "alt-model"\n')
+        home = tmp_path / "home"
+        (home / ".config" / "hive").mkdir(parents=True)
+        (home / ".config" / "hive" / "config.toml").write_text(
+            '[llm]\nprovider = "openai"\nmodel = "home-model"\n')
+
+        cfg = lp.load_config(hive_root=str(tmp_path),
+                             env={"HOME": str(home),
+                                  "HIVE_CONFIG": str(alt)})
+        assert cfg["llm"]["provider"] == "ollama"
+        assert cfg["llm"]["model"] == "alt-model"
+
+    def test_resolve_uses_hive_config_for_llm_section(self, tmp_path):
+        alt = tmp_path / "alt" / "config.toml"
+        alt.parent.mkdir(parents=True)
+        alt.write_text('[llm]\nprovider = "ollama"\nmodel = "alt-model"\n')
+        r = _import_resolve()(env={"HOME": str(tmp_path),
+                                   "HIVE_CONFIG": str(alt)},
+                              hive_root=str(tmp_path))
+        assert r.provider == "ollama"
+        assert r.model == "alt-model"
+
+    def test_hive_config_pointing_at_missing_file_means_no_user_config(
+            self, tmp_path):
+        sys.path.insert(0, str(CORE))
+        import llm_providers as lp
+        cfg = lp.load_config(
+            hive_root=str(tmp_path),
+            env={"HOME": str(tmp_path),
+                 "HIVE_CONFIG": str(tmp_path / "no-such-file.toml")})
+        assert "llm" not in cfg
+
+
 class TestDoctorReportsProvider:
     def test_doctor_reports_provider_and_hides_key(self, tmp_path, capsys):
         # doctor reads llm config from the repo; feed it via env so the
