@@ -383,6 +383,12 @@ def _log_llm_usage(company_dir: str | None, caller: str, mode: str,
             "model": model or "",
             "turn": turn,
             "tokens": (usage or {}).get("total_tokens", 0),
+            # B1 (0.9.0): per-call cost. The provider's usage block carries
+            # total_cost_usd when the model is priced (llm_providers
+            # .parse_response_body computes it); providers that report no
+            # cost leave it 0.0. Readers (hive llm stats) treat a missing
+            # cost_usd on OLD entries as 0 — never a parse error.
+            "cost_usd": float((usage or {}).get("total_cost_usd", 0.0) or 0.0),
             "response": (first_line[0][:200] if first_line else ""),
         }
         with open(os.path.join(log_dir, "llm-usage.log"), "a") as f:

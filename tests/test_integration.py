@@ -1,7 +1,10 @@
 """Integration tests."""
-import json, os, subprocess
+import json, os, subprocess, sys
 from pathlib import Path
 import pytest
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # for stub_llm
+from stub_llm import StubLLM  # noqa: E402
 
 class TestFullInitFlow:
     def test_project_dir_created(self, tmp_project_dir):
@@ -72,6 +75,73 @@ class TestSprintState:
         assert result.returncode == 0
         missing = [l for l in result.stdout.split("\n") if "MISSING" in l]
         assert len(missing) == 0, f"Missing functions: {missing}"
+
+class TestLLMUsageCost:
+    """B1 (0.9.0): per-call cost in the usage log.
+
+    The harness records cost_usd on every LLM call (computed by
+    llm_providers from the provider's usage block; 0.0 for providers
+    that report no cost). Readers (hive llm stats) must keep parsing
+    entries WITHOUT the field (written by pre-0.9.0 harnesses) and
+    treat their cost as 0 — never a parse error.
+    """
+
+    REPO = Path(__file__).resolve().parent.parent
+
+    def test_harness_call_logs_cost(self, tmp_path):
+        stub = StubLLM()
+        try:
+            company = tmp_path / "company"
+            (company / "logs").mkdir(parents=True)
+            r = subprocess.run(
+                [sys.executable, str(self.REPO / "lib" / "core" / "agent-harness.py"),
+                 "--api-base", stub.base_url, "--api-key", "sk-test",
+                 "--model", "gpt-4o", "--", "Hello"],
+                capture_output=True, text=True, timeout=60,
+                cwd=str(tmp_path),
+                env={**os.environ,
+                     "COMPANY_DIR": str(company),
+                     "HIVE_CONFIG": str(tmp_path / "no-such-config.toml")},
+            )
+            combined = r.stdout + r.stderr
+            assert r.returncode == 0, combined
+            log = company / "logs" / "llm-usage.log"
+            assert log.exists(), combined
+            entries = [json.loads(l) for l in log.read_text().splitlines() if l.strip()]
+            assert len(entries) == 1, entries
+            e = entries[0]
+            assert e["tokens"] == 150
+            # gpt-4o is priced on the gpt-4 branch: (100*3e-5 + 50*6e-5)/1000
+            assert e["cost_usd"] == pytest.approx(6e-06), e
+        finally:
+            stub.stop()
+
+    def test_stats_parses_entries_without_cost(self, tmp_path):
+        """A legacy entry (no cost_usd field) must not break `hive llm stats`,
+        and must count for 0 cost."""
+        company = tmp_path / "company"
+        (company / "logs").mkdir(parents=True)
+        log = company / "logs" / "llm-usage.log"
+        now = "2026-11-04T00:00:00Z"
+        log.write_text(
+            json.dumps({"ts": now, "caller": "ic-engineer", "mode": "agent",
+                        "model": "gpt-4o", "turn": 1, "tokens": 100,
+                        "response": "legacy entry written by pre-0.9.0 harness"}) + "\n"
+            + json.dumps({"ts": now, "caller": "ic-tester", "mode": "agent",
+                          "model": "gpt-4o", "turn": 1, "tokens": 50,
+                          "cost_usd": 0.000001, "response": "new entry with cost"}) + "\n"
+        )
+        r = subprocess.run(
+            [sys.executable, "-m", "hive_cli.main", "llm", "stats"],
+            capture_output=True, text=True, timeout=30,
+            env={**os.environ, "PYTHONPATH": str(self.REPO / "lib"),
+                 "COMPANY_DIR": str(company),
+                 "HIVE_CONFIG": str(tmp_path / "no-such-config.toml")},
+        )
+        combined = r.stdout + r.stderr
+        assert r.returncode == 0, combined
+        assert "ic-engineer" in combined  # the cost-less entry was parsed
+
 
 class TestICSpawnDiagnostics:
     def test_ic_spawn_diagnostics_runs(self, tmp_project_dir):
