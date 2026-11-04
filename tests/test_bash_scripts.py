@@ -3,6 +3,7 @@ import sys
 import re
 import json
 import os
+import shutil
 import subprocess
 import time
 from pathlib import Path
@@ -1618,6 +1619,66 @@ class TestCompanyStartNoJsonTraceback:
             assert len(data["processes"]) >= len(self.INFRA_DAEMONS)
         finally:
             self._stop_company(proj, company)
+
+
+class TestReleasePublishNoGhFallback:
+    """release-publish.sh GO must actually publish when gh is unavailable.
+
+    Regression: the no-gh branch printed 'falling back to local-only mode'
+    but contained no fallback at all — the release record was left
+    dangling (phase unchanged, no verdict, no ended_at), no artifact was
+    placed anywhere, and the script exited 0 as if the publish had
+    succeeded. The local-only publisher exists for exactly this path.
+    """
+
+    REPO = Path(__file__).resolve().parent.parent
+
+    def _scratch(self, tmp_path):
+        project = tmp_path / "project"
+        (project / ".company" / "releases").mkdir(parents=True)
+        record = project / ".company" / "releases" / "v0.9.0.json"
+        record.write_text(json.dumps({"phase": "in-progress", "version": "v0.9.0"}))
+        install = tmp_path / "install"
+        (install / "lib" / "tools").mkdir(parents=True)
+        (install / "lib" / "templates" / "publishers").mkdir(parents=True)
+        (install / "dist").mkdir()
+        shutil.copy(self.REPO / "lib" / "tools" / "gh-helpers.sh",
+                    install / "lib" / "tools" / "gh-helpers.sh")
+        shutil.copy(self.REPO / "lib" / "templates" / "publishers" / "local-only.sh",
+                    install / "lib" / "templates" / "publishers" / "local-only.sh")
+        (install / "dist" / "hive-0.9.0.tar.gz").write_bytes(b"tarball")
+        (install / "dist" / "hive-0.9.0.sha256").write_text("x  hive-0.9.0.tar.gz\n")
+        # A gh that fails every invocation: gh_preflight's auth check trips
+        # the no-gh branch without touching the network.
+        bindir = tmp_path / "bin"
+        bindir.mkdir()
+        stub = bindir / "gh"
+        stub.write_text("#!/bin/sh\nexit 1\n")
+        stub.chmod(0o755)
+        return project, install, bindir, record
+
+    def test_go_without_gh_publishes_locally_and_updates_record(self, tmp_path):
+        project, install, bindir, record = self._scratch(tmp_path)
+        env = os.environ.copy()
+        env["PATH"] = str(bindir) + os.pathsep + env["PATH"]
+        env["HOME"] = str(tmp_path)  # isolate the host user config
+        env["HIVE_CONFIG"] = str(tmp_path / "no-such-config.toml")
+        env["PROJECT_ROOT"] = str(project)
+        env["HIVE_ROOT"] = str(install)
+        env.pop("GITHUB_TOKEN", None)
+        r = subprocess.run(
+            ["bash", str(self.REPO / "lib" / "tools" / "release-publish.sh"),
+             "GO", "v0.9.0", "all gates green"],
+            capture_output=True, text=True, timeout=30, env=env,
+            cwd=str(project))
+        combined = r.stdout + r.stderr
+        assert r.returncode == 0, combined
+        data = json.loads(record.read_text())
+        assert data["phase"] == "done", data
+        assert data["adversarial_verdict"] == "GO", data
+        assert data.get("release_url"), data
+        dest = project / "dist" / "releases" / "v0.9.0"
+        assert (dest / "hive-0.9.0.tar.gz").exists(), combined
 
 
 class TestPublisherTargetBranch:

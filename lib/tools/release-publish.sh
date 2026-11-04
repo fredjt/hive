@@ -36,33 +36,37 @@ now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 
 case "$VERDICT" in
   GO)
-    if ! gh_preflight 2>/tmp/release-publish.preflight; then
-      cat /tmp/release-publish.preflight >&2
-      echo "release-publish: GO requires gh; falling back to local-only mode (tarball already built; tag already pushed if remote)."
-    else
-      cd "$PROJECT_ROOT"
-      tarball="$SKILL_DIR/dist/hive-${ver_no_v}.tar.gz"
-      sha_file="$SKILL_DIR/dist/hive-${ver_no_v}.sha256"
-      [ -f "$tarball" ] || { echo "release-publish: missing $tarball" >&2; exit 1; }
+    cd "$PROJECT_ROOT"
+    tarball="$SKILL_DIR/dist/hive-${ver_no_v}.tar.gz"
+    sha_file="$SKILL_DIR/dist/hive-${ver_no_v}.sha256"
+    [ -f "$tarball" ] || { echo "release-publish: missing $tarball" >&2; exit 1; }
+    [ -f "$sha_file" ] || { echo "release-publish: missing $sha_file" >&2; exit 1; }
 
-      # Find a CHANGELOG section if any
-      notes="$RATIONALE"
-      for c in CHANGELOG.md CHANGELOG marketing/output/CHANGELOG.md .company/marketing/output/CHANGELOG.md; do
-        if [ -f "$c" ] && grep -qF "$VERSION" "$c"; then
-          # Extract from the version heading down to the next ##/--- (best-effort)
-          excerpt=$(awk -v ver="$VERSION" '
-            $0 ~ ver { capture=1; print; next }
-            capture && /^## / { exit }
-            capture { print }' "$c" | head -120)
-          [ -n "$excerpt" ] && notes="$RATIONALE
+    # Find a CHANGELOG section if any (notes are shared by both publish
+    # paths — the changelog entry is headed '## X.Y.Z' without the v,
+    # so match on the version without it)
+    notes="$RATIONALE"
+    for c in CHANGELOG.md CHANGELOG marketing/output/CHANGELOG.md .company/marketing/output/CHANGELOG.md; do
+      if [ -f "$c" ] && grep -qF "$ver_no_v" "$c"; then
+        # Extract from the version heading down to the next ##/--- (best-effort)
+        excerpt=$(awk -v ver="$ver_no_v" '
+          $0 ~ ver { capture=1; print; next }
+          capture && /^## / { exit }
+          capture { print }' "$c" | head -120)
+        [ -n "$excerpt" ] && notes="$RATIONALE
 
 ---
 
 $excerpt"
-          break
-        fi
-      done
+        break
+      fi
+    done
 
+    NOTES_FILE=$(mktemp -t hive-publish-notes.XXXXXX.md)
+    trap 'rm -f "$NOTES_FILE"' EXIT
+    printf '%s\n' "$notes" > "$NOTES_FILE"
+
+    if gh_preflight 2>/tmp/release-publish.preflight; then
       # Idempotent: if the release already exists, just upload (clobber)
       if gh release view "$VERSION" >/dev/null 2>&1; then
         gh release upload "$VERSION" "$tarball" "$sha_file" --clobber 2>&1 \
@@ -72,8 +76,19 @@ $excerpt"
         url=$(gh release create "$VERSION" "$tarball" "$sha_file" \
               --title "hive $VERSION" --notes "$notes" 2>&1 | grep -oE 'https://github.com/[^[:space:]]+' | head -1)
       fi
+    else
+      cat /tmp/release-publish.preflight >&2
+      echo "release-publish: gh unavailable — publishing via the local-only publisher"
+      if ! bash "$SKILL_DIR/lib/templates/publishers/local-only.sh" \
+           "$VERSION" "$tarball" "$sha_file" "$NOTES_FILE"; then
+        echo "release-publish: local-only publish failed" >&2
+        exit 1
+      fi
+      url="file://$PROJECT_ROOT/dist/releases/$VERSION"
+      RATIONALE="$RATIONALE (local-only: gh unavailable)"
+    fi
 
-      REC="$rec" URL="$url" RATIONALE="$RATIONALE" NOW="$now" python3 - <<'PYEOF'
+    REC="$rec" URL="$url" RATIONALE="$RATIONALE" NOW="$now" python3 - <<'PYEOF'
 import json, os
 f = os.environ["REC"]; d = json.load(open(f))
 d["phase"] = "done"
@@ -83,8 +98,7 @@ d["go_rationale"] = os.environ["RATIONALE"]
 d["ended_at"] = os.environ["NOW"]
 json.dump(d, open(f + ".tmp","w"), indent=2); os.replace(f + ".tmp", f)
 PYEOF
-      echo "release-publish: $VERSION published → $url"
-    fi
+    echo "release-publish: $VERSION published → $url"
     ;;
   NO-GO)
     REC="$rec" RATIONALE="$RATIONALE" NOW="$now" python3 - <<'PYEOF'
