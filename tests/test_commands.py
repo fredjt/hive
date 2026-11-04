@@ -298,6 +298,41 @@ class TestConfigSetUpsert:
         assert data["mcp"]["port"] == 9000
         assert data["logs"]["journal"] is True
 
+    def test_set_list_key_json_array_round_trips(self, tmp_path):
+        """F1: a JSON array into a list-typed key is written as a real
+        TOML array and `config get` returns it as a list — so keys like
+        tdd.applies_to_agents stop being edit-only."""
+        r = self._run(tmp_path, "set", "tdd.applies_to_agents",
+                      '["ic-engineer"]')
+        assert r.returncode == 0, r.stderr
+        path = tmp_path / ".config" / "hive" / "config.toml"
+        data = self._load(path)
+        assert data["tdd"]["applies_to_agents"] == ["ic-engineer"]
+        g = self._run(tmp_path, "get", "tdd.applies_to_agents")
+        assert g.returncode == 0, g.stderr
+        assert json.loads(g.stdout) == ["ic-engineer"]
+
+    def test_set_list_key_comma_separated(self, tmp_path):
+        r = self._run(tmp_path, "set", "tdd.applies_to_agents",
+                      "ic-engineer, ic-infra")
+        assert r.returncode == 0, r.stderr
+        data = self._load(tmp_path / ".config" / "hive" / "config.toml")
+        assert data["tdd"]["applies_to_agents"] == ["ic-engineer", "ic-infra"]
+
+    def test_set_list_key_single_value_is_one_item_list(self, tmp_path):
+        r = self._run(tmp_path, "set", "tdd.applies_to_agents", "ic-engineer")
+        assert r.returncode == 0, r.stderr
+        data = self._load(tmp_path / ".config" / "hive" / "config.toml")
+        assert data["tdd"]["applies_to_agents"] == ["ic-engineer"]
+
+    def test_set_scalar_key_with_comma_stays_string(self, tmp_path):
+        """F1 is schema-driven: llm.model is typed str in the defaults,
+        so a comma stays inside the string — no list coercion."""
+        r = self._run(tmp_path, "set", "llm.model", "a,b")
+        assert r.returncode == 0, r.stderr
+        data = self._load(tmp_path / ".config" / "hive" / "config.toml")
+        assert data["llm"]["model"] == "a,b"
+
     def test_set_new_section_appends(self, tmp_path):
         cfg = tmp_path / ".config" / "hive"
         cfg.mkdir(parents=True)

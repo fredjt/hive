@@ -122,6 +122,16 @@ hive config edit                  # opens ~/.config/hive/config.toml in $EDITOR
 Config layers: `etc/config.defaults.toml` (shipped) → `~/.config/hive/config.toml`
 (your overrides).
 
+`set` types the value from the key's type in the defaults schema: ints and
+bools go bare, strings are quoted, and a **list-typed** key (e.g.
+`tdd.applies_to_agents`) takes a JSON array or a comma-separated value and is
+written as a real TOML array — so those keys stop being edit-only:
+
+```bash
+hive config set tdd.applies_to_agents '["ic-engineer", "ic-infra"]'
+hive config set tdd.applies_to_agents 'ic-engineer, ic-infra'   # same result
+```
+
 ## Diagnostics
 
 ```

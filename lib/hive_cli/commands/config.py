@@ -35,13 +35,61 @@ def _template_seed() -> str:
 
 
 def _toml_value(raw: str) -> str:
-    """Render a CLI-supplied value as TOML: bools/ints bare, strings quoted."""
+    """Render a CLI-supplied value as TOML: bools/ints/floats bare,
+    strings quoted."""
     if raw in ("true", "false"):
         return raw
     if re.fullmatch(r"-?\d+", raw):
         return raw
+    if re.fullmatch(r"-?\d+\.\d+", raw):
+        return raw
     escaped = raw.replace("\\", "\\\\").replace('"', '\\"')
     return f'"{escaped}"'
+
+
+def _toml_list(raw: str) -> str:
+    """F1: render a CLI-supplied value for a list-typed key as a TOML
+    array. A JSON array wins (['a', 'b'] as written on the CLI); a
+    comma-separated value falls back to one item per field; anything
+    else is a single-item list. Raises ValueError for items TOML cannot
+    hold — the caller surfaces it instead of writing the file."""
+    import json as _json
+    text = raw.strip()
+    try:
+        parsed = _json.loads(text)
+    except Exception:
+        parsed = None
+    if not isinstance(parsed, list):
+        if "," in text:
+            parsed = [p.strip().strip("'\"") for p in text.split(",")]
+        else:
+            parsed = [text]
+    if not all(isinstance(i, (str, int, float, bool)) for i in parsed):
+        raise ValueError("list items must be strings, numbers or booleans")
+    items = []
+    for i in parsed:
+        if isinstance(i, bool):
+            items.append("true" if i else "false")
+        else:
+            items.append(_toml_value(str(i)))
+    return "[" + ", ".join(items) + "]"
+
+
+def _default_type(key: str):
+    """F1: the type of `key` in the defaults schema — 'list' when
+    etc/config.defaults.toml types the key as a list, else None
+    (unknown keys keep the current scalar rendering)."""
+    core = HIVE_ROOT / "lib" / "core"
+    if str(core) not in sys.path:
+        sys.path.insert(0, str(core))
+    from llm_providers import load_defaults
+    schema = load_defaults(HIVE_ROOT)
+    cur = schema
+    for p in key.split("."):
+        if not isinstance(cur, dict) or p not in cur:
+            return None
+        cur = cur[p]
+    return "list" if isinstance(cur, list) else None
 
 
 def _upsert(text: str, section: str, key: str, value: str) -> str:
@@ -157,7 +205,20 @@ def handle(args) -> int:
         section, k = args.key.rsplit(".", 1)
         user_cfg_path.parent.mkdir(parents=True, exist_ok=True)
         base = user_cfg_path.read_text() if user_cfg_path.is_file() else _template_seed()
-        new_text = _upsert(base, section, k, _toml_value(args.value))
+        if _default_type(args.key) == "list":
+            # F1: list-typed keys take a JSON array (or comma-separated
+            # value) and are written as a real TOML array, so keys like
+            # tdd.applies_to_agents stop being edit-only.
+            try:
+                value = _toml_list(args.value)
+            except ValueError as e:
+                print(f"error: {e} — expected a JSON array "
+                      f"(e.g. [\"ic-engineer\"]) or a comma-separated value",
+                      file=sys.stderr)
+                return 1
+        else:
+            value = _toml_value(args.value)
+        new_text = _upsert(base, section, k, value)
         try:
             tomllib.loads(new_text)
         except Exception as e:
@@ -165,7 +226,8 @@ def handle(args) -> int:
                   f"file left unchanged", file=sys.stderr)
             return 1
         user_cfg_path.write_text(new_text)
-        print(f"Wrote {section}.{k} = {args.value} to {user_cfg_path}")
+        shown = value if value != args.value else args.value
+        print(f"Wrote {section}.{k} = {shown} to {user_cfg_path}")
         return 0
     if args.action == "edit":
         editor = os.environ.get("EDITOR", "vi")
