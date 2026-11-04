@@ -70,6 +70,7 @@ the MCP config so the spawned agent can call hive tools.
 ```
 hive gates run <dept> [project-dir]
 hive gates check <dept> <ticket-id>
+hive gates status              # gate state for every in-review ticket (debug stuck ones)
 ```
 
 `gates run` runs deterministic gates against in-review tickets in `dept`. Failed
@@ -85,18 +86,6 @@ hive backlog prioritize <dept> [--limit N]
 
 Returns the top N backlog tickets. Uses the small CPU model to break ties at
 equal priority. Falls back to deterministic priority+age order.
-
-## Inbox
-
-```
-hive inbox file <message> [--type auto|bug|feature|feedback] [--dept auto|<name>]
-hive inbox process [--dry-run]
-```
-
-`file` writes a user request. With `--type auto` and `--dept auto`, the small
-CPU model classifies and routes automatically.
-
-`process` runs the inbox processor (CEO routes pending requests to dept boards).
 
 ## Direct MCP tool invocation
 
@@ -117,6 +106,7 @@ hive config show
 hive config get <key>             # e.g. mcp.port
 hive config set <key> <value>
 hive config edit                  # opens ~/.config/hive/config.toml in $EDITOR
+hive config path                  # print the effective user-config path and its state
 ```
 
 Config layers: `etc/config.defaults.toml` (shipped) → `~/.config/hive/config.toml`
@@ -130,6 +120,45 @@ written as a real TOML array — so those keys stop being edit-only:
 ```bash
 hive config set tdd.applies_to_agents '["ic-engineer", "ic-infra"]'
 hive config set tdd.applies_to_agents 'ic-engineer, ic-infra'   # same result
+```
+
+## LLM endpoint
+
+```
+hive llm stats                   # windowed call/token/cost totals (--window 24h|1h)
+hive llm tail [N]                # tail recent LLM calls
+hive llm test                    # one-shot round trip through the configured endpoint
+```
+
+## GitHub
+
+```
+hive gh status                   # gh CLI / auth / remote / default branch
+hive gh pr <create|list|view>    # PR operations through the gh CLI
+```
+
+## Releases
+
+```
+hive release start               # drive the release pipeline through enqueue
+hive release status              # print a release record
+hive release list                # list recent releases
+hive release publish GO|NO-GO v<ver> <rationale>   # the release-ic commit
+hive release abort               # mark a release failed and file an IT ticket
+```
+
+## Operations
+
+```
+hive restart [<project-dir>]      # stop daemons, then start them again
+hive killall                       # SIGKILL every process the hive start tree owns
+hive round status                  # current round + cursor position
+hive round next                    # the CEO's pending next-plan.json
+hive round history                 # last N completed rounds (with cost/tokens)
+hive round get <round-id>          # one historical round by id
+hive round enqueue                # append an entry to the round queue
+hive round advance                # force-skip the running entry (admin/debug)
+hive round promote                # archive current round, promote next
 ```
 
 ## Diagnostics

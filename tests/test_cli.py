@@ -1,6 +1,7 @@
 """Tests for hive_cli.main — CLI argument parsing."""
 import json
 import os
+import re
 import socket
 import subprocess
 import sys
@@ -315,3 +316,52 @@ class TestMcpStdioFallback:
             (company / "departments" / "it" / "tickets" / "backlog").glob("*.json"))
         assert len(tickets) == 1
         assert json.loads(tickets[0].read_text())["status"] == "backlog"
+
+
+class TestCliDocsDrift:
+    """E1 (0.9.0): share/docs/CLI.md tracks the dispatcher. A subcommand
+    the parser serves but the docs omit — or a command line the docs show
+    the parser does not have — fails CI instead of drifting silently."""
+
+    @staticmethod
+    def _tree():
+        def walk(p):
+            subs = {}
+            sp = getattr(p, "_subparsers", None)
+            if sp is not None and sp._group_actions:
+                for name, sub in sp._group_actions[0].choices.items():
+                    subs[name] = walk(sub)
+            return subs
+        return walk(_make_parser())
+
+    @staticmethod
+    def _documented(doc):
+        out = set()
+        for line in doc.splitlines():
+            m = re.match(r"^hive ([a-z][a-z-]+)(?: ([a-z][a-z-]+))?",
+                         line.strip())
+            if m:
+                out.add(tuple(x for x in m.groups() if x))
+        return out
+
+    def test_every_subcommand_is_documented(self):
+        tree = self._tree()
+        doc = (Path(__file__).resolve().parent.parent /
+               "share" / "docs" / "CLI.md").read_text()
+        missing = [cmd for cmd in tree if f"hive {cmd}" not in doc]
+        for cmd, subs in tree.items():
+            missing += [f"{cmd} {s}" for s in subs if f"hive {cmd} {s}" not in doc]
+        assert not missing, f"CLI.md does not document: {sorted(set(missing))}"
+
+    def test_documented_commands_exist(self):
+        tree = self._tree()
+        doc = (Path(__file__).resolve().parent.parent /
+               "share" / "docs" / "CLI.md").read_text()
+        bad = []
+        for parts in self._documented(doc):
+            if parts[0] not in tree:
+                bad.append("hive " + " ".join(parts))
+            elif len(parts) == 2 and parts[1] not in tree[parts[0]]:
+                bad.append("hive " + " ".join(parts))
+        assert not bad, (
+            f"CLI.md shows commands the dispatcher lacks: {sorted(set(bad))}")

@@ -2,7 +2,8 @@
 
 Subcommands:
   init, start, stop, status, dashboard, restart, ticket, chat, agent, gates,
-  backlog, config, doctor, tool, tools, version
+  backlog, config, doctor, killall, llm, round, gh, release, tool, tools,
+  version
 
 Bare `hive` (no args) launches the dashboard for the project in CWD.
 """
