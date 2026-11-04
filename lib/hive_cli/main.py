@@ -91,6 +91,7 @@ def _add_ticket(sub) -> None:
     pg.add_argument("dept"); pg.add_argument("ticket_id")
 
     pl = sp.add_parser("list", help="List tickets")
+    pl.add_argument("--priority", help="Filter by priority (critical|high|medium|low)")
     pl.add_argument("dept", nargs="?")
     pl.add_argument("status", nargs="?")
     pl.add_argument("--json", action="store_true")

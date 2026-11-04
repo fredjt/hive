@@ -318,6 +318,64 @@ class TestMcpStdioFallback:
         assert json.loads(tickets[0].read_text())["status"] == "backlog"
 
 
+class TestTicketListPriority:
+    """E2 (0.9.0): hive ticket list --priority filters by priority."""
+
+    @staticmethod
+    def _mk(company, tid, pri, status="backlog"):
+        d = company / "departments" / "it" / "tickets" / status
+        d.mkdir(parents=True, exist_ok=True)
+        (d / f"{tid}.json").write_text(json.dumps(
+            {"id": tid, "title": tid, "status": status,
+             "type": "feature", "priority": pri}))
+
+
+    @staticmethod
+    def _env(tmp_path):
+        # stdio MCP child inherits env: PYTHONPATH=lib is the documented
+        # source mode so the child can import hive_mcp without a venv.
+        # ticket._company_dir resolves the CWD's .company/ — chdir there.
+        lib = Path(__file__).resolve().parent.parent / "lib"
+        return {**os.environ, "PYTHONPATH": str(lib)}
+
+    def test_list_priority_filter(self, tmp_path, monkeypatch, capsys):
+        company = tmp_path / ".company"
+        self._mk(company, "P-HIGH", "high")
+        self._mk(company, "P-LOW", "low")
+        r = subprocess.run([sys.executable, "-m", "hive_cli.main",
+                            "ticket", "list", "it", "--priority", "high"],
+                           capture_output=True, text=True, timeout=90,
+                           cwd=str(tmp_path), env=self._env(tmp_path))
+        assert r.returncode == 0, r.stdout + r.stderr
+        out = r.stdout
+        obj = json.loads(out[out.find("{"):])
+        data = obj.get("data", obj)
+        ids = [t.get("id") for t in data.get("tickets", [])]
+        assert ids == ["P-HIGH"], ids
+
+    def test_list_without_priority_lists_all(self, tmp_path, monkeypatch,
+                                             capsys):
+        company = tmp_path / ".company"
+        self._mk(company, "A-HIGH", "high")
+        self._mk(company, "B-LOW", "low")
+        r = subprocess.run([sys.executable, "-m", "hive_cli.main",
+                            "ticket", "list", "it"],
+                           capture_output=True, text=True, timeout=90,
+                           cwd=str(tmp_path), env=self._env(tmp_path))
+        assert r.returncode == 0, r.stdout + r.stderr
+        out = r.stdout
+        obj = json.loads(out[out.find("{"):])
+        data = obj.get("data", obj)
+        ids = sorted(t.get("id") for t in data.get("tickets", []))
+        assert ids == ["A-HIGH", "B-LOW"], ids
+
+    def test_priority_flag_in_help(self, capsys):
+        from hive_cli.main import build_parser
+        with pytest.raises(SystemExit):
+            build_parser().parse_args(["ticket", "list", "--help"])
+        assert "--priority" in capsys.readouterr().out
+
+
 class TestCliDocsDrift:
     """E1 (0.9.0): share/docs/CLI.md tracks the dispatcher. A subcommand
     the parser serves but the docs omit — or a command line the docs show

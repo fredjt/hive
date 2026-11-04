@@ -49,6 +49,7 @@ def register(server: Server) -> None:
     def ticket_list(
         dept: str,
         status: str | None = None,
+        priority: str | None = None,
         company_dir: str | None = None,
     ) -> dict:
         """List tickets in a department. Optional status filter
@@ -57,6 +58,8 @@ def register(server: Server) -> None:
         args = [dept]
         if status:
             args.append(status)
+        if priority:
+            args.extend(["--priority", priority])
         args.append("--json")
         return run("ticket-list", *args, company_dir=company_dir).to_dict()
 

@@ -35,6 +35,8 @@ def handle(args) -> int:
         payload = {}
         if args.dept: payload["dept"] = args.dept
         if args.status: payload["status"] = args.status
+        if getattr(args, "priority", None):
+            payload["priority"] = args.priority
         if cd: payload["company_dir"] = cd
         if not args.dept:
             print("ERROR: 'hive ticket list' requires a department argument", file=sys.stderr)

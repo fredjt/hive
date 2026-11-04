@@ -27,9 +27,16 @@ for arg in "$@"; do
     --full) FULL=true ;;
   esac
 done
+# --priority takes a value: the token following the flag.
+PRIORITY=""
+_a=""
+for x in "$@"; do
+  if [ -n "$_a" ]; then PRIORITY="$x"; _a=""; fi
+  case "$x" in --priority) _a=1 ;; esac
+done
 # If $2 is a flag, there's no status filter.
 case "$STATUS" in
-  --json|--full|"") STATUS="" ;;
+  --json|--full|--priority|"") STATUS="" ;;
 esac
 
 if [ -z "$DEPT" ]; then
@@ -47,7 +54,7 @@ else
 fi
 
 if [ "$JSON" = true ]; then
-  FULL_VAR="$FULL" TL_DEPT="$DEPT" TL_STATUSES="$STATUSES" TL_TICKET_DIR="$TICKET_DIR" python3 - <<'PYEOF'
+  FULL_VAR="$FULL" TL_DEPT="$DEPT" TL_STATUSES="$STATUSES" TL_TICKET_DIR="$TICKET_DIR" TL_PRIORITY="$PRIORITY" python3 - <<'PYEOF'
 import json, os, glob
 full = os.environ.get('FULL_VAR') == 'true'
 DEPT = os.environ.get('TL_DEPT', '')
@@ -89,6 +96,10 @@ for status in STATUSES.split():
         except Exception:
             pass
 
+PRIORITY = os.environ.get('TL_PRIORITY', '')
+if PRIORITY:
+    tickets = [t for t in tickets if t.get('priority') == PRIORITY]
+
 print(json.dumps({'department': DEPT, 'count': len(tickets), 'tickets': tickets, 'mode': 'full' if full else 'summary'}, indent=2))
 PYEOF
 else
@@ -100,10 +111,12 @@ else
     echo "=== $status ($count) ==="
     for f in "$dir"/*.json; do
       [ -f "$f" ] || continue
-      TL_FILE="$f" python3 - <<'PYEOF' 2>/dev/null
+      TL_FILE="$f" TL_PRI="$PRIORITY" python3 - <<'PYEOF' 2>/dev/null
 import json, os
 t = json.load(open(os.environ['TL_FILE']))
 pri = t.get('priority','?')
+if os.environ.get('TL_PRI') and pri != os.environ['TL_PRI']:
+    raise SystemExit(0)
 assignee = t.get('assignee',{})
 name = assignee.get('name','Unassigned') if isinstance(assignee,dict) else str(assignee) if assignee else 'Unassigned'
 print(f"  {t.get('id','?'):15s} [{pri:8s}] {t.get('title','')[:60]:60s} -> {name}")
