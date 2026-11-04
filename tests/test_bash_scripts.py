@@ -1778,3 +1778,64 @@ class TestPublisherTargetBranch:
             tmp_path, proj, log,
             {"HIVE_CONFIG": str(tmp_path / "no-such-config.toml")}, bindir)
         assert "--target main" in out, out
+
+
+class TestReleaseGatesVersionGates:
+    """The semver and changelog gates must handle the version under
+    verification, not trip over it.
+
+    Regression (a): the semver gate compared against the newest v* tag,
+    which is the candidate itself whenever its tag already exists
+    (re-runs, partial publishes that push the tag before the release)
+    — every retry then failed 'not greater than previous tag v0.8.3'.
+    Regression (b): the changelog gate grepped the v-prefixed version
+    (the documented usage is '--version vX.Y.Z') against changelogs
+    whose sections are headed '## X.Y.Z' — the gate could never pass.
+    """
+
+    def _make_repo(self, tmp_path, tags=(),
+                   changelog="# Changelog\n\n## 0.9.0\nNotes for 0.9.0\n"):
+        proj = tmp_path / "proj"
+        proj.mkdir()
+        subprocess.run(["git", "init", "-q"], cwd=proj, check=True)
+        subprocess.run(["git", "config", "user.email", "t@example.com"],
+                       cwd=proj, check=True)
+        subprocess.run(["git", "config", "user.name", "test"],
+                       cwd=proj, check=True)
+        (proj / "CHANGELOG.md").write_text(changelog)
+        subprocess.run(["git", "add", "."], cwd=proj, check=True)
+        subprocess.run(["git", "commit", "-qm", "init"], cwd=proj, check=True)
+        for t in tags:
+            subprocess.run(["git", "tag", t], cwd=proj, check=True)
+        return proj
+
+    def _gate_line(self, tmp_path, proj, version, gate):
+        r = run_script(
+            f"{SCRIPTS_DIR}/release-gates.sh",
+            ["--version", version, "--project-root", str(proj), "--dry-run"],
+            timeout=60)
+        lines = [l for l in r.stderr.splitlines()
+                 if l.strip().startswith(gate + " ") or l.strip().startswith(gate + "\t")]
+        assert lines, f"no {gate} line in: {r.stderr}"
+        return lines[0]
+
+    def test_semver_passes_when_own_tag_already_exists(self, tmp_path):
+        proj = self._make_repo(tmp_path, tags=["v0.8.0", "v0.9.0"])
+        line = self._gate_line(tmp_path, proj, "v0.9.0", "semver")
+        assert "pass" in line
+
+    def test_semver_still_rejects_lower_version(self, tmp_path):
+        proj = self._make_repo(tmp_path, tags=["v0.9.0"])
+        line = self._gate_line(tmp_path, proj, "v0.8.0", "semver")
+        assert "fail" in line
+
+    def test_changelog_passes_for_v_prefixed_version(self, tmp_path):
+        proj = self._make_repo(tmp_path, tags=["v0.8.0"])
+        line = self._gate_line(tmp_path, proj, "v0.9.0", "changelog")
+        assert "pass" in line
+
+    def test_changelog_still_fails_for_missing_section(self, tmp_path):
+        proj = self._make_repo(tmp_path, tags=["v0.8.0"],
+                               changelog="# Changelog\n\n## 0.8.0\nOld notes\n")
+        line = self._gate_line(tmp_path, proj, "v0.9.0", "changelog")
+        assert "fail" in line

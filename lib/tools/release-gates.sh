@@ -48,7 +48,11 @@ cd "$PROJECT_ROOT"
 if ! echo "$VERSION" | grep -qE '^v?[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9.-]+)?$'; then
   record "semver" "fail" "version '$VERSION' is not valid semver"
 else
-  prev_tag=$(git tag --list 'v*' --sort=-version:refname | head -1)
+  # Exclude the candidate's own tag: on a re-run — or after a partial
+  # publish that pushed the tag before the release — it is the newest
+  # v* tag, and comparing a version against itself fails every retry.
+  prev_tag=$(git tag --list 'v*' --sort=-version:refname \
+    | grep -vFx "v${VERSION#v}" | head -1)
   if [ -n "$prev_tag" ]; then
     if [ "$(printf '%s\n%s\n' "$prev_tag" "$VERSION" | sort -V | tail -1)" != "$VERSION" ] || [ "$prev_tag" = "$VERSION" ]; then
       record "semver" "fail" "$VERSION is not greater than previous tag $prev_tag"
