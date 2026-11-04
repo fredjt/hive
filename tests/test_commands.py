@@ -768,7 +768,6 @@ class TestStatusConfigDrift:
     install_dir = Path(__file__).resolve().parent.parent
 
     def _seed(self, tmp_path, started_at, cfg_mtime):
-        import time
         company = tmp_path / ".company"
         company.mkdir(exist_ok=True)
         (company / "processes.json").write_text(json.dumps({
