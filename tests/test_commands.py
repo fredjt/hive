@@ -52,6 +52,74 @@ class TestInitCommand:
         assert "args" in params or len(params) >= 1
 
 
+class TestInitPreflight:
+    """F2: `hive init` prints the exact fix when the resolved LLM is
+    unconfigured — at the end of init, before the first spawn fails on
+    it. A hint, not a gate: the scaffold is still created and the exit
+    code stays 0 (doctor is the gate)."""
+
+    install_dir = Path(__file__).resolve().parent.parent
+
+    @classmethod
+    def _clean_env(cls, home: Path) -> dict:
+        """A HOME with no HIVE_* env and no user config — the
+        unconfigured state the hint must catch. The dev machine's real
+        env carries HIVE_* endpoint vars, so they are stripped."""
+        env = {k: v for k, v in os.environ.items() if not k.startswith("HIVE_")}
+        env.update({
+            "HOME": str(home),
+            "HIVE_ROOT": str(cls.install_dir),
+            "PYTHONPATH": str(cls.install_dir / "lib")
+                           + os.pathsep + os.environ.get("PYTHONPATH", ""),
+        })
+        return env
+
+    def _run_init(self, tmp_path, home, name):
+        project = tmp_path / name
+        project.mkdir()
+        return subprocess.run(
+            [sys.executable, "-m", "hive_cli.main", "init", str(project),
+             "--brief", "preflight test project", "--github", "skip"],
+            capture_output=True, text=True, timeout=180,
+            cwd=str(project), env=self._clean_env(home),
+        ), project
+
+    def test_unconfigured_llm_prints_hint_and_scaffolds(self, tmp_path):
+        home = tmp_path / "home"
+        home.mkdir()
+        r, project = self._run_init(tmp_path, home, "proj-unconfigured")
+        assert r.returncode == 0, r.stdout + "\n" + r.stderr
+        # The scaffold is created — the hint is not a gate.
+        assert (project / ".company").is_dir(), \
+            "init must still scaffold when the LLM is unconfigured"
+        # The hint names the exact config file and the fix.
+        assert "LLM preflight" in r.stdout, \
+            "an unconfigured scratch HOME must print the preflight hint"
+        assert "config.toml" in r.stdout
+        assert "hive config edit" in r.stdout
+
+    def test_configured_llm_prints_no_hint(self, tmp_path):
+        home = tmp_path / "home"
+        home.mkdir()
+        project = tmp_path / "proj-configured"
+        project.mkdir()
+        env = self._clean_env(home)
+        env["HIVE_PROVIDER"] = "openai"
+        env["HIVE_API_BASE"] = "https://api.openai.com/v1"
+        env["HIVE_MODEL"] = "gpt-4o-mini"
+        env["HIVE_API_KEY"] = "sk-test-not-a-real-key"
+        r = subprocess.run(
+            [sys.executable, "-m", "hive_cli.main", "init", str(project),
+             "--brief", "preflight test project", "--github", "skip"],
+            capture_output=True, text=True, timeout=180,
+            cwd=str(project), env=env,
+        )
+        assert r.returncode == 0, r.stdout + "\n" + r.stderr
+        assert (project / ".company").is_dir()
+        assert "LLM preflight" not in r.stdout, \
+            "a configured LLM must not print the preflight hint"
+
+
 class TestTicketCommand:
     """Test the ticket command handler."""
 
