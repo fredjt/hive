@@ -92,6 +92,60 @@ def resolve_publisher(config_path, default_publisher):
     return Path(default_publisher), "built-in default"
 
 
+# D1: variable names that were valid before the HIVE_* / [llm]
+# unification and must not sit in the daemon env file anymore.
+# The HIVE_* LLM entries are *duplicates* of the [llm] config — env.sh
+# is for shell-level daemon env (PATH, GITHUB_TOKEN), LLM settings are
+# read from config.toml by every resolver.
+_ENV_FILE_RETIRED_VARS = {
+    "ANTHROPIC_BASE_URL": "llm.base_url",
+    "ANTHROPIC_API_KEY": "llm.api_key",
+    "LLM_TINY_URL": "llm.base_url",
+    "HIVE_PROVIDER": "llm.provider",
+    "HIVE_MODEL": "llm.model",
+    "HIVE_API_BASE": "llm.base_url",
+    "HIVE_API_KEY": "llm.api_key",
+    "HIVE_API_STYLE": "llm.api_style",
+    "HIVE_VERIFICATION_MODEL": "llm.verification_model",
+}
+
+
+def _env_file_check() -> bool:
+    """D1: warn (never fail) when the daemon env file still exports
+    retired variable names. The line names every offender and the
+    [llm] key it belongs in: 'env.sh is for PATH/GITHUB_TOKEN — LLM
+    settings go in [llm] of config.toml'."""
+    env_file = Path(os.environ.get("HIVE_ENV_FILE")
+                    or (Path.home() / ".config" / "hive" / "env.sh"))
+    if not env_file.is_file():
+        return True
+    try:
+        text = env_file.read_text()
+    except OSError:
+        return True
+    found = []
+    for line in text.splitlines():
+        s = line.strip()
+        if not s or s.startswith("#") or "=" not in s:
+            continue
+        name = s.split("=", 1)[0].strip()
+        if name.startswith("export"):
+            name = name.split(None, 1)[1].strip() if " " in name else ""
+        if name in _ENV_FILE_RETIRED_VARS:
+            found.append((name, _ENV_FILE_RETIRED_VARS[name]))
+    if not found:
+        return _check("env.sh (daemon env file)", True,
+                      "no retired LLM vars")
+    names = ", ".join(n for n, _ in found)
+    detail = (f"WARN: retired LLM var(s) {names} — move to [llm] in "
+              "config.toml (hive config edit); env.sh is for "
+              "PATH/GITHUB_TOKEN only")
+    warnings = _RUN.get("warnings")
+    if warnings is not None:
+        warnings.append(f"env.sh: {names} — move to [llm] in config.toml")
+    return _check("env.sh (daemon env file)", True, detail)
+
+
 def _toml_loads_file(path: Path) -> dict:
     try:
         import tomllib
@@ -360,6 +414,11 @@ def _run_checks(args) -> bool:
     # here with a close-match suggestion — a typo'd provider must not ship
     # invisibly into a failed sprint.
     all_ok &= _config_integrity_check()
+
+    # Daemon env file (D1): retired LLM var names in env.sh are a
+    # warning with a migration line — they never reach the resolver
+    # (LLM settings live in [llm]), so this never fails the run.
+    _env_file_check()
 
     all_ok &= _check("git", shutil.which("git") is not None)
     all_ok &= _check("jq", shutil.which("jq") is not None)

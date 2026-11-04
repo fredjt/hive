@@ -710,6 +710,56 @@ class TestDoctorJson:
         assert user_cfg in out,             "the unconfigured dump must name the config file (C4/B1 message)"
 
 
+class TestDoctorEnvFile:
+    """D1: `hive doctor` warns when the daemon env file still carries
+    retired variable names — the pre-unification ANTHROPIC_*/LLM_TINY_*
+    spellings and the HIVE_* LLM vars that duplicate [llm]. Warning only
+    (env.sh may still hold PATH/GITHUB_TOKEN); the migration line points
+    at [llm] in config.toml."""
+
+    install_dir = Path(__file__).resolve().parent.parent
+
+    @staticmethod
+    def _run(tmp_path):
+        env = {**os.environ, "HOME": str(tmp_path),
+               "HIVE_ROOT": str(TestDoctorEnvFile.install_dir),
+               "PYTHONPATH": str(TestDoctorEnvFile.install_dir / "lib")
+               + os.pathsep + os.environ.get("PYTHONPATH", "")}
+        env.pop("HIVE_ENV_FILE", None)
+        return subprocess.run(
+            [sys.executable, "-m", "hive_cli.main", "doctor"],
+            capture_output=True, text=True, env=env,
+            cwd=str(TestDoctorEnvFile.install_dir), timeout=120,
+        )
+
+    def test_doctor_warns_and_names_retired_vars(self, tmp_path):
+        envsh = tmp_path / ".config" / "hive" / "env.sh"
+        envsh.parent.mkdir(parents=True)
+        envsh.write_text(
+            "export PATH=$PATH:/opt/bin\n"
+            "export ANTHROPIC_API_KEY=sk-retired\n"
+            "LLM_TINY_URL=http://old-endpoint\n"
+            "HIVE_MODEL=old-model\n")
+        r = self._run(tmp_path)
+        out = r.stdout
+        assert "ANTHROPIC_API_KEY" in out,             "each retired var must be named, not just counted"
+        assert "LLM_TINY_URL" in out
+        assert "HIVE_MODEL" in out
+        assert "config.toml" in out,             "the migration line must point at [llm] in config.toml"
+        assert "PATH" in out and "GITHUB_TOKEN" in out,             "the warning must state what env.sh is for"
+
+    def test_clean_env_sh_produces_no_warning(self, tmp_path):
+        envsh = tmp_path / ".config" / "hive" / "env.sh"
+        envsh.parent.mkdir(parents=True)
+        envsh.write_text("export PATH=$PATH:/opt/bin\nGITHUB_TOKEN=ghx\n")
+        r = self._run(tmp_path)
+        assert "WARN" not in r.stdout, r.stdout
+
+    def test_missing_env_sh_produces_no_warning(self, tmp_path):
+        r = self._run(tmp_path)
+        assert "WARN" not in r.stdout, r.stdout
+
+
 class TestStatusDaemonSection:
     """B.3: `hive status` surfaces per-daemon liveness, restart_count, and
     the supervisor's dead state (restart budget exhausted) read straight
