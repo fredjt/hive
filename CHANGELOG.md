@@ -1,5 +1,38 @@
 # Changelog
 
+## 0.8.4
+
+Bugfix round: seven fixes across the CLI, config, and the release
+pipeline, each with a regression test.
+
+- fix(cli): the stdio MCP fallback spawns the server with the current
+  interpreter when the install venv is missing — MCP-routed commands
+  (ticket, chat, company, gates, release) no longer die with a raw
+  FileNotFoundError in the documented `PYTHONPATH=lib` source mode.
+- fix(config): HIVE_CONFIG is honored in the LLM resolver's config
+  merge — the file `hive config set` writes to is the file the
+  spawn/LLM path reads (it was not, until now).
+- fix(publish): the GitHub publisher targets the project's default
+  branch — [github].default_branch config, then the remote's actual
+  default branch, then main — instead of a hard-coded main.
+- fix(release): a GO verdict with gh unavailable now actually
+  publishes via the local-only publisher and completes the release
+  record, instead of printing a fallback message and exiting 0 with
+  the record left dangling.
+- fix(release): the semver gate excludes the candidate's own tag, so a
+  retry after a partial publish (tag pushed before the release) stops
+  failing "not greater than previous tag vX.Y.Z".
+- fix(release): the changelog gate matches `## X.Y.Z` sections even
+  when invoked with the documented v-prefixed `--version`.
+- fix(release): the publish runner cd's to the project root before
+  invoking publishers, so local-only and cwd-sensitive publishers
+  place artifacts in the project, not the caller's directory.
+
+Fifteen new regression tests: TestMcpStdioFallback,
+TestHiveConfigOverride, TestPublisherTargetBranch,
+TestReleasePublishNoGhFallback, TestReleaseGatesVersionGates,
+TestPublisherRunnerCwd.
+
 ## 0.8.3
 
 Agent spawn interpreter fix.
