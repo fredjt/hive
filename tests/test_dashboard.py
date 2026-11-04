@@ -65,6 +65,194 @@ class TestDashboardServerJS:
         assert "Dead (budget)" in content, "budget-dead state needs a distinct badge"
 
 
+# ---------------------------------------------------------------------------
+# Static analysis of the DELIVERED SPA (the script the browser actually runs).
+#
+# Two silent breakages have shipped from this script before, and `node --check`
+# cannot see either (scope/lint issues, not syntax errors):
+#
+#  1. Incomplete feature removal: the meetings/inbox-outbox removal (commit
+#     a4ed5c5) deleted the renderMarkdown() helper and the
+#     orgShowActiveOnly/toggleOrgActive org-chart state, but the call sites in
+#     the ticket detail, chat, reports, brief and org views survived — the
+#     views then crashed at runtime with ReferenceError and only the browser
+#     console noticed.
+#  2. Dead code: a leftover `return html;` after a live return made every
+#     browser print "unreachable code after return statement" on load.
+#
+# The helpers below parse the delivered script the same way a browser would
+# (template escapes already evaluated by node when the page is built).
+# ---------------------------------------------------------------------------
+
+_SPA_KEYWORDS = {'void', 'delete', 'in', 'else', 'do', 'typeof', 'case', 'return', 'throw', 'of', 'instanceof', 'new'}
+def _spa_strip(script):
+    out = list(script)
+    i, n = 0, len(script)
+    pt = ''
+    def prev_is_word(t): return bool(t) and (t[0].isalnum() or t[0] in '_$')
+    while i < n:
+        c = script[i]
+        if c == '/' and i+1 < n and script[i+1] == '/':
+            j = script.find('\n', i)
+            j = n if j < 0 else j
+            for k in range(i, j): out[k] = ' '
+            i = j; pt = ''
+            continue
+        if c == '/' and i+1 < n and script[i+1] == '*':
+            j = script.find('*/', i+2)
+            j = n if j < 0 else j+2
+            for k in range(i, j):
+                if out[k] != '\n': out[k] = ' '
+            i = j; pt = ''
+            continue
+        if c in ('"', "'"):
+            q = c; j = i+1
+            while j < n and script[j] != q:
+                if script[j] == '\\' and j+1 < n: j += 1
+                if script[j] == '\n': break
+                j += 1
+            j = min(j, n-1)
+            for k in range(i, j+1):
+                if out[k] != '\n': out[k] = ' '
+            i = j+1; pt = 'STR'
+            continue
+        if c == '`':
+            j = i+1
+            while j < n and script[j] != '`':
+                if script[j] == '\\': j += 1
+                j += 1
+            j = min(j, n-1)
+            for k in range(i, j+1):
+                if out[k] != '\n': out[k] = ' '
+            i = j+1; pt = 'TPL'
+            continue
+        if c == '/':
+            if prev_is_word(pt):
+                is_re = pt in _SPA_KEYWORDS
+            elif pt in (')', ']', '.') or pt in ('STR', 'TPL') or (pt and pt[-1].isdigit()):
+                is_re = False
+            else:
+                is_re = True
+            if is_re:
+                j = i+1; in_class = False
+                while j < n and script[j] != '\n':
+                    r = script[j]
+                    if r == '\\': j += 2; continue
+                    if r == '[': in_class = True
+                    elif r == ']': in_class = False
+                    elif r == '/' and not in_class: break
+                    j += 1
+                j = min(j, n-1)
+                for k in range(i, j+1):
+                    if out[k] != '\n': out[k] = ' '
+                j += 1
+                while j < n and script[j].isalpha(): j += 1
+                i = j; pt = 'REGEX'
+                continue
+            pt = c; i += 1
+            continue
+        if c.isspace(): i += 1; continue
+        if c.isalnum() or c in '_$':
+            j = i
+            while j < n and (script[j].isalnum() or script[j] in '_$'): j += 1
+            pt = script[i:j]; i = j
+            continue
+        pt = c; i += 1
+    return ''.join(out)
+
+_SPA_ALLOWED_GLOBALS = {'URL', 'DOMParser', 'Node', 'async', 'cancelAnimationFrame', 'performance', 'WeakSet', 'Number', 'unescape', 'if', 'Image', 'prompt', 'clearTimeout', 'Object', 'new', 'RangeError', 'import', 'Set', 'with', 'RegExp', 'export', 'atob', 'eval', 'URLSearchParams', 'MutationObserver', 'delete', 'confirm', 'Element', 'function', 'Boolean', 'XMLHttpRequest', 'parseFloat', 'crypto', 'queueMicrotask', 'do', 'alert', 'requestAnimationFrame', 'sessionStorage', 'TypeError', 'window', 'Array', 'yield', 'Worker', 'catch', 'parseInt', 'HTMLElement', 'switch', 'history', 'structuredClone', 'JSON', 'await', 'location', 'getComputedStyle', 'encodeURIComponent', 'of', 'Event', 'setInterval', 'fetch', 'AbortController', 'else', 'Audio', 'assert', 'WeakMap', 'FileReader', 'Promise', 'escape', 'EventSource', 'btoa', 'Error', 'SharedWorker', 'String', 'localStorage', 'clearInterval', 'console', 'IntersectionObserver', 'document', 'typeof', 'while', 'case', 'Blob', 'return', 'throw', 'Map', 'void', 'CustomEvent', 'isNaN', 'setTimeout', 'in', 'navigator', 'decodeURIComponent', 'WebSocket', 'Symbol', 'for', 'Math', 'ResizeObserver', 'Date'}
+def _spa_defined_names(stripped):
+    defined = set(re.findall(r'(?:async\s+)?function\s+([A-Za-z_$][\w$]*)', stripped))
+    for m in re.finditer(r'\b(?:var|let|const)\b', stripped):
+        j = m.end()
+        while j < len(stripped):
+            dm = re.match(r"\s*,?\s*([A-Za-z_$][\w$]*)", stripped[j:])
+            if not dm: break
+            defined.add(dm.group(1)); j += dm.end()
+            nm = re.match(r"\s*=\s*", stripped[j:])
+            if not nm: break
+            j += nm.end()
+    for m in re.finditer(r'function\s*(?:[A-Za-z_$][\w$]*\s*)?\(([^)]*)\)', stripped):
+        for p in m.group(1).split(','):
+            p = p.strip()
+            if re.match(r'^[A-Za-z_$][\w$]*$', p): defined.add(p)
+    for m in re.finditer(r'catch\s*\(([^)]*)\)', stripped):
+        p = m.group(1).strip()
+        if re.match(r'^[A-Za-z_$][\w$]*$', p): defined.add(p)
+    return defined
+
+def _spa_undefined_calls(script):
+    stripped = _spa_strip(script)
+    defined = _spa_defined_names(stripped)
+    called = set(re.findall(r'(?<![\w.$])([A-Za-z_$][\w$]*)\s*\(', stripped))
+    return sorted(c for c in called - defined - _SPA_ALLOWED_GLOBALS)
+
+def _spa_find_unreachable(script):
+    OPS = set('+-*/%<>&|^!~?:,.( [.=>')
+    problems = set()
+    depth = 0; in_bc = False; prev_open = False
+    in_return = False; ret_open = 0
+    ret_start_depth = None
+    pending_return_depth = None
+    for ln, line in enumerate(script.split('\n'), 1):
+        s = _spa_strip_line(line, in_bc)
+        in_bc = s[1]
+        t = s[0].strip()
+        if not t:
+            continue
+        if not prev_open:
+            if re.match(r'return\b', t):
+                in_return = True; ret_open = 0; ret_start_depth = depth
+                if pending_return_depth == depth:
+                    problems.add(ln)
+            elif not t.startswith('}') and pending_return_depth == depth:
+                problems.add(ln)
+        if in_return:
+            net = t.count('{') - t.count('}')
+            if ret_open == 0 and net == 0 and t.endswith((';', '}')):
+                pending_return_depth = ret_start_depth
+                in_return = False
+            ret_open = max(0, ret_open + net)
+        for ch in t:
+            if ch == '{': depth += 1
+            elif ch == '}': depth = max(0, depth - 1)
+        if pending_return_depth is not None and depth < pending_return_depth:
+            pending_return_depth = None
+        bal = 0
+        for ch in t:
+            if ch in '([{': bal += 1
+            elif ch in ')]}': bal -= 1
+        prev_open = bal > 0 or (bal == 0 and t and t[-1] in OPS and t[-1] not in ')]};')
+    return sorted(problems)
+
+def _spa_strip_line(line, in_block_comment):
+    out = []; i, n = 0, len(line)
+    while i < n:
+        c = line[i]
+        if in_block_comment:
+            if c == '*' and i+1 < n and line[i+1] == '/':
+                in_block_comment = False; i += 2; continue
+            i += 1; continue
+        if c == '/' and i+1 < n and line[i+1] == '/': break
+        if c == '/' and i+1 < n and line[i+1] == '*':
+            in_block_comment = True; i += 2; continue
+        if c in ('"', "'"):
+            q = c; i += 1
+            while i < n and line[i] != q:
+                if line[i] == '\\' and i+1 < n: i += 1
+                i += 1
+            i += 1; continue
+        out.append(c); i += 1
+    return ''.join(out), in_block_comment
+
+def _spa_handler_refs(page, script):
+    stripped = _spa_strip(script)
+    defined = _spa_defined_names(stripped)
+    handlers = set(re.findall(r'on(?:click|change|input|submit|keydown|keyup|blur|focus|mouseenter|mouseleave|mouseover|mouseout|dblclick)="([A-Za-z_$][\w$]*)\s*\(', page))
+    kw = {'if','for','while','switch','catch','function','return','typeof','new','delete','void','throw','case','do','else','with','yield','await','async','in','of','this','true','false','null','undefined','var','let','const'}
+    return sorted(h for h in handlers - defined - kw)
+
+
 class TestEmbeddedSpaScript:
     """The SPA lives inside server.js as a JS template literal. CI's
     `node --check lib/dashboard/server.js` parses that literal as a
@@ -110,14 +298,15 @@ class TestEmbeddedSpaScript:
              "const html=require(process.argv[1]);"
              "const m=html.match(/<script[^>]*>([\\s\\S]*?)<\\/script>/);"
              "if(!m) throw new Error('no <script> block in the embedded SPA');"
-             "fs.writeFileSync(process.argv[2], m[1]);",
-             str(eval_js), str(delivered)],
+             "fs.writeFileSync(process.argv[2], m[1]);"
+             "fs.writeFileSync(process.argv[3], html);",
+             str(eval_js), str(delivered), str(work / "page.html")],
             capture_output=True, text=True, timeout=60)
         assert dump.returncode == 0, dump.stderr
-        return node, delivered
+        return node, delivered, (work / "page.html").read_text()
 
     def test_delivered_spa_script_parses(self, delivered_script):
-        node, path = delivered_script
+        node, path, _ = delivered_script
         r = subprocess.run([node, "--check", str(path)],
                            capture_output=True, text=True, timeout=60)
         assert r.returncode == 0, (
@@ -129,6 +318,48 @@ class TestEmbeddedSpaScript:
             "escape.\n" + r.stderr
         )
 
+    def test_spa_script_calls_only_defined_functions(self, delivered_script):
+        """Every function the SPA script calls must be defined in the script.
+
+        A removed feature that leaves call sites behind (see class docstring)
+        parses fine but crashes the affected view with
+        'ReferenceError: X is not defined' — only visible in the browser
+        console."""
+        node, path, _ = delivered_script
+        missing = _spa_undefined_calls(path.read_text())
+        assert not missing, (
+            "the delivered SPA script calls functions that are defined "
+            "nowhere in the script — the views calling them crash at runtime "
+            "with ReferenceError (how the meetings-system removal left "
+            "renderMarkdown/renderRosterAgents as dead call sites): %s" % missing
+        )
+
+    def test_spa_script_has_no_unreachable_code_after_return(self,
+                                                             delivered_script):
+        """No statement may follow a completed return in the same block —
+        browsers warn 'unreachable code after return statement' on every
+        load, which buries real errors in the console."""
+        node, path, _ = delivered_script
+        script = path.read_text()
+        lines = _spa_find_unreachable(script)
+        assert not lines, (
+            "unreachable code after a return statement in the delivered SPA "
+            "script, lines %s:\n%s" % (
+                lines,
+                "\n".join(script.splitlines()[l - 1].strip() for l in lines))
+        )
+
+    def test_spa_event_handlers_resolve_to_defined_functions(self,
+                                                             delivered_script):
+        """Every function referenced from an on*="fn(...)" attribute in the
+        delivered HTML must exist in the SPA script — a removed handler
+        breaks the button silently with ReferenceError on click."""
+        node, path, html = delivered_script
+        missing = _spa_handler_refs(html, path.read_text())
+        assert not missing, (
+            "the delivered HTML wires on* handlers to functions the SPA "
+            "script does not define (ReferenceError on click): %s" % missing
+        )
 
 class TestDashboardTemplates:
     """Test dashboard HTML templates if any exist."""
