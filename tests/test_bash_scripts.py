@@ -1425,3 +1425,196 @@ class TestCompanyStopReapsSupervisor:
                 p.wait(timeout=10)
 
 
+
+
+
+class TestCompanyStartNoJsonTraceback:
+    """Regression: `hive start` (company-start.sh) printed a
+    `json.decoder.JSONDecodeError: Expecting value: line 1 column 1
+    (char 0)` traceback before every "Started X" line, and
+    processes.json was never written by the script.
+
+    Root cause: add_proc() built the in-memory process list with
+    `echo "$PROCS" | python3 - <<'PYEOF' ... json.load(sys.stdin) ...`.
+    A heredoc on the same command overrides the pipe's stdin, so python
+    read its program from the heredoc and sys.stdin was already at EOF —
+    json.load(sys.stdin) raised on every call, PROCS was left an empty
+    string, and the final writer (json.loads(os.environ['CS_PROCS']))
+    crashed too. company-stop/health/doctor then had no recorded PIDs.
+
+    The state-file heredocs (roster/org-chart cleanup) had the same
+    failure class one notch down: a 0-byte file (a rebuild killed
+    mid-write by company-stop's kill -9) raised the identical
+    "char 0" error, and an empty org-chart.json silently became a
+    license to rmtree every department directory."""
+
+    INFRA_DAEMONS = (
+        "sprint-lifecycle", "roster-rebuild", "status-rebuild",
+        "org-chart-rebuild", "worktree-merger", "verification-gates",
+        "company-health",
+    )
+
+    @staticmethod
+    def _run_company(script, proj, timeout=90):
+        """Run a company script with FILE-based output capture.
+
+        company-start.sh leaves background daemons running that inherit
+        its stdout/stderr; with pipe capture, subprocess.run would block
+        on pipe EOF until every daemon died. File redirection has no
+        such dependency — the script itself exits promptly.
+        """
+        import tempfile
+        out_path = tempfile.mktemp(prefix="company-start-test-", suffix=".out")
+        err_path = tempfile.mktemp(prefix="company-start-test-", suffix=".err")
+        try:
+            env = os.environ.copy()
+            env["HIVE_INSTALL_DIR"] = str(Path(__file__).resolve().parent.parent)
+            with open(out_path, "wb") as out_f, open(err_path, "wb") as err_f:
+                proc = subprocess.Popen(
+                    ["bash", f"{SCRIPTS_DIR}/{script}", str(proj)],
+                    stdin=subprocess.DEVNULL, stdout=out_f, stderr=err_f,
+                    env=env,
+                )
+                try:
+                    proc.wait(timeout=timeout)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+                    proc.wait(timeout=10)
+                    raise
+            stdout = Path(out_path).read_text(errors="replace")
+            stderr = Path(err_path).read_text(errors="replace")
+        finally:
+            for p in (out_path, err_path):
+                try:
+                    os.unlink(p)
+                except FileNotFoundError:
+                    pass
+
+        import types
+        return types.SimpleNamespace(
+            returncode=proc.returncode,
+            stdout=stdout,
+            stderr=stderr,
+        )
+
+    @pytest.fixture()
+    def occupied_dashboard_and_mcp_ports(self):
+        """Best-effort dummy listeners on 3456/7891 so company-start.sh
+        takes the "already running — reusing it" paths and starts no
+        dashboard/MCP of its own (which company-stop deliberately does
+        not kill, so a test-started dashboard would leak). If a real
+        dashboard/MCP already holds the port, the bind fails and we rely
+        on that instead."""
+        import http.server
+        import threading
+
+        class _Quiet(http.server.BaseHTTPRequestHandler):
+            def do_GET(self):
+                self.send_response(200)
+                self.end_headers()
+                self.wfile.write(b"ok\n")
+
+            def log_message(self, *a):
+                pass
+
+        servers = []
+        for port in (3456, 7891):
+            try:
+                srv = http.server.ThreadingHTTPServer(("127.0.0.1", port), _Quiet)
+            except OSError:
+                continue  # already in use — company-start will reuse it
+            t = threading.Thread(target=srv.serve_forever, daemon=True)
+            t.start()
+            servers.append(srv)
+        yield
+        for s in servers:
+            s.shutdown()
+            s.server_close()
+
+    def test_add_proc_does_not_read_stdin_of_a_heredoc(self):
+        """The bug's exact shape: a python heredoc (stdin = program text,
+        already consumed) calling json.load(sys.stdin)."""
+        content = Path(SCRIPTS_DIR, "company-start.sh").read_text()
+        assert "json.load(sys.stdin)" not in content, (
+            "company-start.sh parses JSON from sys.stdin inside a "
+            "heredoc — the heredoc overrides any pipe, so stdin is at "
+            "EOF and every daemon start raises JSONDecodeError (char 0)"
+        )
+
+    def test_company_start_writes_processes_json_without_traceback(
+            self, tmp_path, occupied_dashboard_and_mcp_ports):
+        proj = tmp_path / "proj"
+        company = proj / ".company"
+        (company / "logs").mkdir(parents=True)
+        (company / "departments" / "it").mkdir(parents=True)
+
+        try:
+            r = self._run_company("company-start.sh", proj)
+            combined = r.stdout + r.stderr
+            assert r.returncode == 0, combined
+            assert "Traceback" not in combined, combined
+            assert "JSONDecodeError" not in combined, combined
+
+            procs_file = company / "processes.json"
+            assert procs_file.exists(), "company-start.sh did not write processes.json"
+            data = json.loads(procs_file.read_text())
+            assert data["project_root"] == str(proj)
+            procs = data["processes"]
+            assert isinstance(procs, list) and len(procs) >= len(self.INFRA_DAEMONS)
+            roles = {p.get("role") for p in procs}
+            for role in self.INFRA_DAEMONS:
+                assert role in roles, f"{role} missing from processes.json: {roles}"
+            for p in procs:
+                for key in ("pid", "role", "department", "interval", "started_at"):
+                    assert key in p, f"process entry missing {key}: {p}"
+                assert isinstance(p["pid"], int)
+        finally:
+            self._stop_company(proj, company)
+
+    def _stop_company(self, proj, company):
+        """Stop the company and belt-and-braces-kill anything recorded in
+        processes.json, so a failure in this test (or in company-stop.sh)
+        can never leave live daemons behind on the dev machine."""
+        self._run_company("company-stop.sh", proj)
+        import signal
+        procs_file = company / "processes.json"
+        try:
+            data = json.loads(procs_file.read_text())
+        except Exception:
+            return
+        for p in data.get("processes", []):
+            pid = p.get("pid")
+            if not isinstance(pid, int):
+                continue
+            try:
+                os.kill(pid, signal.SIGKILL)
+            except OSError:
+                pass  # already dead
+
+    def test_company_start_tolerates_empty_state_files(
+            self, tmp_path, occupied_dashboard_and_mcp_ports):
+        """0-byte roster.json/org-chart.json (writer killed mid-write)
+        must not produce a traceback at startup, and an empty
+        org-chart.json must NOT trigger deletion of department dirs."""
+        proj = tmp_path / "proj"
+        company = proj / ".company"
+        (company / "logs").mkdir(parents=True)
+        (company / "departments" / "it").mkdir(parents=True)
+        (company / "departments" / "rogue-dept").mkdir()
+        (company / "roster.json").write_text("")
+        (company / "org-chart.json").write_text("")
+
+        r = self._run_company("company-start.sh", proj)
+        try:
+            combined = r.stdout + r.stderr
+            assert r.returncode == 0, combined
+            assert "Traceback" not in combined, combined
+            assert "JSONDecodeError" not in combined, combined
+            assert (company / "departments" / "rogue-dept").exists(), (
+                "empty org-chart.json must not cause department "
+                "directories to be deleted"
+            )
+            data = json.loads((company / "processes.json").read_text())
+            assert len(data["processes"]) >= len(self.INFRA_DAEMONS)
+        finally:
+            self._stop_company(proj, company)

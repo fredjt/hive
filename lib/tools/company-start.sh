@@ -47,9 +47,20 @@ fi
 if [ -f "$COMPANY_DIR/org-chart.json" ]; then
   CS_OC_FILE="$COMPANY_DIR/org-chart.json" CS_DEPT_DIR="$COMPANY_DIR/departments" python3 - <<'PYEOF' 2>/dev/null
 import json, os, shutil
-oc=json.load(open(os.environ['CS_OC_FILE']))
+try:
+    oc=json.load(open(os.environ['CS_OC_FILE']))
+except Exception:
+    # Empty/corrupt org-chart (e.g. a rebuild killed mid-write) — refuse to
+    # delete anything rather than treat "no departments" as "all bogus".
+    raise SystemExit(0)
 valid=set(oc.get('departments',{}).keys())
+if not valid:
+    # No departments defined — deleting every department dir would be a
+    # data-loss event, not a cleanup.
+    raise SystemExit(0)
 dept_dir=os.environ['CS_DEPT_DIR']
+if not os.path.isdir(dept_dir):
+    raise SystemExit(0)
 for d in os.listdir(dept_dir):
     if d not in valid and os.path.isdir(os.path.join(dept_dir,d)):
         shutil.rmtree(os.path.join(dept_dir,d))
@@ -63,8 +74,16 @@ import json, os
 roster_file=os.environ['CS_ROSTER_FILE']
 org_file=os.environ['CS_ORG_FILE']
 if not os.path.exists(roster_file): exit(0)
-r=json.load(open(roster_file))
+try:
+    r=json.load(open(roster_file))
+except Exception:
+    # File exists but is empty/corrupt (a rebuild may have been killed
+    # mid-write). Leave it — the roster-rebuild daemon repopulates it
+    # within a minute. Overwriting derived state from a bad read would be
+    # worse than skipping.
+    exit(0)
 agents=r.get('agents',r) if isinstance(r,dict) else r
+if not isinstance(agents,list): exit(0)
 # Dedup active VPs per department
 seen={}
 for i,a in enumerate(agents):
@@ -75,14 +94,22 @@ for i,a in enumerate(agents):
         else: seen[dept]=i
 # Ensure verification managers
 if os.path.exists(org_file):
-    org=json.load(open(org_file))
+    try:
+        org=json.load(open(org_file))
+    except Exception:
+        org={}
     depts=list(org.get('departments',{}).keys())
     existing={a.get('department') for a in agents if isinstance(a,dict) and 'verif' in a.get('role','').lower() and a.get('status')=='active'}
     for d in depts:
         if d not in existing:
             agents.append({'id':'verification-mgr-'+d,'role':'Manager-Verification','department':d,'status':'active'})
-if isinstance(r,dict): r['agents']=agents; json.dump(r,open(roster_file,'w'),indent=2)
-else: json.dump(agents,open(roster_file,'w'),indent=2)
+if isinstance(r,dict): r['agents']=agents
+else: r=agents
+# Atomic write: a company-stop mid-write (kill -9) must not leave a
+# 0-byte roster.json behind for the next startup to choke on.
+tmp=roster_file+'.tmp.'+str(os.getpid())
+json.dump(r,open(tmp,'w'),indent=2)
+os.replace(tmp,roster_file)
 PYEOF
 
 # Clean up stale worktrees — but ONLY ones whose tickets are no longer
@@ -196,9 +223,19 @@ PROCS='[]'
 
 add_proc() {
   local pid=$1 role=$2 dept=$3 interval=$4
-  PROCS=$(echo "$PROCS" | CS_PID="$pid" CS_ROLE="$role" CS_DEPT="$dept" CS_INTERVAL="$interval" CS_STARTED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)" python3 - <<'PYEOF'
+  # Pass the existing list via env var, NOT a pipe. A heredoc on the same
+  # command overrides the pipe's stdin, so the old `echo "$PROCS" | python3 -
+  # <<EOF` that parsed stdin always read EOF: every daemon start printed
+  # `json.decoder.JSONDecodeError: Expecting value: line 1 column 1
+  # (char 0)`, PROCS was left empty, and the final block below never wrote
+  # a usable processes.json.
+  PROCS=$(CS_PROCS="$PROCS" CS_PID="$pid" CS_ROLE="$role" CS_DEPT="$dept" CS_INTERVAL="$interval" CS_STARTED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)" python3 - <<'PYEOF'
 import json,sys,os
-procs=json.load(sys.stdin)
+try:
+    procs=json.loads(os.environ.get('CS_PROCS') or '[]')
+    if not isinstance(procs,list): procs=[]
+except Exception:
+    procs=[]
 procs.append({'pid':int(os.environ['CS_PID']),'role':os.environ['CS_ROLE'],'department':os.environ['CS_DEPT'],'interval':os.environ['CS_INTERVAL'],'started_at':os.environ['CS_STARTED_AT']})
 json.dump(procs,sys.stdout)
 PYEOF
@@ -445,13 +482,23 @@ add_proc $! "company-health" "infrastructure" "30s"
 
 CS_PROCS="$PROCS" CS_STARTED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)" CS_PROJECT_ROOT="$PROJECT_ROOT" CS_PROCS_FILE="$COMPANY_DIR/processes.json" python3 - <<'PYEOF'
 import json, os
-procs=json.loads(os.environ['CS_PROCS'])
+try:
+    procs=json.loads(os.environ.get('CS_PROCS') or '[]')
+    if not isinstance(procs,list): procs=[]
+except Exception:
+    procs=[]
 result={
   'started_at': os.environ['CS_STARTED_AT'],
   'project_root': os.environ['CS_PROJECT_ROOT'],
   'processes': procs
 }
-json.dump(result, open(os.environ['CS_PROCS_FILE'],'w'), indent=2)
+# Atomic write (tmp + rename), same pattern as company-health.sh: readers
+# (company-stop, company-health, the dashboard) must never observe a
+# half-written/empty processes.json.
+f=os.environ['CS_PROCS_FILE']
+tmp=f+'.tmp.'+str(os.getpid())
+json.dump(result, open(tmp,'w'), indent=2)
+os.replace(tmp,f)
 PYEOF
 
 echo ""
