@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.8.3
+
+Agent spawn interpreter fix.
+
+Every spawned agent died at turn 0 with "LLM unavailable: httpx not
+installed": agent-spawn.sh exec'd the harness with bare `python3` from
+PATH, while the harness's dependency (httpx) lives in the install
+venv — and `hive doctor` checks the venv interpreter, so it reported
+everything green while every spawn failed silently.
+
+- agent-spawn.sh now resolves the install's venv python
+  (`HIVE_INSTALL_DIR/venv/bin/python`, derived from the script's own
+  location when the env var is unset — the same contract the Python
+  side uses); a missing venv falls back to `python3` with a stderr
+  warning instead of a silent turn-0 death.
+- New `TestAgentSpawnPython`: a venv stub that records its own
+  invocation proves the real agent-spawn.sh picks the venv python
+  (and that the fallback still works in a source checkout).
+
 ## 0.8.2
 
 Dashboard reference-error fix.
