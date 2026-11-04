@@ -62,7 +62,8 @@ These scripts are the **runtime core** of Hive. They are called by the MCP serve
 | `sprint-progress.sh` | Shows sprint ticket progression. |
 | `sprint-direction-write.sh` | Writes the CEO's direction document. |
 | `prioritize-backlog.sh` | Smart-prioritizes backlog tickets using small-model. |
-| `sprint-archive-done.sh` | Archives done tickets at sprint boundary. |
+| `sprint-archive-done.sh` | Archives done tickets at sprint boundary, then writes the sprint cost summary report. |
+| `sprint-cost-summary.sh` | Writes the "what did the sprint burn" report (per-round tokens/cost from the LLM usage log) to .company/reports/sprint-reviews/ via report-write.sh. Called by sprint-archive-done.sh. |
 
 ### Initialization & scaffolding
 | Script | Role |

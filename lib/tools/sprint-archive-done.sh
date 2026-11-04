@@ -3,7 +3,9 @@ set -uo pipefail
 
 # sprint-archive-done.sh — sweep every department's done/*.json into archive/
 # at sprint completion. Stamps `archived_at` and `archived_in_sprint` on each
-# ticket so historical provenance survives.
+# ticket so historical provenance survives, then writes the sprint's cost
+# summary report (sprint-cost-summary.sh — per-round tokens/cost aggregated
+# from the LLM usage log) to .company/reports/sprint-reviews/.
 #
 # Without this sweep, ticket files accumulate in done/ forever; the dashboard
 # boards stay cluttered with last-sprint's resolved tickets, every dept-
@@ -72,3 +74,13 @@ for dept_dir in "$COMPANY_DIR"/departments/*/; do
 done
 
 echo "sprint-archive-done: archived $MOVED ticket(s) across $DEPTS_TOUCHED dept(s) under sprint=$SPRINT_ID"
+
+# B4 (0.9.0): the archive is when "what did the sprint burn" becomes a
+# file. sprint-cost-summary.sh prices every round in rounds/history/ from
+# the LLM usage log and writes one report via report-write.sh. Non-fatal:
+# a report failure must never block (or roll back) the ticket sweep.
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+if [ -x "$SCRIPT_DIR/sprint-cost-summary.sh" ]; then
+  bash "$SCRIPT_DIR/sprint-cost-summary.sh" "$PROJECT_ROOT" "$SPRINT_ID" \
+    || echo "sprint-archive-done: cost summary failed (non-fatal)" >&2
+fi

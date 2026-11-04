@@ -1977,3 +1977,135 @@ class TestRoundStatusCost:
         h = self._history(company)
         assert h["rounds"] == []
         assert h["totals"] == {"calls": 0, "tokens": 0, "cost_usd": 0}
+
+
+class TestSprintCostSummary:
+    """B4 (0.9.0): the sprint archive writes the cost summary report.
+
+    sprint-archive-done.sh (the archive path) now also runs
+    sprint-cost-summary.sh, which prices every round in rounds/history/
+    from the LLM usage log — the same windowing as B3 — and writes one
+    markdown report to .company/reports/sprint-reviews/ via
+    report-write.sh. The 'what did the sprint burn' answer is a file,
+    not a grep: it exists, it parses, and its totals equal B2/B3's
+    windowed sums on the same fixture."""
+
+    REPO = Path(__file__).resolve().parent.parent
+    FIXTURE_COMPANY = REPO / "tests" / "fixtures" / "company"
+    SID = "sprint-20261103T000000Z"
+
+    @staticmethod
+    def _copy_company(tmp_path):
+        project = tmp_path / "proj"
+        company = project / ".company"
+        shutil.copytree(TestSprintCostSummary.FIXTURE_COMPANY, company)
+        return project, company
+
+    @staticmethod
+    def _archive(project, company, cwd=None):
+        """Run the archive path. COMPANY_DIR/PROJECT_ROOT/HIVE_SPRINT_ID
+        are stripped from the env either way: the scripts must resolve
+        the company dir from the project-root argument themselves."""
+        env = {k: v for k, v in os.environ.items()
+               if k not in ("COMPANY_DIR", "PROJECT_ROOT", "HIVE_SPRINT_ID")}
+        script = TestSprintCostSummary.REPO / "lib" / "tools" / "sprint-archive-done.sh"
+        sid = TestSprintCostSummary.SID
+        if cwd is None:
+            return run_script(script, [str(project), sid], env=env, timeout=60)
+        return subprocess.run(
+            ["bash", str(script), str(project), sid],
+            capture_output=True, text=True, timeout=60,
+            env=env, cwd=str(cwd))
+
+    @staticmethod
+    def _parse_report(text):
+        """(rows, totals) — rows are the table's data rows as lists of
+        stripped cells, totals the '## Totals' key: value bullets."""
+        rows = []
+        for line in text.splitlines():
+            if not line.startswith("|"):
+                continue
+            cells = [c.strip() for c in line.strip("|").split("|")]
+            if cells and cells[0] in ("round", "---"):
+                continue
+            rows.append(cells)
+        totals = {}
+        in_totals = False
+        for line in text.splitlines():
+            if line.startswith("## Totals"):
+                in_totals = True
+                continue
+            if in_totals and line.startswith("- "):
+                k, _, v = line[2:].partition(": ")
+                totals[k.strip()] = v.strip()
+        return rows, totals
+
+    def test_archive_path_writes_parseable_cost_summary(self, tmp_path):
+        project, company = self._copy_company(tmp_path)
+        r = self._archive(project, company)
+        assert r.returncode == 0, r.stdout + r.stderr
+        report = company / "reports" / "sprint-reviews" / f"{self.SID}-cost-summary.md"
+        assert report.exists(), "the archive path did not write the cost summary report"
+        text = report.read_text()
+        rows, totals = self._parse_report(text)
+        assert [row[0] for row in rows] == ["round-008", "round-009"]
+        r8, r9 = rows
+        # per-round: entries, duration_s, tokens, cost_usd
+        assert (r8[1], r8[2]) == ("4", "300")
+        assert r8[3] == "300" and float(r8[4]) == pytest.approx(1.8e-05)
+        assert (r9[1], r9[2]) == ("5", "600")
+        assert r9[3] == "1200" and float(r9[4]) == pytest.approx(7.2e-05)
+        # sprint totals — the windowed sums B2/B3 report for the same rounds
+        assert totals["rounds"] == "2"
+        assert totals["tokens"] == "1500"
+        assert float(totals["cost_usd"]) == pytest.approx(9.0e-05)
+
+    def test_report_totals_match_round_status_history(self, tmp_path):
+        """One number for 'what did the sprint burn': the report's
+        totals equal round-status.sh --history totals on the same
+        fixture (B3's windowed sums)."""
+        project, company = self._copy_company(tmp_path)
+        self._archive(project, company)
+        h = json.loads(run_script(
+            Path(SCRIPTS_DIR, "round-status.sh"), ["--history"],
+            env={"COMPANY_DIR": str(company)}).stdout)
+        report = company / "reports" / "sprint-reviews" / f"{self.SID}-cost-summary.md"
+        rows, totals = self._parse_report(report.read_text())
+        assert totals["tokens"] == str(h["totals"]["tokens"])
+        assert float(totals["cost_usd"]) == pytest.approx(h["totals"]["cost_usd"])
+        # per-round rows agree with the API/bash per-round fields too
+        hm = {r["round_id"]: r for r in h["rounds"]}
+        for row in rows:
+            assert row[3] == str(hm[row[0]]["tokens"]), row
+            assert float(row[4]) == pytest.approx(hm[row[0]]["cost_usd"]), row
+
+    def test_report_written_to_project_company_not_cwd(self, tmp_path):
+        """The archive runs from the project root in production, but a
+        caller from elsewhere must not scatter the report: report-write.sh
+        resolves the exported COMPANY_DIR, never a CWD-relative default."""
+        project, company = self._copy_company(tmp_path)
+        foreign = tmp_path / "elsewhere"
+        foreign.mkdir()
+        r = self._archive(project, company, cwd=foreign)
+        assert r.returncode == 0, r.stdout + r.stderr
+        report = company / "reports" / "sprint-reviews" / f"{self.SID}-cost-summary.md"
+        assert report.exists(), "report missing from the project's .company"
+        assert not (foreign / ".company").exists(), \
+            "report-write.sh fell back to a CWD-relative .company"
+
+    def test_rearchive_is_idempotent_and_matches_seeded_sample(self, tmp_path):
+        """Re-running the archive rewrites the same file with the same
+        content — deterministic, no appended duplicates — and the
+        regenerated report is byte-identical to the seeded fixture
+        sample (the expected shape, checked in once)."""
+        project, company = self._copy_company(tmp_path)
+        report = company / "reports" / "sprint-reviews" / f"{self.SID}-cost-summary.md"
+        seeded = report.read_text()
+        for _ in range(2):
+            r = self._archive(project, company)
+            assert r.returncode == 0, r.stdout + r.stderr
+        text = report.read_text()
+        assert text == seeded, "re-archive changed the report's content"
+        rows, totals = self._parse_report(text)
+        assert [row[0] for row in rows] == ["round-008", "round-009"]
+        assert text.count(f"# Sprint cost summary — {self.SID}") == 1
