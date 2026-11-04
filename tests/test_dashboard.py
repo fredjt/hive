@@ -65,6 +65,71 @@ class TestDashboardServerJS:
         assert "Dead (budget)" in content, "budget-dead state needs a distinct badge"
 
 
+class TestEmbeddedSpaScript:
+    """The SPA lives inside server.js as a JS template literal. CI's
+    `node --check lib/dashboard/server.js` parses that literal as a
+    string, so it cannot fail on anything the browser would: escapes
+    like `\n` are evaluated when the template is built, and a raw
+    newline then lands inside a single-quoted JS string of the DELIVERED
+    script — the whole SPA fails to parse and the dashboard breaks with
+    only a console error ('string literal contains an unescaped line
+    break'). This test reproduces exactly what the browser receives and
+    syntax-checks it. (The 0.8.1 fix: nine `\n` escapes in the ticket
+    move/comment and gate-output code arrived as raw newlines — write
+    `\\n` in server.js when the browser should see a newline escape.)"""
+
+    @pytest.fixture(scope="class")
+    def delivered_script(self, tmp_path_factory):
+        node = shutil.which("node")
+        if not node:
+            pytest.skip("node unavailable — cannot syntax-check the delivered SPA")
+        src = Path(f"{DASHBOARD_DIR}/server.js").read_text()
+        start = src.index("const HTML = `")
+        i = start + len("const HTML = `")
+        raw = []
+        while i < len(src):
+            c = src[i]
+            if c == "\\" and i + 1 < len(src):
+                raw.append(c)
+                raw.append(src[i + 1])
+                i += 2
+                continue
+            if c == "`":
+                break
+            raw.append(c)
+            i += 1
+        # Re-evaluating the same template source in node reproduces the
+        # string the server builds and serves (escape processing included).
+        work = tmp_path_factory.mktemp("spa-delivered")
+        eval_js = work / "html-eval.js"
+        eval_js.write_text('module.exports = `' + "".join(raw) + "`;\n")
+        delivered = work / "delivered.js"
+        dump = subprocess.run(
+            [node, "-e",
+             "const fs=require('fs');"
+             "const html=require(process.argv[1]);"
+             "const m=html.match(/<script[^>]*>([\\s\\S]*?)<\\/script>/);"
+             "if(!m) throw new Error('no <script> block in the embedded SPA');"
+             "fs.writeFileSync(process.argv[2], m[1]);",
+             str(eval_js), str(delivered)],
+            capture_output=True, text=True, timeout=60)
+        assert dump.returncode == 0, dump.stderr
+        return node, delivered
+
+    def test_delivered_spa_script_parses(self, delivered_script):
+        node, path = delivered_script
+        r = subprocess.run([node, "--check", str(path)],
+                           capture_output=True, text=True, timeout=60)
+        assert r.returncode == 0, (
+            "the SPA script the browser RECEIVES fails to parse (server.js "
+            "itself is valid, so CI's node --check cannot see this) — look "
+            "for string literals that contain raw newlines: template "
+            "escapes like \\n are evaluated when the embedded HTML is built, "
+            "so write \\\\n in server.js when the browser should see a newline "
+            "escape.\n" + r.stderr
+        )
+
+
 class TestDashboardTemplates:
     """Test dashboard HTML templates if any exist."""
 

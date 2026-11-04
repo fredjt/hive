@@ -41,6 +41,17 @@ Vanilla JS SPA with client-side routing. Panels: Dashboard, Board (Kanban), Chat
 
 - **No external dependencies** — adding one requires updating `package.json` and justifying the need.
 - **No build step** — the file is edited and served directly.
+- **The SPA is a template literal: escape backslashes twice.** The embedded
+  HTML/JS is built by evaluating a JS template literal, so every `\n` you
+  type in the script section arrives at the browser as a RAW NEWLINE —
+  inside a string literal that is a SyntaxError that kills the entire SPA
+  (the server itself parses fine, so `node --check server.js` cannot see
+  it; `tests/test_dashboard.py::TestEmbeddedSpaScript` syntax-checks the
+  DELIVERED script and catches it). When the browser should see a newline
+  escape, write `\\n` (two backslashes + n in the file, one backslash + n
+  in the browser). The existing `\\'` spellings in onclick builders are the
+  same convention: two backslashes + quote in the file, one + quote in the
+  browser.
 - **All API responses are JSON** (GET/POST) except `/api/events` (SSE) and the root route (HTML).
 - **Ticket statuses/types/priorities**: see root `AGENTS.md` for the full list.
 - **MCP write methods:** `ticket_create`, `ticket_move`, `ticket_comment`, `ticket_approve`, `inbox_write`, `gates_run`, `gates_check`
