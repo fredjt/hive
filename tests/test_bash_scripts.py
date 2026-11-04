@@ -1839,3 +1839,73 @@ class TestReleaseGatesVersionGates:
                                changelog="# Changelog\n\n## 0.8.0\nOld notes\n")
         line = self._gate_line(tmp_path, proj, "v0.9.0", "changelog")
         assert "fail" in line
+
+
+class TestPublisherRunnerCwd:
+    """release-publish-runner.sh must run the publisher from PROJECT_ROOT.
+
+    Regression: publishers/local-only.sh places its artifacts under a
+    path RELATIVE to the publisher's CWD and documents that
+    'release-publish-runner cd's to PROJECT_ROOT' — but the runner only
+    normalized the variable and never changed directory. Any launch of
+    the sprint lifecycle from outside the project (manual runs, daemons
+    started elsewhere) made local-only and cwd-sensitive custom
+    publishers write dist/releases/... into the caller's directory.
+    """
+
+    REPO = Path(__file__).resolve().parent.parent
+
+    def _scratch(self, tmp_path):
+        project = tmp_path / "project"
+        (project / ".company" / "sprints").mkdir(parents=True)
+        install = tmp_path / "install"
+        (install / "lib" / "tools").mkdir(parents=True)
+        (install / "lib" / "templates" / "publishers").mkdir(parents=True)
+        (install / "dist").mkdir()
+        shutil.copy(self.REPO / "lib" / "tools" / "sprint-state.sh",
+                    install / "lib" / "tools" / "sprint-state.sh")
+        local_only = (install / "lib" / "templates" / "publishers" / "local-only.sh")
+        shutil.copy(self.REPO / "lib" / "templates" / "publishers" / "local-only.sh",
+                    local_only)
+        tarball = install / "dist" / "hive-0.9.0.tar.gz"
+        tarball.write_bytes(b"tarball")
+        sha = install / "dist" / "hive-0.9.0.sha256"
+        sha.write_text("x  hive-0.9.0.tar.gz\n")
+        (project / "CHANGELOG.md").write_text("# Changelog\n\n## 0.9.0\nNotes\n")
+        state = project / ".company" / "sprints" / "current.json"
+        state.write_text(json.dumps({
+            "sprint_id": "sprint-test",
+            "stage": "release-publish",
+            "release": {
+                "version": "0.9.0",
+                "tarball": str(tarball),
+                "sha256": str(sha),
+                "publish_status": "pending",
+            },
+        }))
+        cfg = tmp_path / "cfg.toml"
+        cfg.write_text(f'[release]\npublisher_script = "{local_only}"\n')
+        return project, install, cfg
+
+    def test_local_only_publisher_writes_into_project_root(self, tmp_path):
+        project, install, cfg = self._scratch(tmp_path)
+        elsewhere = tmp_path / "elsewhere"
+        elsewhere.mkdir()
+        env = os.environ.copy()
+        env["HOME"] = str(tmp_path)
+        env["HIVE_CONFIG"] = str(cfg)
+        env["HIVE_ROOT"] = str(install)
+        env.pop("GITHUB_TOKEN", None)
+        r = subprocess.run(
+            ["bash", str(self.REPO / "lib" / "tools" / "release-publish-runner.sh"),
+             str(project)],
+            capture_output=True, text=True, timeout=30, env=env,
+            cwd=str(elsewhere))  # deliberately NOT the project root
+        combined = r.stdout + r.stderr
+        assert r.returncode == 0, combined
+        dest = project / "dist" / "releases" / "0.9.0"
+        assert (dest / "hive-0.9.0.tar.gz").exists(), (
+            f"local-only publisher wrote relative to the caller's cwd\n{combined}")
+        state = json.loads(
+            (project / ".company" / "sprints" / "current.json").read_text())
+        assert state["release"]["publish_status"] == "published", state

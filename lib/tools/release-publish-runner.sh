@@ -25,6 +25,10 @@ set -uo pipefail
 
 PROJECT_ROOT="${1:-${PROJECT_ROOT:-$PWD}}"
 PROJECT_ROOT="$(cd "$PROJECT_ROOT" 2>/dev/null && pwd)" || { echo "release-publish: bad project root" >&2; exit 2; }
+# Publishers run from the project root: local-only.sh (and cwd-sensitive
+# custom publishers) place artifacts under paths RELATIVE to the CWD.
+# Everything below this point is absolute, so the cd is safe.
+cd "$PROJECT_ROOT"
 COMPANY_DIR="${COMPANY_DIR:-$PROJECT_ROOT/.company}"
 SKILL_DIR="${SKILL_DIR:-${HIVE_ROOT:-$(cd "$(dirname "$0")/../.." && pwd)}}"
 export COMPANY_DIR PROJECT_ROOT SKILL_DIR
