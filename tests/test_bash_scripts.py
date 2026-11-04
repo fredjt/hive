@@ -6,6 +6,7 @@ import os
 import shutil
 import subprocess
 import time
+import tarfile
 from pathlib import Path
 import hashlib
 # Ensure lib/ is on the path when running from within hive/ directory
@@ -2109,3 +2110,167 @@ class TestSprintCostSummary:
         rows, totals = self._parse_report(text)
         assert [row[0] for row in rows] == ["round-008", "round-009"]
         assert text.count(f"# Sprint cost summary — {self.SID}") == 1
+
+
+class TestReleasePublishE2e:
+    """D1 + D2 (0.9.0): the publish path, end-to-end against a stub gh.
+
+    A scratch project (git repo + bare origin + .company sprint state
+    with a release block + dist artifacts + a CHANGELOG section) runs
+    release-publish-runner.sh — stage 8 of the sprint cycle — with a
+    fake `gh` on PATH that records its argv. D1 asserts the full
+    GO-verdict publish flow: the `gh release create` invocation carries
+    the tag, the assets, and notes equal to the CHANGELOG section
+    verbatim, and the record completes with the artifacts under the
+    project root (the cwd class 0.8.4 fixed). D2 codifies the 0.8.4
+    partial-publish retry: run 1 pushes the tag and then gh fails
+    (record left dangling, no release); run 2 detects the existing tag
+    (the semver gate excludes the candidate's own — the 0.8.4 fix) and
+    completes the publish."""
+
+    REPO = Path(__file__).resolve().parent.parent
+    VER = "0.9.0"
+
+    _GIT_IDENTITY = {
+        "GIT_AUTHOR_NAME": "pub-test", "GIT_AUTHOR_EMAIL": "pub-test@example.com",
+        "GIT_COMMITTER_NAME": "pub-test", "GIT_COMMITTER_EMAIL": "pub-test@example.com",
+    }
+
+    @classmethod
+    def _git(cls, cwd, *args):
+        r = subprocess.run(["git", *args], cwd=str(cwd),
+                           env={**os.environ, **cls._GIT_IDENTITY},
+                           capture_output=True, text=True, timeout=60)
+        assert r.returncode == 0, f"git {' '.join(args)}: {r.stderr}"
+        return r
+
+    @classmethod
+    def _stub_gh(cls, bindir, fail_create_file):
+        """Fake gh: records every invocation to $GH_STUB_LOG; `release
+        create` fails while $fail_create_file exists, and a successful
+        create drops a marker in $GH_STUB_RELEASE_DIR (the release
+        'exists'). --notes-file content is copied to $GH_STUB_NOTES_OUT
+        so the test can verify the notes verbatim."""
+        bindir = Path(bindir)
+        bindir.mkdir(parents=True, exist_ok=True)
+        gh = bindir / "gh"
+        gh.write_text(f"""#!/bin/sh
+LOG="${{GH_STUB_LOG:?}}"; FAIL="{fail_create_file}"; RD="${{GH_STUB_RELEASE_DIR:-/nonexistent}}"
+echo "$*" >> "$LOG"
+if [ "$1 $2" = "auth status" ]; then exit 0; fi
+if [ "$1 $2" = "repo view" ]; then exit 1; fi
+if [ "$1 $2" = "release view" ]; then
+  [ -f "$RD/$3" ] && exit 0 || exit 1
+fi
+if [ "$1 $2" = "release create" ]; then
+  NF=""; PREV=""
+  for a in "$@"; do
+    if [ "$PREV" = "--notes-file" ]; then NF="$a"; fi
+    PREV="$a"
+  done
+  if [ -n "$NF" ] && [ -f "$NF" ] && [ -n "${{GH_STUB_NOTES_OUT:-}}" ]; then
+    cp "$NF" "$GH_STUB_NOTES_OUT"
+  fi
+  if [ -f "$FAIL" ]; then exit 1; fi
+  mkdir -p "$RD"; touch "$RD/$3"; exit 0
+fi
+exit 0
+""")
+        gh.chmod(0o755)
+
+    @classmethod
+    def _make_project(cls, tmp_path):
+        """Scratch project: git repo + bare origin, .company sprint state
+        with a release block, dist artifacts, a CHANGELOG section."""
+        proj = tmp_path / "proj"
+        dist = proj / "dist"
+        dist.mkdir(parents=True)
+        with tarfile.open(dist / f"hive-{cls.VER}.tar.gz", "w:gz") as tf:
+            src = tmp_path / "payload.txt"
+            src.write_text("hive payload\n")
+            tf.add(src, arcname="bin/payload.txt")
+        digest = hashlib.sha256((dist / f"hive-{cls.VER}.tar.gz").read_bytes()).hexdigest()
+        (dist / f"hive-{cls.VER}.sha256").write_text(f"{digest}  hive-{cls.VER}.tar.gz\n")
+        section = ("The release notes body line one.\n"
+                   "The release notes body line two.\n")
+        (proj / "CHANGELOG.md").write_text(
+            f"## {cls.VER}\n\n{section}\n## 0.8.9\n\nOlder release.\n")
+        sprints = proj / ".company" / "sprints"
+        sprints.mkdir(parents=True)
+        (sprints / "current.json").write_text(json.dumps({
+            "sprint_id": "s1", "stage": "release-publish",
+            "release": {"version": cls.VER,
+                        "tarball": f"dist/hive-{cls.VER}.tar.gz",
+                        "sha256": f"dist/hive-{cls.VER}.sha256",
+                        "publish_status": "pending"}}))
+        cls._git(proj, "init", "-q", "-b", "main")
+        cls._git(proj, "add", "-A")
+        cls._git(proj, "commit", "-qm", "base")
+        origin = tmp_path / "origin.git"
+        subprocess.run(["git", "init", "-q", "--bare", str(origin)], check=True)
+        cls._git(proj, "remote", "add", "origin", str(origin))
+        cls._git(proj, "push", "-q", "origin", "main")
+        return proj
+
+    @classmethod
+    def _run_publish(cls, proj, tmp_path, foreign_cwd, fail_create_file):
+        env = {**os.environ,
+               "HIVE_ROOT": str(cls.REPO),
+               "HIVE_CONFIG": str(tmp_path / "no-such-config.toml"),
+               "COMPANY_DIR": str(proj / ".company"),
+               "GH_STUB_LOG": str(tmp_path / "gh-argv.log"),
+               "GH_STUB_RELEASE_DIR": str(tmp_path / "gh-releases"),
+               "GH_STUB_NOTES_OUT": str(tmp_path / "captured-notes.md"),
+               "PATH": str(tmp_path / "bin") + os.pathsep + os.environ["PATH"]}
+        return subprocess.run(
+            ["bash", str(cls.REPO / "lib" / "tools" / "release-publish-runner.sh"),
+             str(proj)],
+            capture_output=True, text=True, timeout=120, env=env,
+            cwd=str(foreign_cwd))
+
+    @classmethod
+    def _publish_status(cls, proj):
+        state = json.loads((proj / ".company" / "sprints" / "current.json").read_text())
+        return state["release"]["publish_status"]
+
+    @classmethod
+    def _create_line(cls, log_file):
+        for line in log_file.read_text().splitlines():
+            if line.startswith("release create"):
+                return line
+        return None
+
+    def test_d1_go_verdict_publish_flow_with_stub_gh(self, tmp_path):
+        """D1: the full GO-verdict publish flow against a stub gh — tag,
+        assets, and verbatim CHANGELOG notes on the `gh release create`
+        invocation; the record completes and the artifacts live under
+        the project root even though the runner is invoked from a
+        foreign cwd (the 0.8.4 cwd class)."""
+        proj = self._make_project(tmp_path)
+        self._stub_gh(tmp_path / "bin", tmp_path / "gh-fail")
+        foreign = tmp_path / "foreign-cwd"
+        foreign.mkdir()
+        r = self._run_publish(proj, tmp_path, foreign, tmp_path / "gh-fail")
+        assert r.returncode == 0, r.stdout + r.stderr
+        line = self._create_line(tmp_path / "gh-argv.log")
+        assert line is not None, "stub gh never saw a 'release create' call"
+        parts = line.split()
+        assert parts[2] == f"v{self.VER}", f"tag wrong in: {line}"
+        assert f"dist/hive-{self.VER}.tar.gz" in line, "tarball asset missing"
+        assert f"dist/hive-{self.VER}.sha256" in line, "sha256 asset missing"
+        assert "--notes-file" in line, "notes file flag missing"
+        notes = (tmp_path / "captured-notes.md").read_text()
+        section = ("The release notes body line one.\n"
+                   "The release notes body line two.\n")
+        assert section in notes, \
+            f"notes must carry the CHANGELOG section verbatim, got: {notes!r}"
+        assert notes.startswith(f"# Release {self.VER}"), \
+            "notes file must open with the release heading"
+        assert self._publish_status(proj) == "published", \
+            "the record must complete: publish_status=published"
+        # Artifacts under the PROJECT root, not the caller's cwd:
+        assert (proj / "dist" / f"hive-{self.VER}.tar.gz").is_file()
+        cwd_artifacts = [p.name for p in foreign.iterdir()
+                         if p.name.startswith("hive-")]
+        assert cwd_artifacts == [], \
+            f"artifacts leaked into the caller's cwd: {cwd_artifacts}"
