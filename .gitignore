@@ -45,6 +45,7 @@ RELEASE_GOALS.md
 .docker/
 .local/
 .gitconfig
+.unsloth_attachments/
 
 # Hive scaffold (tweakable per-project; see negation entries below to track specific tweaks)
 .hive
