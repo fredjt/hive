@@ -1,0 +1,875 @@
+{
+  "responses": {
+    "status": {
+      "status": 200,
+      "body": {
+        "connected": true,
+        "path": "<PROJECT_ROOT>/company",
+        "info": {
+          "manifest": {
+            "name": "fixture-project",
+            "brief": "A fixture company for dashboard tests.",
+            "created_at": "2026-11-01T00:00:00Z"
+          },
+          "orgChart": {
+            "company": "fixture-project",
+            "departments": {
+              "it": {
+                "name": "IT",
+                "vp": "VP-IT"
+              },
+              "marketing": {
+                "name": "Marketing",
+                "vp": "VP-Marketing"
+              }
+            }
+          },
+          "path": "<PROJECT_ROOT>/company"
+        },
+        "started_at": 0
+      }
+    },
+    "departments": {
+      "status": 200,
+      "body": [
+        {
+          "name": "it",
+          "prefix": "IT",
+          "counts": {
+            "backlog": 0,
+            "sprint-current": 1,
+            "in-progress": 1,
+            "in-review": 1,
+            "done": 1
+          },
+          "total": 4
+        },
+        {
+          "name": "marketing",
+          "prefix": "MARKETING",
+          "counts": {
+            "backlog": 1,
+            "sprint-current": 0,
+            "in-progress": 0,
+            "in-review": 0,
+            "done": 0
+          },
+          "total": 1
+        }
+      ]
+    },
+    "processes": {
+      "status": 200,
+      "body": {
+        "processes": [
+          {
+            "pid": 1001,
+            "role": "sprint-lifecycle",
+            "dept": "infrastructure",
+            "interval": "fifo-serial",
+            "started_at": "2026-11-04T08:00:00Z",
+            "restart_count": 0,
+            "alive": false
+          },
+          {
+            "pid": 1002,
+            "role": "company-board",
+            "dept": "infrastructure",
+            "interval": "continuous",
+            "started_at": "2026-11-04T08:00:00Z",
+            "restart_count": 1,
+            "alive": false
+          }
+        ]
+      }
+    },
+    "sprint": {
+      "status": 200,
+      "body": {
+        "departments": {
+          "it": {
+            "counts": {
+              "backlog": 0,
+              "sprint-current": 1,
+              "in-progress": 1,
+              "in-review": 1,
+              "done": 1,
+              "total": 4
+            },
+            "sprint": null
+          },
+          "marketing": {
+            "counts": {
+              "backlog": 1,
+              "sprint-current": 0,
+              "in-progress": 0,
+              "in-review": 0,
+              "done": 0,
+              "total": 1
+            },
+            "sprint": null
+          }
+        },
+        "totals": {
+          "backlog": 1,
+          "sprint-current": 1,
+          "in-progress": 1,
+          "in-review": 1,
+          "done": 1,
+          "total": 5
+        }
+      }
+    },
+    "chat": {
+      "status": 200,
+      "body": [
+        {
+          "name": "engineering",
+          "messageCount": 1,
+          "lastMessage": {
+            "timestamp": "2026-11-04T10:00:00Z",
+            "author": "ic-engineer-1",
+            "body": "Working the rate limiter fix now."
+          }
+        },
+        {
+          "name": "leadership",
+          "messageCount": 2,
+          "lastMessage": {
+            "timestamp": "2026-11-03T15:30:00Z",
+            "author": "VP-IT",
+            "body": "Rate limiter bug is critical; escalated to in-progress."
+          }
+        }
+      ]
+    },
+    "chat/engineering": {
+      "status": 200,
+      "body": {
+        "channel": "engineering",
+        "content": "# Engineering channel\n\n**[2026-11-04T10:00:00Z] ic-engineer-1**\nWorking the rate limiter fix now.\n",
+        "messages": [
+          {
+            "timestamp": "2026-11-04T10:00:00Z",
+            "author": "ic-engineer-1",
+            "body": "Working the rate limiter fix now."
+          }
+        ]
+      }
+    },
+    "roster": {
+      "status": 200,
+      "body": {
+        "updated_at": "2026-11-04T12:00:00Z",
+        "agents": [
+          {
+            "name": "ic-engineer-1",
+            "department": "it",
+            "role": "engineer",
+            "status": "active",
+            "agent_type": "ic",
+            "ticket_id": "IT-0002",
+            "last_active": "2026-11-04T12:00:00Z"
+          },
+          {
+            "name": "ic-tester-1",
+            "department": "it",
+            "role": "tester",
+            "status": "idle",
+            "agent_type": "ic",
+            "ticket_id": null,
+            "last_active": "2026-11-04T11:00:00Z"
+          },
+          {
+            "name": "vp-marketing",
+            "department": "marketing",
+            "role": "vp",
+            "status": "active",
+            "agent_type": "vp",
+            "ticket_id": null,
+            "last_active": "2026-11-04T10:30:00Z"
+          }
+        ]
+      }
+    },
+    "agent-cycles": {
+      "status": 200,
+      "body": {}
+    },
+    "org-chart": {
+      "status": 200,
+      "body": {
+        "company": "fixture-project",
+        "departments": {
+          "it": {
+            "name": "IT",
+            "vp": "VP-IT"
+          },
+          "marketing": {
+            "name": "Marketing",
+            "vp": "VP-Marketing"
+          }
+        },
+        "_roster": {
+          "it": [
+            {
+              "name": "ic-engineer-1",
+              "department": "it",
+              "role": "engineer",
+              "status": "active",
+              "agent_type": "ic",
+              "ticket_id": "IT-0002",
+              "last_active": "2026-11-04T12:00:00Z"
+            },
+            {
+              "name": "ic-tester-1",
+              "department": "it",
+              "role": "tester",
+              "status": "idle",
+              "agent_type": "ic",
+              "ticket_id": null,
+              "last_active": "2026-11-04T11:00:00Z"
+            }
+          ],
+          "marketing": [
+            {
+              "name": "vp-marketing",
+              "department": "marketing",
+              "role": "vp",
+              "status": "active",
+              "agent_type": "vp",
+              "ticket_id": null,
+              "last_active": "2026-11-04T10:30:00Z"
+            }
+          ]
+        }
+      }
+    },
+    "reports": {
+      "status": 200,
+      "body": {
+        "reports": [
+          {
+            "file": "pricing-survey.md",
+            "path": "marketing/reports/pricing-survey.md",
+            "dept": "marketing",
+            "type": "marketing-report",
+            "author": "",
+            "date": "2026-11-04T19:23:51.855Z",
+            "mtime": "2026-11-04T19:23:51.855Z",
+            "title": "Pricing survey",
+            "size": 25,
+            "content": "# Pricing survey\n\nDraft.\n"
+          },
+          {
+            "file": "incident-1.md",
+            "path": "departments/it/reports/incident-1.md",
+            "dept": "it",
+            "type": "dept-report",
+            "author": "",
+            "date": "2026-11-04T19:23:51.855Z",
+            "mtime": "2026-11-04T19:23:51.855Z",
+            "title": "Incident 1",
+            "size": 24,
+            "content": "# Incident 1\n\nResolved.\n"
+          }
+        ],
+        "recommendations": null
+      }
+    },
+    "rounds/current": {
+      "status": 200,
+      "body": {
+        "round_id": "round-010",
+        "source": "sprint-lifecycle",
+        "started_at": "2026-11-04T12:00:00Z",
+        "ended_at": null,
+        "entries": [
+          {
+            "id": "e1",
+            "kind": "spawn",
+            "agent": "ic-engineer-1",
+            "dept": "it",
+            "role": "engineer",
+            "ticket": "IT-0002",
+            "status": "running",
+            "started_at": "2026-11-04T12:00:10Z",
+            "started_ts": 1762339210,
+            "duration_s": null,
+            "queued_by": "sprint-lifecycle"
+          },
+          {
+            "id": "e2",
+            "kind": "spawn",
+            "agent": "agent-2",
+            "dept": "it",
+            "role": "engineer",
+            "ticket": "IT-0002",
+            "status": "done",
+            "started_at": "2026-11-04T10:00:00Z",
+            "started_ts": 1762250400,
+            "duration_s": 42,
+            "queued_by": "sprint-lifecycle"
+          },
+          {
+            "id": "e3",
+            "kind": "spawn",
+            "agent": "ic-tester-1",
+            "dept": "it",
+            "role": "tester",
+            "ticket": "IT-0003",
+            "status": "queued",
+            "started_at": null,
+            "started_ts": null,
+            "duration_s": null,
+            "queued_by": "ic-spawner"
+          }
+        ],
+        "sprint_id": "sprint-20261103T000000Z",
+        "stage": "release-publish",
+        "stage_started_at": "2026-11-04T11:00:00Z",
+        "loop_iteration": 0
+      }
+    },
+    "rounds/next": {
+      "status": 200,
+      "body": {
+        "round_id": "round-011",
+        "source": "ic-spawner",
+        "started_at": "2026-11-04T12:10:00Z",
+        "ended_at": null,
+        "entries": [
+          {
+            "id": "n1",
+            "kind": "spawn",
+            "agent": "ic-engineer-1",
+            "dept": "it",
+            "role": "engineer",
+            "ticket": "IT-0001",
+            "status": "queued",
+            "started_at": null,
+            "started_ts": null,
+            "duration_s": null,
+            "queued_by": "ic-spawner"
+          },
+          {
+            "id": "n2",
+            "kind": "verify",
+            "agent": "verification-ic",
+            "dept": "it",
+            "role": "verification",
+            "ticket": "IT-0003",
+            "status": "queued",
+            "started_at": null,
+            "started_ts": null,
+            "duration_s": null,
+            "queued_by": "verification-runner"
+          }
+        ]
+      }
+    },
+    "rounds/history?limit=30": {
+      "status": 200,
+      "body": {
+        "rounds": [
+          {
+            "round_id": "round-009",
+            "source": "ic-spawner",
+            "started_at": "2026-11-02T09:00:00Z",
+            "ended_at": "2026-11-02T09:10:00Z",
+            "duration_s": 600,
+            "entry_count": 5,
+            "status_counts": {
+              "done": 5
+            },
+            "cost_usd": 0.000072,
+            "tokens": 1200,
+            "calls": 3
+          },
+          {
+            "round_id": "round-008",
+            "source": "sprint-lifecycle",
+            "started_at": "2026-11-01T10:00:00Z",
+            "ended_at": "2026-11-01T10:05:00Z",
+            "duration_s": 300,
+            "entry_count": 4,
+            "status_counts": {
+              "done": 3,
+              "failed": 1
+            },
+            "cost_usd": 0.000018,
+            "tokens": 300,
+            "calls": 2
+          }
+        ],
+        "totals": {
+          "calls": 5,
+          "tokens": 1500,
+          "cost_usd": 0.00009
+        }
+      }
+    },
+    "gh/mirror": {
+      "status": 200,
+      "body": {
+        "issues": {},
+        "prs": {},
+        "_sync_error": "Command failed: gh pr list --state all --limit 100 --json number,state,mergedAt,closedAt,headRefName,title"
+      }
+    },
+    "releases/current": {
+      "status": 200,
+      "body": {
+        "sprint_id": "sprint-20261103T000000Z",
+        "stage": "release-publish",
+        "release_retry_count": 0,
+        "release": {
+          "version": "0.9.0",
+          "test_log": null,
+          "verify_log": null,
+          "tarball": "dist/hive-0.9.0.tar.gz",
+          "sha256": "dist/hive-0.9.0.sha256",
+          "publish_status": "pending"
+        }
+      }
+    },
+    "releases/history?limit=30": {
+      "status": 200,
+      "body": {
+        "releases": []
+      }
+    },
+    "git": {
+      "status": 200,
+      "body": {
+        "log": [
+          {
+            "hash": "c0c21b3",
+            "message": "fixture: initial commit",
+            "date": "2026-11-01 09:00:00 +0000"
+          }
+        ],
+        "branches": [
+          "+ feature/DEG-0001",
+          "main"
+        ],
+        "current_branch": "main",
+        "worktrees": [
+          {
+            "path": "<PROJECT_ROOT>",
+            "head": "c0c21b38cff3be8bcb1d89f1c231543ad51fbf8b",
+            "branch": "main",
+            "isMain": true,
+            "dirty": false,
+            "changedFiles": 0,
+            "committedFiles": 0,
+            "uncommittedFiles": 0,
+            "aheadCommits": 0
+          },
+          {
+            "path": "<PROJECT_ROOT>/.worktrees/DEG-0001",
+            "head": "19c35463478b0f8c0e5cedbf7ccdb2e59621ff06",
+            "branch": "feature/DEG-0001",
+            "ticket": "DEG-0001",
+            "isMain": false,
+            "changedFiles": 2,
+            "committedFiles": 2,
+            "uncommittedFiles": 0,
+            "aheadCommits": 1,
+            "dirty": false,
+            "base": "main"
+          }
+        ]
+      }
+    },
+    "git/worktrees/DEG-0001/files?path=": {
+      "status": 200,
+      "body": {
+        "type": "directory",
+        "entries": [
+          {
+            "name": "company",
+            "type": "dir",
+            "size": 0,
+            "path": "company"
+          },
+          {
+            "name": "company-degenerate",
+            "type": "dir",
+            "size": 0,
+            "path": "company-degenerate"
+          },
+          {
+            "name": "app.txt",
+            "type": "file",
+            "size": 3,
+            "path": "app.txt"
+          },
+          {
+            "name": "new.txt",
+            "type": "file",
+            "size": 28,
+            "path": "new.txt"
+          },
+          {
+            "name": "README.md",
+            "type": "file",
+            "size": 16,
+            "path": "README.md"
+          }
+        ],
+        "currentPath": ""
+      }
+    },
+    "git/worktrees/DEG-0001/diff": {
+      "status": 200,
+      "body": {
+        "files": [
+          {
+            "path": "app.txt",
+            "additions": 1,
+            "deletions": 1,
+            "hunks": [
+              {
+                "header": "@@ -1 +1 @@",
+                "lines": [
+                  {
+                    "type": "del",
+                    "content": "v1",
+                    "oldNum": 1,
+                    "newNum": ""
+                  },
+                  {
+                    "type": "add",
+                    "content": "v2",
+                    "oldNum": "",
+                    "newNum": 1
+                  },
+                  {
+                    "type": "context",
+                    "content": "",
+                    "oldNum": 2,
+                    "newNum": 2
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "path": "new.txt",
+            "additions": 1,
+            "deletions": 0,
+            "hunks": [
+              {
+                "header": "@@ -0,0 +1 @@",
+                "lines": [
+                  {
+                    "type": "add",
+                    "content": "added on the feature branch",
+                    "oldNum": "",
+                    "newNum": 1
+                  },
+                  {
+                    "type": "context",
+                    "content": "",
+                    "oldNum": 0,
+                    "newNum": 2
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "git/branch-history/feature%2FDEG-0001": {
+      "status": 200,
+      "body": {
+        "branch": "feature/DEG-0001",
+        "ticketId": "DEG-0001",
+        "base": "main",
+        "branchExists": true,
+        "commits": [
+          {
+            "hash": "19c35463478b0f8c0e5cedbf7ccdb2e59621ff06",
+            "message": "fixture: second commit",
+            "author": "Fixture Author",
+            "date": "2026-11-02 09:00:00 +0000"
+          }
+        ],
+        "mergeCommit": null,
+        "mergeDiff": []
+      }
+    },
+    "git/commit/c0c21b3": {
+      "status": 200,
+      "body": {
+        "commit": {
+          "hash": "c0c21b38cff3be8bcb1d89f1c231543ad51fbf8b",
+          "message": "fixture: initial commit",
+          "author": "Fixture Author",
+          "date": "2026-11-01 09:00:00 +0000"
+        },
+        "files": []
+      }
+    },
+    "spawns/active": {
+      "status": 200,
+      "body": {
+        "active": []
+      }
+    },
+    "spawns/cycles?limit=200": {
+      "status": 200,
+      "body": {
+        "cycles": []
+      }
+    },
+    "spawns/global-stream?limit=400": {
+      "status": 200,
+      "body": {
+        "events": [],
+        "cursor": "e30=",
+        "total": 0,
+        "active_count": 0
+      }
+    },
+    "departments/it/tickets": {
+      "status": 200,
+      "body": [
+        {
+          "id": "IT-0001",
+          "type": "feature",
+          "title": "Add login endpoint",
+          "description": "Implement /login with token auth.",
+          "created_by": "fixture-gen",
+          "filed_by_department": "it",
+          "source": "sprint-planning",
+          "priority": "high",
+          "status": "sprint-current",
+          "target_department": "it",
+          "assignee": {
+            "role": "unassigned",
+            "agent_id": "",
+            "name": "Unassigned"
+          },
+          "sprint": null,
+          "estimate": "medium",
+          "dependencies": [],
+          "blocked_by": [],
+          "labels": [],
+          "acceptance_criteria": [],
+          "comments": [],
+          "resolution": {
+            "status": null,
+            "resolved_at": null,
+            "resolved_by": null,
+            "git_branch": null,
+            "commit": null,
+            "notes": null
+          },
+          "created_at": "2026-11-04T19:23:50Z",
+          "updated_at": "2026-11-04T19:23:50Z",
+          "external_id": null,
+          "_status_dir": "sprint-current"
+        },
+        {
+          "id": "IT-0002",
+          "type": "bug",
+          "title": "Rate limiter off",
+          "description": "Rate limiter not configured; requests unthrottled.",
+          "created_by": "fixture-gen",
+          "filed_by_department": "it",
+          "source": "sprint-planning",
+          "priority": "critical",
+          "status": "in-progress",
+          "target_department": "it",
+          "assignee": {
+            "role": "unassigned",
+            "agent_id": "",
+            "name": "Unassigned"
+          },
+          "sprint": null,
+          "estimate": "medium",
+          "dependencies": [],
+          "blocked_by": [],
+          "labels": [],
+          "acceptance_criteria": [],
+          "comments": [
+            {
+              "author": "ic-engineer",
+              "timestamp": "2026-11-04T19:23:51Z",
+              "body": "Started the fix; needs review of the token bucket math."
+            }
+          ],
+          "resolution": {
+            "status": null,
+            "resolved_at": null,
+            "resolved_by": null,
+            "git_branch": null,
+            "commit": null,
+            "notes": null
+          },
+          "created_at": "2026-11-04T19:23:50Z",
+          "updated_at": "2026-11-04T19:23:51Z",
+          "external_id": null,
+          "_status_dir": "in-progress"
+        },
+        {
+          "id": "IT-0003",
+          "type": "improvement",
+          "title": "Cache config reads",
+          "description": "Read config.toml from a cache to avoid re-parsing per call.",
+          "created_by": "fixture-gen",
+          "filed_by_department": "it",
+          "source": "sprint-planning",
+          "priority": "medium",
+          "status": "in-review",
+          "target_department": "it",
+          "assignee": {
+            "role": "unassigned",
+            "agent_id": "",
+            "name": "Unassigned"
+          },
+          "sprint": null,
+          "estimate": "medium",
+          "dependencies": [],
+          "blocked_by": [],
+          "labels": [],
+          "acceptance_criteria": [],
+          "comments": [],
+          "resolution": {
+            "status": null,
+            "resolved_at": null,
+            "resolved_by": null,
+            "git_branch": null,
+            "commit": null,
+            "notes": null
+          },
+          "created_at": "2026-11-04T19:23:51Z",
+          "updated_at": "2026-11-04T19:23:51Z",
+          "external_id": null,
+          "_status_dir": "in-review"
+        },
+        {
+          "id": "IT-0004",
+          "type": "chore",
+          "title": "Bump dependencies",
+          "description": "Update pinned dependencies to latest patch versions.",
+          "created_by": "fixture-gen",
+          "filed_by_department": "it",
+          "source": "sprint-planning",
+          "priority": "low",
+          "status": "done",
+          "target_department": "it",
+          "assignee": {
+            "role": "unassigned",
+            "agent_id": "",
+            "name": "Unassigned"
+          },
+          "sprint": null,
+          "estimate": "medium",
+          "dependencies": [],
+          "blocked_by": [],
+          "labels": [],
+          "acceptance_criteria": [],
+          "comments": [],
+          "resolution": {
+            "status": null,
+            "resolved_at": null,
+            "resolved_by": null,
+            "git_branch": null,
+            "commit": null,
+            "notes": null
+          },
+          "created_at": "2026-11-04T19:23:51Z",
+          "updated_at": "2026-11-04T19:23:51Z",
+          "external_id": null,
+          "_status_dir": "done"
+        }
+      ]
+    },
+    "departments/marketing/tickets": {
+      "status": 200,
+      "body": [
+        {
+          "id": "MARKETING-0001",
+          "type": "research",
+          "title": "Competitor pricing survey",
+          "description": "Survey competitor pricing tiers for the Q1 report.",
+          "created_by": "fixture-gen",
+          "filed_by_department": "marketing",
+          "source": "sprint-planning",
+          "priority": "medium",
+          "status": "backlog",
+          "target_department": "marketing",
+          "assignee": {
+            "role": "unassigned",
+            "agent_id": "",
+            "name": "Unassigned"
+          },
+          "sprint": null,
+          "estimate": "medium",
+          "dependencies": [],
+          "blocked_by": [],
+          "labels": [],
+          "acceptance_criteria": [],
+          "comments": [],
+          "resolution": {
+            "status": null,
+            "resolved_at": null,
+            "resolved_by": null,
+            "git_branch": null,
+            "commit": null,
+            "notes": null
+          },
+          "created_at": "2026-11-04T19:23:51Z",
+          "updated_at": "2026-11-04T19:23:51Z",
+          "external_id": null,
+          "_status_dir": "backlog"
+        }
+      ]
+    },
+    "brief": {
+      "status": 200,
+      "body": {
+        "brief": null,
+        "manifest": {
+          "name": "fixture-project",
+          "brief": "A fixture company for dashboard tests.",
+          "created_at": "2026-11-01T00:00:00Z"
+        }
+      }
+    },
+    "marketing": {
+      "status": 200,
+      "body": {
+        "reports": [
+          {
+            "file": "pricing-survey.md",
+            "size": 25,
+            "modified": "2026-11-04T19:23:51.855Z"
+          }
+        ],
+        "output": []
+      }
+    },
+    "config": {
+      "status": 200,
+      "body": {
+        "doctor": null,
+        "llm_test": {
+          "ok": true,
+          "provider": "openai",
+          "model": "gpt-4o",
+          "base_url": "https://api.openai.com/v1",
+          "key_source": "from config [llm].api_key",
+          "latency_ms": 421,
+          "reply": "pong",
+          "error": "",
+          "ts": "2026-11-04T09:00:00Z"
+        }
+      }
+    }
+  }
+}

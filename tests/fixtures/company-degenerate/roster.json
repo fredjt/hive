@@ -1,0 +1,23 @@
+{
+  "updated_at": null,
+  "agents": [
+    {
+      "name": null,
+      "department": null,
+      "role": null,
+      "status": null,
+      "agent_type": null,
+      "ticket_id": null,
+      "last_active": null
+    },
+    {
+      "name": "vp-it",
+      "department": "it",
+      "role": "vp",
+      "status": null,
+      "agent_type": "vp",
+      "ticket_id": null,
+      "last_active": "not-a-timestamp"
+    }
+  ]
+}

@@ -1,0 +1,397 @@
+{
+  "responses": {
+    "status": {
+      "status": 200,
+      "body": {
+        "connected": true,
+        "path": "<PROJECT_ROOT>/company-degenerate",
+        "info": {
+          "manifest": null,
+          "orgChart": null,
+          "path": "<PROJECT_ROOT>/company-degenerate"
+        },
+        "started_at": 0
+      }
+    },
+    "departments": {
+      "status": 200,
+      "body": [
+        {
+          "name": "it",
+          "prefix": "IT",
+          "counts": {
+            "backlog": 0,
+            "sprint-current": 0,
+            "in-progress": 1,
+            "in-review": 0,
+            "done": 0
+          },
+          "total": 1
+        }
+      ]
+    },
+    "processes": {
+      "status": 200,
+      "body": {
+        "error": "processes.json not found",
+        "processes": []
+      }
+    },
+    "sprint": {
+      "status": 200,
+      "body": {
+        "departments": {
+          "it": {
+            "counts": {
+              "backlog": 0,
+              "sprint-current": 0,
+              "in-progress": 1,
+              "in-review": 0,
+              "done": 0,
+              "total": 1
+            },
+            "sprint": null
+          }
+        },
+        "totals": {
+          "backlog": 0,
+          "sprint-current": 0,
+          "in-progress": 1,
+          "in-review": 0,
+          "done": 0,
+          "total": 1
+        }
+      }
+    },
+    "chat": {
+      "status": 200,
+      "body": []
+    },
+    "roster": {
+      "status": 200,
+      "body": {
+        "updated_at": null,
+        "agents": [
+          {
+            "name": null,
+            "department": null,
+            "role": null,
+            "status": null,
+            "agent_type": null,
+            "ticket_id": null,
+            "last_active": null
+          },
+          {
+            "name": "vp-it",
+            "department": "it",
+            "role": "vp",
+            "status": null,
+            "agent_type": "vp",
+            "ticket_id": null,
+            "last_active": "not-a-timestamp"
+          }
+        ]
+      }
+    },
+    "agent-cycles": {
+      "status": 200,
+      "body": {}
+    },
+    "org-chart": {
+      "status": 404,
+      "body": {
+        "error": "org-chart.json not found"
+      }
+    },
+    "reports": {
+      "status": 200,
+      "body": {
+        "reports": [],
+        "recommendations": null
+      }
+    },
+    "rounds/current": {
+      "status": 200,
+      "body": {
+        "error": "no current round",
+        "round_id": null,
+        "entries": [],
+        "cursor": 0,
+        "sprint_id": null,
+        "stage": null
+      }
+    },
+    "rounds/next": {
+      "status": 200,
+      "body": {
+        "error": "no pending plan",
+        "entries": []
+      }
+    },
+    "rounds/history?limit=30": {
+      "status": 200,
+      "body": {
+        "rounds": [],
+        "totals": {
+          "calls": 0,
+          "tokens": 0,
+          "cost_usd": 0
+        }
+      }
+    },
+    "gh/mirror": {
+      "status": 200,
+      "body": {
+        "issues": {},
+        "prs": {},
+        "_sync_error": "Command failed: gh pr list --state all --limit 100 --json number,state,mergedAt,closedAt,headRefName,title"
+      }
+    },
+    "releases/current": {
+      "status": 200,
+      "body": {
+        "sprint_id": null,
+        "stage": null,
+        "release": {}
+      }
+    },
+    "releases/history?limit=30": {
+      "status": 200,
+      "body": {
+        "releases": []
+      }
+    },
+    "git": {
+      "status": 200,
+      "body": {
+        "log": [
+          {
+            "hash": "c0c21b3",
+            "message": "fixture: initial commit",
+            "date": "2026-11-01 09:00:00 +0000"
+          }
+        ],
+        "branches": [
+          "+ feature/DEG-0001",
+          "main"
+        ],
+        "current_branch": "main",
+        "worktrees": [
+          {
+            "path": "<PROJECT_ROOT>",
+            "head": "c0c21b38cff3be8bcb1d89f1c231543ad51fbf8b",
+            "branch": "main",
+            "isMain": true,
+            "dirty": false,
+            "changedFiles": 0,
+            "committedFiles": 0,
+            "uncommittedFiles": 0,
+            "aheadCommits": 0
+          },
+          {
+            "path": "<PROJECT_ROOT>/.worktrees/DEG-0001",
+            "head": "19c35463478b0f8c0e5cedbf7ccdb2e59621ff06",
+            "branch": "feature/DEG-0001",
+            "ticket": "DEG-0001",
+            "isMain": false,
+            "changedFiles": 2,
+            "committedFiles": 2,
+            "uncommittedFiles": 0,
+            "aheadCommits": 1,
+            "dirty": false,
+            "base": "main"
+          }
+        ]
+      }
+    },
+    "git/worktrees/DEG-0001/files?path=": {
+      "status": 200,
+      "body": {
+        "type": "directory",
+        "entries": [
+          {
+            "name": "company",
+            "type": "dir",
+            "size": 0,
+            "path": "company"
+          },
+          {
+            "name": "company-degenerate",
+            "type": "dir",
+            "size": 0,
+            "path": "company-degenerate"
+          },
+          {
+            "name": "app.txt",
+            "type": "file",
+            "size": 3,
+            "path": "app.txt"
+          },
+          {
+            "name": "new.txt",
+            "type": "file",
+            "size": 28,
+            "path": "new.txt"
+          },
+          {
+            "name": "README.md",
+            "type": "file",
+            "size": 16,
+            "path": "README.md"
+          }
+        ],
+        "currentPath": ""
+      }
+    },
+    "git/worktrees/DEG-0001/diff": {
+      "status": 200,
+      "body": {
+        "files": [
+          {
+            "path": "app.txt",
+            "additions": 1,
+            "deletions": 1,
+            "hunks": [
+              {
+                "header": "@@ -1 +1 @@",
+                "lines": [
+                  {
+                    "type": "del",
+                    "content": "v1",
+                    "oldNum": 1,
+                    "newNum": ""
+                  },
+                  {
+                    "type": "add",
+                    "content": "v2",
+                    "oldNum": "",
+                    "newNum": 1
+                  },
+                  {
+                    "type": "context",
+                    "content": "",
+                    "oldNum": 2,
+                    "newNum": 2
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "path": "new.txt",
+            "additions": 1,
+            "deletions": 0,
+            "hunks": [
+              {
+                "header": "@@ -0,0 +1 @@",
+                "lines": [
+                  {
+                    "type": "add",
+                    "content": "added on the feature branch",
+                    "oldNum": "",
+                    "newNum": 1
+                  },
+                  {
+                    "type": "context",
+                    "content": "",
+                    "oldNum": 0,
+                    "newNum": 2
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "git/branch-history/feature%2FDEG-0001": {
+      "status": 200,
+      "body": {
+        "branch": "feature/DEG-0001",
+        "ticketId": "DEG-0001",
+        "base": "main",
+        "branchExists": true,
+        "commits": [
+          {
+            "hash": "19c35463478b0f8c0e5cedbf7ccdb2e59621ff06",
+            "message": "fixture: second commit",
+            "author": "Fixture Author",
+            "date": "2026-11-02 09:00:00 +0000"
+          }
+        ],
+        "mergeCommit": null,
+        "mergeDiff": []
+      }
+    },
+    "git/commit/c0c21b3": {
+      "status": 200,
+      "body": {
+        "commit": {
+          "hash": "c0c21b38cff3be8bcb1d89f1c231543ad51fbf8b",
+          "message": "fixture: initial commit",
+          "author": "Fixture Author",
+          "date": "2026-11-01 09:00:00 +0000"
+        },
+        "files": []
+      }
+    },
+    "spawns/active": {
+      "status": 200,
+      "body": {
+        "active": []
+      }
+    },
+    "spawns/cycles?limit=200": {
+      "status": 200,
+      "body": {
+        "cycles": []
+      }
+    },
+    "spawns/global-stream?limit=400": {
+      "status": 200,
+      "body": {
+        "events": [],
+        "cursor": "e30=",
+        "total": 0,
+        "active_count": 0
+      }
+    },
+    "departments/it/tickets": {
+      "status": 200,
+      "body": [
+        {
+          "id": "DEG-0001",
+          "title": null,
+          "description": null,
+          "type": "bug",
+          "priority": null,
+          "status": "in-progress",
+          "created_at": null,
+          "updated_at": null,
+          "_status_dir": "in-progress"
+        }
+      ]
+    },
+    "brief": {
+      "status": 200,
+      "body": {
+        "brief": null,
+        "manifest": null
+      }
+    },
+    "marketing": {
+      "status": 200,
+      "body": {
+        "reports": [],
+        "output": []
+      }
+    },
+    "config": {
+      "status": 200,
+      "body": {
+        "doctor": null,
+        "llm_test": null
+      }
+    }
+  }
+}
