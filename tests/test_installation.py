@@ -520,6 +520,28 @@ class TestInstallScaffoldsUserConfig:
             "the env-file hint must point at the scaffolded config.toml"
         assert "LLM settings go in" in install
 
+    def test_install_ends_with_next_steps_block(self):
+        """F3: the installer's last word is the onboarding loop — edit
+        [llm], hive doctor, hive init — in that order, on one screen.
+        A static guard, like the env-hint test: the source carries the
+        block, the steps in order, and the [llm] step pointing at the
+        real config path (not a placeholder)."""
+        install = (_repo_root() / "packaging" / "install.sh").read_text()
+        i_steps = install.find("Next steps:")
+        assert i_steps != -1, \
+            "install.sh must end with the next-steps block"
+        tail = install[i_steps:]
+        i_edit = tail.find("Edit [llm]")
+        i_doctor = tail.find("hive doctor")
+        i_init = tail.find("hive init <project-dir>")
+        assert -1 not in (i_edit, i_doctor, i_init), \
+            ("the block must name all three steps: edit [llm], "
+             "hive doctor, hive init")
+        assert 0 <= i_edit < i_doctor < i_init, \
+            "the steps must be in order: edit [llm] → hive doctor → hive init"
+        assert "$USER_CONFIG" in tail, \
+            "the edit-[llm] step must point at the real config path"
+
 
 class TestCutReleaseScript:
     """E1 — packaging/cut-release.sh: the release cut, as a command.

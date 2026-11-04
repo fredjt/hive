@@ -164,11 +164,12 @@ if [ "${#NEEDS_RESTART[@]}" -gt 0 ]; then
 fi
 
 echo ""
-echo "Hive installed (no agent settings written — the built-in harness is the agent runtime). Try:"
-echo "  hive doctor"
-echo "  hive version"
-echo "  hive init <project-dir> --brief 'description'"
-echo "  hive             # launches the dashboard"
+echo "Hive installed (no agent settings written — the built-in harness is the agent runtime)."
+echo ""
+echo "Next steps:"
+echo "  1. Edit [llm] in $USER_CONFIG — pick provider + model (hive config edit)"
+echo "  2. hive doctor"
+echo "  3. hive init <project-dir> --brief 'description'"
 
 # 5. Env-file hint — daemons started via nohup/systemd don't read .zshrc/.bashrc,
 #    so shell-level per-machine env belongs in this file. LLM settings do NOT
