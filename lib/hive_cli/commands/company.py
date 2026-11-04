@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import os
+from datetime import datetime
 import subprocess
 import sys
 from pathlib import Path
@@ -188,6 +189,40 @@ def handle_stop(args) -> int:
     return 1
 
 
+def _config_drift_note(company_dir: str) -> str | None:
+    """D2: the user config is read once at daemon spawn — if the file was
+    modified after the recorded daemon start, the running daemons still
+    hold the OLD config. Return a one-line notice when that is the case
+    (None when there is no drift, or nothing to compare against)."""
+    cfg = Path(os.environ.get("HIVE_CONFIG")
+               or (Path.home() / ".config" / "hive" / "config.toml"))
+    if not cfg.is_file():
+        return None
+    proc_file = Path(company_dir) / "processes.json"
+    if not proc_file.is_file():
+        return None
+    try:
+        data = json.loads(proc_file.read_text())
+    except json.JSONDecodeError:
+        return None
+    starts = []
+    for p in data.get("processes", []):
+        ts = p.get("started_at") or ""
+        if ts:
+            try:
+                starts.append(
+                    datetime.fromisoformat(ts.replace("Z", "+00:00")).timestamp())
+            except ValueError:
+                pass
+    if not starts:
+        return None
+    if cfg.stat().st_mtime > max(starts):
+        return ("config.toml changed after daemons started — "
+                "run 'hive stop && hive start' to apply the new config "
+                "(daemons read the config once at spawn)")
+    return None
+
+
 def handle_status(args) -> int:
     project_root = _project_root(args)
     company_dir = str(Path(project_root) / ".company")
@@ -198,12 +233,20 @@ def handle_status(args) -> int:
     # Daemon state comes straight from processes.json — independent of the
     # MCP server, which matters when the MCP daemon is exactly what died.
     daemons = _daemon_table(company_dir)
+    # D2: config drift — the note must surface even when the MCP server
+    # is down (that is precisely when the operator is looking for why
+    # nothing picks up the new config).
+    drift = _config_drift_note(company_dir)
     if args.json:
         if isinstance(res, dict):
             res["daemons"] = daemons
+            if drift:
+                res["config_drift"] = drift
         print(json.dumps(res, indent=2))
         return 0 if res.get("ok") else 1
 
+    if drift:
+        print(f"\033[33m\u26a0 {drift}\033[0m")
     if not res.get("ok"):
         print(f"ERROR: {res.get('stderr') or res.get('error')}", file=sys.stderr)
         _print_daemons(daemons)
@@ -227,4 +270,6 @@ def handle_status(args) -> int:
             stuck = st.get("stuck_tickets", 0)
             print(f"  {sym} {dept:<30} health={health:<8} bl={bl} sp={sp} ip={ip} ir={ir} done={dn} stuck={stuck} velocity={velocity}")
     _print_daemons(daemons)
+    if drift:
+        print(f"\033[33m\u26a0 {drift}\033[0m")
     return 0

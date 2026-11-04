@@ -760,6 +760,70 @@ class TestDoctorEnvFile:
         assert "WARN" not in r.stdout, r.stdout
 
 
+class TestStatusConfigDrift:
+    """D2: `hive status` surfaces config drift — when the user config was
+    modified after the daemons started, the running daemons still hold
+    the OLD config (env was baked at spawn time). One line says so."""
+
+    install_dir = Path(__file__).resolve().parent.parent
+
+    def _seed(self, tmp_path, started_at, cfg_mtime):
+        import time
+        company = tmp_path / ".company"
+        company.mkdir(exist_ok=True)
+        (company / "processes.json").write_text(json.dumps({
+            "started_at": started_at,
+            "processes": [
+                {"pid": os.getpid(), "role": "hive-mcp",
+                 "started_at": started_at}]}))
+        cfg = tmp_path / ".config" / "hive" / "config.toml"
+        cfg.parent.mkdir(parents=True)
+        cfg.write_text("[llm]\nprovider = \"openai\"\n")
+        time_ns = int(cfg_mtime * 1e9)
+        os.utime(cfg, ns=(time_ns, time_ns))
+        return company
+
+    def _run_status(self, tmp_path, monkeypatch, capsys, as_json=False):
+        import argparse
+        from hive_cli.commands import company
+        monkeypatch.setenv("HOME", str(tmp_path))
+        monkeypatch.delenv("HIVE_CONFIG", raising=False)
+        monkeypatch.setattr(
+            company.mcp_client, "call_tool",
+            lambda name, payload: {"ok": True,
+                                   "data": {"it": {"health": "good",
+                                                    "tickets": {}}}})
+        args = argparse.Namespace(project_dir=str(tmp_path), dept=None,
+                                  json=as_json)
+        rc = company.handle_status(args)
+        return rc, capsys.readouterr().out
+
+    def test_drift_shown_when_config_newer_than_daemons(self, tmp_path,
+                                                        monkeypatch, capsys):
+        import time
+        now = time.time()
+        self._seed(tmp_path, "2026-11-01T00:00:00Z", now)  # config just touched
+        rc, out = self._run_status(tmp_path, monkeypatch, capsys)
+        assert "config.toml changed after daemons started" in out
+        assert "hive stop && hive start" in out
+
+    def test_no_drift_when_config_older_than_daemons(self, tmp_path,
+                                                     monkeypatch, capsys):
+        import time
+        now = time.time()
+        self._seed(tmp_path, "2026-11-02T00:00:00Z", now - 86400 * 30)
+        rc, out = self._run_status(tmp_path, monkeypatch, capsys)
+        assert "changed after daemons started" not in out
+
+    def test_json_mode_carries_drift_note(self, tmp_path, monkeypatch, capsys):
+        import time
+        now = time.time()
+        self._seed(tmp_path, "2026-11-01T00:00:00Z", now)
+        rc, out = self._run_status(tmp_path, monkeypatch, capsys, as_json=True)
+        data = json.loads(out)
+        assert "changed after daemons started" in data.get("config_drift", "")
+
+
 class TestStatusDaemonSection:
     """B.3: `hive status` surfaces per-daemon liveness, restart_count, and
     the supervisor's dead state (restart budget exhausted) read straight
