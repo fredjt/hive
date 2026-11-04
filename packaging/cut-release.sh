@@ -157,8 +157,11 @@ trap 'rm -rf "$STAGE"' EXIT
 tar -xzf "$TARBALL" -C "$STAGE"
 # Same pattern set the history-scrub guard pins (tests/test_history_scrub.py):
 # a credential in the public tarball is a leak of the same class as one in
-# history.
-PATTERNS='gho_[A-Za-z0-9]{8,}|ghp_[A-Za-z0-9]{8,}|github_pat_[A-Za-z0-9_]{8,}|sk-[A-Za-z0-9]{16,}|AKIA[0-9A-Z]{16}|BEGIN [A-Z ]*PRIVATE KEY|xox[baprs]-[A-Za-z0-9-]{8,}|eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{5,}'
+# history. The private-key header is assembled from string parts so this
+# script's own blob stays clean under the guard it invokes (the guard
+# assembles the same pattern from fragments for the same reason).
+_PKEY="PRIVATE"
+PATTERNS="gho_[A-Za-z0-9]{8,}|ghp_[A-Za-z0-9]{8,}|github_pat_[A-Za-z0-9_]{8,}|sk-[A-Za-z0-9]{16,}|AKIA[0-9A-Z]{16}|BEGIN [A-Z ]*${_PKEY} KEY|xox[baprs]-[A-Za-z0-9-]{8,}|eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{5,}"
 HITS="$(grep -rInE "$PATTERNS" "$STAGE" || true)"
 {
   echo "# Credential-pattern scan — hive-$VERSION.tar.gz"

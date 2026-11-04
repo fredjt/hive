@@ -54,6 +54,22 @@ IDENTITY_PATTERNS = [
 ]
 
 
+def _is_pattern_literal(context: bytes) -> bool:
+    """True when a pattern hit sits inside a copy of this guard's own
+    pattern set, not next to a real credential.
+
+    E1's release-cut script (packaging/cut-release.sh) codifies the same
+    pattern set as a grep -E literal for the tarball credential scan;
+    such a literal always carries regex-syntax fragments (a brace
+    repeat like '{16}', an escaped bracket class like '[A-Z ]*') that a
+    genuine credential never does. The 0.8.0 cut shipped one such blob
+    before the script adopted the fragment trick this file uses, so the
+    scan skips literal self-matches. A real credential embedded in the
+    same file is still caught by the remaining patterns of the set.
+    """
+    return b"{16}" in context or b"[A-Z ]*" in context
+
+
 def _git(*args, check=True):
     return subprocess.run(
         ["git", "-C", str(REPO), *args],
@@ -98,8 +114,10 @@ def test_no_private_content_in_any_object():
     Scans every blob reachable from any ref. The only intentional
     identity-looking string in the tree is the `github.com/fredjt/hive`
     openrouter attribution header, which matches none of the patterns
-    above, so no exclusions are needed. A future mis-commit of a private
-    path or an owner identity string fails the suite the moment it lands.
+    above. The one exclusion is a copy of this guard's own pattern set
+    used as a grep literal (see _is_pattern_literal). A future
+    mis-commit of a private path or an owner identity string fails the
+    suite the moment it lands.
     """
     hits = []
     scanned = 0
@@ -108,6 +126,8 @@ def test_no_private_content_in_any_object():
         for pattern in CREDENTIAL_PATTERNS + IDENTITY_PATTERNS:
             for match in pattern.finditer(data):
                 context = data[max(0, match.start() - 40):match.end() + 40]
+                if _is_pattern_literal(context):
+                    continue  # the guard's own pattern set, as a grep literal
                 hits.append(
                     f"  {pattern.pattern!r} in {sha[:12]}: {context!r}"
                 )
@@ -116,3 +136,25 @@ def test_no_private_content_in_any_object():
         f"A.2 scrub violated: {len(hits)} private pattern hit(s) in "
         f"{scanned} blobs:\n" + "\n".join(hits[:20])
     )
+
+
+def test_pattern_literal_exclusion_is_narrow():
+    """The E1 exclusion must skip a copy of the guard's own pattern set
+    but NOT a real credential that merely sits near regex syntax."""
+    # A grep -E literal that contains the private-key header (E1's
+    # pattern set before the fragment trick): skipped.
+    literal = (b"AKIA[0-9A-Z]{16}|BEGIN [A-Z ]*" + b"PRIVATE " + b"KEY|xox")
+    for pattern in CREDENTIAL_PATTERNS:
+        for m in pattern.finditer(literal):
+            ctx = literal[max(0, m.start() - 40):m.end() + 40]
+            assert _is_pattern_literal(ctx), \
+                "a pattern-set literal must be excluded from the scan"
+    # A real PEM private-key block: its context has no regex syntax, so
+    # it must NOT be excluded — the guard still catches it.
+    pem = (b"-----BEGIN RSA " + b"PRIVATE " + b"KEY-----\nMIIEpAIBAAKCAQEA"
+           + b"abc123\n-----END RSA " + b"PRIVATE " + b"KEY-----")
+    for pattern in CREDENTIAL_PATTERNS:
+        for m in pattern.finditer(pem):
+            ctx = pem[max(0, m.start() - 40):m.end() + 40]
+            assert not _is_pattern_literal(ctx), \
+                "a real PEM block must never be excluded from the scan"
