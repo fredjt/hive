@@ -519,3 +519,75 @@ class TestInstallScaffoldsUserConfig:
         assert "$USER_CONFIG" in install, \
             "the env-file hint must point at the scaffolded config.toml"
         assert "LLM settings go in" in install
+
+
+class TestTarballContentGuard:
+    """E2 — pin the files install.sh reads at runtime in the tarball.
+
+    The 0.7.1 template shipped by accident of the `for d in ... etc ...`
+    copy loop; this guard makes the requirement explicit so a future
+    restructure that drops any of these files fails the suite instead of
+    a fresh-machine install.
+    """
+
+    #: Every entry install.sh dereferences at runtime, plus the defaults
+    #: schema (hive config's unknown-key validation needs it on the target).
+    REQUIRED_ENTRIES = (
+        "bin/hive",
+        "etc/config.template.toml",
+        "etc/config.defaults.toml",
+        "packaging/requirements.txt",
+    )
+
+    def _build(self, tmp_path: Path) -> tuple[Path, list[str]]:
+        out_dir = tmp_path / "dist"
+        repo = _repo_root()
+        result = subprocess.run(
+            ["bash", str(repo / "packaging" / "build-package.sh"),
+             "--out-dir", str(out_dir)],
+            capture_output=True, text=True, timeout=300,
+            cwd=str(repo),
+        )
+        assert result.returncode == 0, (
+            "build-package.sh failed:\n"
+            f"{result.stdout}\n{result.stderr}"
+        )
+        tarballs = sorted(out_dir.glob("hive-*.tar.gz"))
+        assert len(tarballs) == 1, (
+            f"expected exactly one tarball in {out_dir}, got "
+            f"{[t.name for t in tarballs]}"
+        )
+        listing = subprocess.run(
+            ["tar", "-tzf", str(tarballs[0])],
+            capture_output=True, text=True, timeout=60,
+        )
+        assert listing.returncode == 0, listing.stderr
+        return tarballs[0], listing.stdout.splitlines()
+
+    def test_tarball_contains_files_install_reads(self, tmp_path):
+        tarball, listing = self._build(tmp_path)
+        missing = [
+            entry for entry in self.REQUIRED_ENTRIES
+            if not any(line.endswith(f"/{entry}") or line == entry
+                       for line in listing)
+        ]
+        assert not missing, (
+            f"{tarball.name} is missing entries install.sh reads at "
+            f"runtime: {missing}"
+        )
+
+    def test_tarball_ships_sha256_sidecar(self, tmp_path):
+        tarball, _ = self._build(tmp_path)
+        # build-package.sh names the sidecar <pkg>.sha256 next to
+        # <pkg>.tar.gz (not .tar.gz.sha256).
+        sidecar = tarball.parent / (tarball.name[:-len(".tar.gz")] + ".sha256")
+        assert sidecar.is_file(), (
+            "the sha256 sidecar must sit next to the tarball"
+        )
+        content = sidecar.read_text().strip().split()
+        assert len(content) == 2, "sidecar must be '<hash>  <filename>'"
+        import hashlib
+        digest = hashlib.sha256(tarball.read_bytes()).hexdigest()
+        assert content[0] == digest, (
+            "sidecar hash does not match the tarball bytes"
+        )
