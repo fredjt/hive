@@ -124,8 +124,23 @@ fi
 # Log the spawn
 echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) $SPAWN_ID agent=$HIVE_AGENT role=${HIVE_ROLE:-} ticket=${HIVE_TICKET:-}" >> "$COMPANY_DIR/logs/spawns.log"
 
-# Run the agent harness
-exec python3 -u "$HIVE_ROOT/lib/core/agent-harness.py" \
+# Run the agent harness — under the install's venv python. The venv is
+# where the harness's dependencies (httpx, ...) live; bare python3 on PATH
+# usually lacks them, in which case the harness silently disables LLM and
+# MCP calls ("LLM unavailable: httpx not installed") even though
+# `hive doctor` — which checks the venv interpreter — reports all green.
+# Resolution: HIVE_INSTALL_DIR if set, else derive from this script's own
+# location (it ships at <install>/lib/core/ — the same contract as the
+# Python side's HIVE_INSTALL_DIR default).
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+INSTALL_DIR="${HIVE_INSTALL_DIR:-$(dirname "$(dirname "$SCRIPT_DIR")")}"
+HARNESS_PY="python3"
+if [ -x "$INSTALL_DIR/venv/bin/python" ]; then
+  HARNESS_PY="$INSTALL_DIR/venv/bin/python"
+else
+  echo "agent-spawn: WARNING: no venv python at $INSTALL_DIR/venv/bin/python — falling back to python3 on PATH (LLM/MCP calls may be disabled if it lacks httpx)" >&2
+fi
+exec "$HARNESS_PY" -u "$HIVE_ROOT/lib/core/agent-harness.py" \
   --mcp-url "http://${MCP_HOST}:${MCP_PORT}/mcp" \
   $MODEL_ARG \
   -- "$PROMPT" 2>&1 | tee "$STREAM_FILE"

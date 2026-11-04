@@ -931,6 +931,85 @@ class TestAgentSpawnVerificationModel:
         assert self._model_from(argv["argv"]) is None
 
 
+class TestAgentSpawnPython:
+    """The harness must run under the install's venv python.
+
+    Regression: agent-spawn.sh used to exec bare `python3` from PATH. On a
+    machine whose system python lacks httpx, every spawned agent died at
+    turn 0 with "LLM unavailable: httpx not installed" while `hive doctor`
+    — which checks the venv interpreter — reported everything green.
+    The venv stub records its own invocation, so these tests prove the
+    real agent-spawn.sh picked the venv's python (and that the fallback
+    still works when no venv exists, e.g. a source checkout).
+    """
+
+    def _scratch(self, tmp_path, with_venv=True):
+        root = tmp_path / "hive-root"
+        (root / "lib" / "core").mkdir(parents=True)
+        (root / "lib" / "core" / "agent-harness.py").write_text(
+            "import sys, json\n"
+            "print(json.dumps({'argv': sys.argv[1:]}))\n")
+        # Run the REAL spawn script from inside the scratch install tree,
+        # so the script's location-derived install dir resolves to it.
+        (root / "lib" / "core" / "agent-spawn.sh").write_text(
+            Path(f"{CORE_DIR}/agent-spawn.sh").read_text())
+        marker = tmp_path / "venv-used"
+        if with_venv:
+            vbin = root / "venv" / "bin"
+            vbin.mkdir(parents=True)
+            vpy = vbin / "python"
+            vpy.write_text(
+                "#!/bin/sh\n"
+                f"echo used >> '{marker}'\n"
+                "exec python3 \"$@\"\n")
+            os.chmod(vpy, 0o755)
+        return root, marker
+
+    def _run_spawn(self, tmp_path, root):
+        home = tmp_path / "home"
+        (home / ".config" / "hive").mkdir(parents=True)
+        env = os.environ.copy()
+        env.pop("HIVE_INSTALL_DIR", None)
+        env.pop("HIVE_VERIFICATION_MODEL", None)
+        env.update({
+            "HIVE_ROOT": str(root),
+            "HOME": str(home),
+            "HIVE_ROLE": "IC",
+            "COMPANY_DIR": str(tmp_path / "company"),
+            # Do not source the real operator env file.
+            "HIVE_ENV_FILE": str(tmp_path / "no-such-env.sh"),
+        })
+        return subprocess.run(
+            ["bash", str(root / "lib" / "core" / "agent-spawn.sh"),
+             "--", "test prompt"],
+            capture_output=True, text=True, timeout=30, env=env)
+
+    @staticmethod
+    def _harness_ran(r):
+        return any(line.startswith("{") for line in r.stdout.splitlines())
+
+    def test_harness_runs_under_venv_python(self, tmp_path):
+        root, marker = self._scratch(tmp_path, with_venv=True)
+        r = self._run_spawn(tmp_path, root)
+        assert r.returncode == 0, f"{r.stdout!r} {r.stderr!r}"
+        assert self._harness_ran(r), f"harness did not run: {r.stdout!r}"
+        assert marker.exists() and "used" in marker.read_text(), (
+            "agent-spawn.sh did not exec the install's venv python — the "
+            "harness ran under python3 on PATH, which may lack httpx "
+            "(LLM/MCP calls silently disabled while `hive doctor` stays "
+            "green)")
+
+    def test_falls_back_to_python3_without_venv(self, tmp_path):
+        root, marker = self._scratch(tmp_path, with_venv=False)
+        r = self._run_spawn(tmp_path, root)
+        assert r.returncode == 0, f"{r.stdout!r} {r.stderr!r}"
+        assert self._harness_ran(r), f"harness did not run: {r.stdout!r}"
+        assert not marker.exists()
+        assert "WARNING" in r.stderr, (
+            "expected the no-venv fallback to warn on stderr "
+            f"(got: {r.stderr!r})")
+
+
 class TestAllScriptsExist:
     """Ensure every .sh file in lib/tools/ is executable and parseable."""
 
