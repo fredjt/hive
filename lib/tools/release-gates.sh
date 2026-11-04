@@ -93,10 +93,16 @@ for c in CHANGELOG.md CHANGELOG marketing/output/CHANGELOG.md .company/marketing
   if [ -f "$PROJECT_ROOT/$c" ]; then clog="$c"; break; fi
 done
 if [ -n "$clog" ]; then
-  if grep -qF "$VERSION" "$PROJECT_ROOT/$clog" 2>/dev/null; then
-    record "changelog" "pass" "$clog contains $VERSION"
+  # Match the version without the leading v — changelog sections are
+  # headed '## X.Y.Z', so a v-prefixed grep (the documented usage is
+  # '--version vX.Y.Z') can never pass — and require a non-digit on
+  # each side so 0.8.3 doesn't match inside 0.8.30.
+  ver_no_v="${VERSION#v}"
+  ver_re="${ver_no_v//./\\.}"
+  if grep -qE "(^|[^0-9])v?${ver_re}([^0-9]|$)" "$PROJECT_ROOT/$clog" 2>/dev/null; then
+    record "changelog" "pass" "$clog has an entry for $ver_no_v"
   else
-    record "changelog" "fail" "$clog has no entry for $VERSION"
+    record "changelog" "fail" "$clog has no entry for $ver_no_v"
   fi
 else
   record "changelog" "skip" "no CHANGELOG file present"
