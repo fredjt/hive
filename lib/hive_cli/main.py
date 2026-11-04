@@ -202,7 +202,10 @@ def _add_killall(sub) -> None:
 def _add_llm(sub) -> None:
     p = sub.add_parser("llm", help="LLM usage (stats/tail) + endpoint test")
     sp = p.add_subparsers(dest="action", required=True)
-    sp.add_parser("stats", help="Counts by caller and mode over last 24h/1h")
+    s = sp.add_parser("stats", help="Windowed call/token/cost totals")
+    s.add_argument("--window", default="24h", choices=["1h", "24h", "7d", "all"],
+                   help="time window to sum (default: 24h)")
+    s.add_argument("--json", action="store_true", help="machine-readable output")
     pt = sp.add_parser("tail", help="Tail recent LLM calls")
     pt.add_argument("-n", type=int, default=20, help="number of recent calls to show")
     sp.add_parser("test", help="One-shot round trip through the configured endpoint (B1)")

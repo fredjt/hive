@@ -218,15 +218,24 @@ def handle(args) -> int:
             print(f"{ts:<22} {caller:<40} {mode:<8} → {resp}")
         return 0
 
-    # stats
+    # stats — B2 (0.9.0): windowed totals with token + cost accounting.
+    window = getattr(args, "window", "24h") or "24h"
+    if window not in ("1h", "24h", "7d", "all"):
+        print(f"ERROR: --window must be 1h, 24h, 7d, or all (got {window!r})", file=sys.stderr)
+        return 1
     now = datetime.now(timezone.utc)
-    cutoff_24h = now - timedelta(hours=24)
-    cutoff_1h = now - timedelta(hours=1)
+    window_seconds = {"1h": 3600, "24h": 86400, "7d": 7 * 86400}.get(window)
+    cutoff = (now - timedelta(seconds=window_seconds)) if window_seconds else None
 
-    by_caller_24h: Counter = Counter()
-    by_caller_1h: Counter = Counter()
-    by_mode_24h: Counter = Counter()
+    calls = 0
+    total_tokens = 0
+    total_cost = 0.0
+    by_caller: Counter = Counter()
+    by_mode: Counter = Counter()
     last_call_per_caller: dict = {}
+    model_calls: Counter = Counter()
+    model_tokens: Counter = Counter()
+    model_cost: dict = {}
 
     for e in entries:
         ts_str = e.get("ts", "")
@@ -234,25 +243,67 @@ def handle(args) -> int:
             ts = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
         except ValueError:
             continue
+        if cutoff is not None and ts < cutoff:
+            continue
+        calls += 1
         caller = e.get("caller", "unknown")
         mode = e.get("mode", "?")
-        if ts > cutoff_24h:
-            by_caller_24h[caller] += 1
-            by_mode_24h[mode] += 1
-        if ts > cutoff_1h:
-            by_caller_1h[caller] += 1
+        model = e.get("model", "") or "(unknown)"
+        # Backward compat: pre-0.9.0 entries have no cost_usd (and odd ones
+        # have no tokens) — both count as 0, never a crash.
+        tokens = e.get("tokens") or 0
+        cost = float(e.get("cost_usd") or 0.0)
+        try:
+            tokens = int(tokens)
+        except (TypeError, ValueError):
+            tokens = 0
+        total_tokens += tokens
+        total_cost += cost
+        by_caller[caller] += 1
+        by_mode[mode] += 1
+        model_calls[model] += 1
+        model_tokens[model] += tokens
+        model_cost[model] = model_cost.get(model, 0.0) + cost
         if caller not in last_call_per_caller or ts > last_call_per_caller[caller]:
             last_call_per_caller[caller] = ts
 
+    since = cutoff.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ") if cutoff else None
+
+    if getattr(args, "json", False):
+        print(json.dumps({
+            "log": str(log_path),
+            "window": window,
+            "since": since,
+            "calls": calls,
+            "tokens": total_tokens,
+            "cost_usd": total_cost,
+            "by_model": {
+                m: {"calls": model_calls[m], "tokens": model_tokens[m],
+                    "cost_usd": round(model_cost.get(m, 0.0), 8)}
+                for m in model_calls
+            },
+            "by_caller": dict(by_caller),
+            "by_mode": dict(by_mode),
+        }, indent=2))
+        return 0
+
+    window_label = window if window != "all" else "all (entire log)"
     print(f"llm usage — log at {log_path}")
-    print(f"  total calls logged: {len(entries)}")
-    print(f"  in last 24h:        {sum(by_caller_24h.values())}")
-    print(f"  in last 1h:         {sum(by_caller_1h.values())}")
+    print(f"  window: {window_label}" + (f" (since {since})" if since else ""))
+    print(f"    calls:  {calls}")
+    print(f"    tokens: {total_tokens}")
+    print(f"    cost:   ${total_cost:.6f}")
     print()
 
-    if by_caller_24h:
-        print("By caller (last 24h):")
-        for caller, n in by_caller_24h.most_common():
+    if model_calls:
+        print("By model:")
+        for m, n in model_calls.most_common():
+            print(f"  {n:>4}  {m:<30} tokens={model_tokens[m]:>8}  cost=${model_cost.get(m, 0.0):.6f}")
+        print()
+
+    if by_caller:
+        print(f"By caller (window {window}):")
+        for caller, n in by_caller.most_common():
             last = last_call_per_caller.get(caller)
             ago = ""
             if last:
@@ -261,14 +312,10 @@ def handle(args) -> int:
             print(f"  {n:>4}  {caller:<45} (last {ago})")
         print()
 
-    if by_mode_24h:
-        print("By mode (last 24h):")
-        for mode, n in by_mode_24h.most_common():
+    if by_mode:
+        print(f"By mode (window {window}):")
+        for mode, n in by_mode.most_common():
             print(f"  {n:>4}  {mode}")
         print()
 
-    print("Wires currently configured:")
-    print("  classify-ticket → ticket-route-expedited.sh (when --type=auto or --dept=auto)")
-    print("  narrate-status     → company-start.sh pulse loop (every 5 min, per dept)")
-    print("  summarize-thread   → company-start.sh pulse loop (every 5 min, leadership digest)")
     return 0

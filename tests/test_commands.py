@@ -735,6 +735,104 @@ class TestLlmUsageLogNaming:
         assert "llm-usage.log" in r.stdout + r.stderr
 
 
+class TestLlmStatsWindow:
+    """B2 (0.9.0): `hive llm stats` — windowed token/cost totals.
+
+    Replaces the fixed 24h/1h pair with --window 1h|24h|7d|all, adds
+    token + cost totals aggregated by model, and --json for scraping.
+    Entries without a cost field (pre-0.9.0) sum as 0, not an error.
+    """
+
+    install_dir = Path(__file__).resolve().parent.parent
+
+    @staticmethod
+    def _seed(company: Path, entries):
+        logs = company / "logs"
+        logs.mkdir(parents=True, exist_ok=True)
+        (logs / "llm-usage.log").write_text(
+            "".join(json.dumps(e) + "\n" for e in entries))
+
+    @staticmethod
+    def _run(company, *args):
+        env = {**os.environ, "COMPANY_DIR": str(company),
+               "HIVE_ROOT": str(TestLlmStatsWindow.install_dir),
+               "PYTHONPATH": str(TestLlmStatsWindow.install_dir / "lib")
+               + os.pathsep + os.environ.get("PYTHONPATH", "")}
+        return subprocess.run(
+            [sys.executable, "-m", "hive_cli.main", "llm", *args],
+            capture_output=True, text=True, env=env,
+            cwd=str(TestLlmStatsWindow.install_dir), timeout=60,
+        )
+
+    @staticmethod
+    def _entries(now):
+        from datetime import timedelta
+        def mk(hours_ago, tokens, cost, model="gpt-4o", caller="ic-engineer"):
+            ts = (now - timedelta(hours=hours_ago)).strftime("%Y-%m-%dT%H:%M:%SZ")
+            return {"ts": ts, "caller": caller, "mode": "agent", "model": model,
+                    "turn": 1, "tokens": tokens, "cost_usd": cost, "response": "x"}
+        return [
+            mk(0.5, 100, 0.001),      # inside 1h
+            mk(12, 200, 0.002),       # inside 24h
+            mk(3 * 24, 300, 0.003),   # inside 7d
+            mk(10 * 24, 400, 0.004),  # only in all
+            mk(1.5, 50, 0.0),         # legacy shape: no cost field, 1h
+        ]
+
+    EXPECTED = {
+        "1h": (1, 100, 0.001),    # only the 0.5h entry
+        "24h": (3, 350, 0.003),   # + 12h entry + 1.5h legacy entry
+        "7d": (4, 650, 0.006),    # + 3d entry
+        "all": (5, 1050, 0.010),  # + 10d entry
+    }
+
+    def test_each_window_returns_correct_totals_json(self, tmp_path):
+        from datetime import datetime, timezone
+        now = datetime.now(timezone.utc)
+        company = tmp_path / ".company"
+        company.mkdir()
+        self._seed(company, self._entries(now))
+        for window, (calls, tokens, cost) in self.EXPECTED.items():
+            r = self._run(company, "stats", "--window", window, "--json")
+            assert r.returncode == 0, (window, r.stderr)
+            j = json.loads(r.stdout)
+            assert j["window"] == window
+            assert j["calls"] == calls, (window, j)
+            assert j["tokens"] == tokens, (window, j)
+            assert j["cost_usd"] == pytest.approx(cost), (window, j)
+            m = j["by_model"]["gpt-4o"]
+            assert (m["calls"], m["tokens"], m["cost_usd"]) == \
+                (calls, tokens, pytest.approx(cost)), (window, m)
+
+    def test_json_matches_text_run(self, tmp_path):
+        from datetime import datetime, timezone
+        now = datetime.now(timezone.utc)
+        company = tmp_path / ".company"
+        company.mkdir()
+        self._seed(company, self._entries(now))
+        rj = self._run(company, "stats", "--window", "24h", "--json")
+        j = json.loads(rj.stdout)
+        r = self._run(company, "stats", "--window", "24h")
+        assert r.returncode == 0, r.stderr
+        assert f"calls:  {j['calls']}" in r.stdout
+        assert f"tokens: {j['tokens']}" in r.stdout
+        assert f"cost:   ${j['cost_usd']:.6f}" in r.stdout
+        assert "By model" in r.stdout and "gpt-4o" in r.stdout
+
+    def test_legacy_entry_without_cost_sums_zero(self, tmp_path):
+        from datetime import datetime, timezone
+        now = datetime.now(timezone.utc)
+        company = tmp_path / ".company"
+        company.mkdir()
+        e = self._entries(now)[4]  # the cost-less entry (1.5h old)
+        self._seed(company, [e])
+        r = self._run(company, "stats", "--window", "24h", "--json")
+        assert r.returncode == 0, r.stderr
+        j = json.loads(r.stdout)
+        assert j["calls"] == 1 and j["tokens"] == 50
+        assert j["cost_usd"] == pytest.approx(0.0)
+
+
 class TestDoctorJson:
     """C1: `hive doctor --json` — a machine-readable dump of every check
     (name, ok, detail) on stdout; the exit code is unchanged from the
