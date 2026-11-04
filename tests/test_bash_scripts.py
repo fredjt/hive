@@ -2274,3 +2274,57 @@ exit 0
                          if p.name.startswith("hive-")]
         assert cwd_artifacts == [], \
             f"artifacts leaked into the caller's cwd: {cwd_artifacts}"
+
+    def test_d2_partial_publish_retry(self, tmp_path):
+        """The exact 0.8.4 scenario, codified: run 1 pushes the tag, the
+        stub gh fails before the release exists (record left dangling);
+        run 2 detects the existing tag and completes the publish — the
+        semver gate excludes the candidate's own tag (the 0.8.4 fix),
+        so the retry is legal."""
+        proj, ver = self._make_project(tmp_path)
+        v = "v" + ver
+        tag = tmp_path / "gh-fail"
+        notes = tmp_path / "cap2.md"
+        bindir = tmp_path / "bin2"
+        self._stub_gh(bindir, str(tag))
+        foreign = tmp_path / "run2"
+        foreign.mkdir()
+        # ── run 1: publish fails after the tag is pushed ──
+        r1 = self._run(proj, foreign, "1", tag, notes)
+        assert r1.returncode != 0, "run 1 must fail (gh release create refused)"
+        state = json.loads((proj / ".company" / "sprints" / "current.json").read_text())
+        assert state["release"]["publish_status"] == "failed", \
+            "after run 1 the record is incomplete (publish_status=failed)"
+        t1 = self._git(proj, "tag", "-l")
+        assert v in t1.stdout.split(), "run 1 must have created the tag"
+        origin = tmp_path / "origin.git"
+        to = self._git(origin, "tag", "-l")
+        assert v in to.stdout.split(), \
+            "run 1 must have PUSHED the tag to origin (partial publish)"
+        assert not (tmp_path / "rel" / v).exists(), \
+            "run 1: no release exists (gh create failed)"
+        assert (proj / ".company" / "releases" / f"{v}-publish.log").is_file(), \
+            "the dangling record: the publish log exists"
+        # The retry is legal: the semver gate excludes the candidate's
+        # own tag (0.8.4) — a re-run for the tagged version must not
+        # fail 'not greater than previous tag'.
+        g = subprocess.run(
+            ["bash", str(self.REPO / "lib" / "tools" / "release-gates.sh"),
+             "--version", v, "--dry-run"],
+            capture_output=True, text=True, timeout=60, cwd=str(proj),
+            env={**os.environ, "COMPANY_DIR": str(proj / ".company"),
+                 "HIVE_ROOT": str(self.REPO)})
+        gates = g.stdout + g.stderr
+        assert "semver" in gates and "pass" in gates, \
+            f"semver gate must pass with the candidate's own tag present:\n{gates}"
+        assert "not greater than previous" not in gates, gates
+        # ── run 2: completes the publish ──
+        tag.unlink()
+        r2 = self._run(proj, foreign, "0", tag, notes)
+        assert r2.returncode == 0, "run 2 must complete the publish"
+        state = json.loads((proj / ".company" / "sprints" / "current.json").read_text())
+        assert state["release"]["publish_status"] == "published"
+        assert (tmp_path / "rel" / v).exists(), "after run 2 the release exists"
+        t2 = self._git(proj, "tag", "-l")
+        assert t2.stdout.split().count(v) == 1, "the existing tag is reused, not duplicated"
+        assert (proj / ".company" / "releases" / f"{v}-publish.log").is_file()
