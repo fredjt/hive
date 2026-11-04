@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.8.2
+
+Dashboard reference-error fix.
+
+The 0.8.0 meetings/inbox-outbox removal deleted the `renderMarkdown()`
+helper, `renderRosterAgents()`, and the `orgShowActiveOnly`/
+`toggleOrgActive` org-chart state — but the call sites in the ticket
+detail, chat, reports, brief and org views survived. Clicking Org or
+Brief threw `ReferenceError` and only the browser console noticed. A
+leftover `return html;` after a live return in the unused legacy
+`renderOrgNode()` made every browser print "unreachable code after
+return statement" on load as well.
+
+- The three helpers are restored (the claimed-badge tooltip is
+  reworded to zero-trace-neutral wording) and the dead
+  `renderOrgNode()` function is deleted; the Org chart's "Show Active
+  Only" toggle works again.
+- Three new guards in `TestEmbeddedSpaScript` parse the DELIVERED
+  script — the exact bytes the browser runs, which `node --check
+  server.js` cannot see (it parses the template as a string): every
+  call in the SPA resolves, no statement follows a completed `return`,
+  and every `on*` handler in the delivered HTML resolves to a defined
+  function.
+
 ## 0.8.1
 
 Dashboard script parse fix.

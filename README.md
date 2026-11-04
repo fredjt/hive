@@ -24,19 +24,19 @@ external agent CLI is installed, invoked, or required.
 
 ## Get Hive
 
-Latest release: **v0.8.1**.
+Latest release: **v0.8.2**.
 
 **Release tarball** (no git required):
 
-1. Download `hive-0.8.1.tar.gz` and its `hive-0.8.1.sha256` sidecar
+1. Download `hive-0.8.2.tar.gz` and its `hive-0.8.2.sha256` sidecar
    from the [releases page](https://github.com/fredjt/hive/releases).
 2. Verify the download before installing:
-   `sha256sum -c hive-0.8.1.sha256` (the sidecar carries the expected hash).
+   `sha256sum -c hive-0.8.2.sha256` (the sidecar carries the expected hash).
 3. Extract and install:
 
    ```bash
-   tar xzf hive-0.8.1.tar.gz
-   bash hive-0.8.1/packaging/install.sh --copy-to ~/.local/share/hive
+   tar xzf hive-0.8.2.tar.gz
+   bash hive-0.8.2/packaging/install.sh --copy-to ~/.local/share/hive
    ```
 
 **From source**:
