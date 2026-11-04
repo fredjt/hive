@@ -31,7 +31,7 @@ The dashboard is **read-only from the `.company/` directory**. All mutations pro
 
 ### Frontend panels
 
-Vanilla JS SPA with client-side routing. Panels: Dashboard, Board (Kanban), Chat, Meetings, Sprint, Org Chart, Agents, Reports, Logs, Verification, Activity, Rounds, GitHub, Releases, Git, Inbox/Outbox, Brief, Worktree Browser. Each panel fetches from `/api/` endpoints and renders from templates.
+Vanilla JS SPA with client-side routing. Panels: Dashboard, Board (Kanban), Chat, Meetings, Sprint, Org Chart, Agents, Reports, Logs, Verification, Activity, Rounds, GitHub, Releases, Config (C2 — resolved LLM + last doctor dump + last llm test), Git, Inbox/Outbox, Brief, Worktree Browser. Each panel fetches from `/api/` endpoints and renders from templates.
 
 ### SSE live updates
 

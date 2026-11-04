@@ -1,4 +1,5 @@
 """Tests for hive dashboard — structure and server."""
+import json
 import re
 import shutil
 import subprocess
@@ -618,6 +619,148 @@ class TestDashboardServerRobustness:
         assert 'data-ticket="' in content
         assert "runGates(b.dataset.dept,b.dataset.ticket)" in content
         assert "openGateOutput(b.dataset.dept,b.dataset.ticket)" in content
+
+
+class TestConfigLlmPanel:
+    """C2: the dashboard's Config & LLM panel — which model the agents are
+    actually talking to, the last doctor run (pass/fail), and the last
+    `hive llm test` result + timestamp. Doctor and llm-test save their
+    dumps to .company/state/; the panel reads them (no new daemon). A
+    redacted key must never appear in the served payload."""
+
+    @staticmethod
+    def _company(tmp_path):
+        company = tmp_path / ".company"
+        (company / "state").mkdir(parents=True)
+        return company
+
+    def test_doctor_saves_dump_to_state(self, tmp_path, monkeypatch):
+        import argparse
+        self._company(tmp_path)
+        monkeypatch.setenv("HOME", str(tmp_path / "home"))
+        from hive_cli.commands import doctor
+        doctor.handle(argparse.Namespace(project_dir=str(tmp_path),
+                                         deep=False, json=False))
+        dump = json.loads((tmp_path / ".company" / "state" / "doctor.json")
+                          .read_text())
+        assert dump["ok"] is False  # scratch env: several checks fail
+        assert {"name", "ok", "detail"} <= set(dump["checks"][0])
+        assert "llm" in dump and "ts" in dump
+
+    def test_llm_test_saves_result_on_dead_endpoint(self, tmp_path, monkeypatch):
+        company = self._company(tmp_path)
+        monkeypatch.setenv("COMPANY_DIR", str(company))
+        monkeypatch.setenv("HIVE_PROVIDER", "openai")
+        monkeypatch.setenv("HIVE_MODEL", "m")
+        monkeypatch.setenv("HIVE_API_BASE", "http://127.0.0.1:1/v1")
+        monkeypatch.setenv("HIVE_API_KEY", "k")
+        from hive_cli.commands import llm
+        rc = llm.handle(type("A", (), {"action": "test"})())
+        assert rc == 1
+        data = json.loads((company / "state" / "llm-test.json").read_text())
+        assert data["ok"] is False
+        assert "127.0.0.1:1" in data["error"]
+        assert data["provider"] == "openai"
+
+    def _start_server(self, company, port):
+        import subprocess
+        proc = subprocess.Popen(
+            ["node", "lib/dashboard/server.js", "--dir", str(company),
+             "--port", str(port)],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        return proc
+
+    def _wait(self, port, path="/api/status", timeout=10):
+        import time
+        import urllib.request
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            try:
+                with urllib.request.urlopen(
+                        f"http://127.0.0.1:{port}{path}", timeout=1):
+                    return True
+            except Exception:
+                time.sleep(0.1)
+        return False
+
+    def test_api_config_serves_saved_dumps(self, tmp_path):
+        import socket
+        import urllib.request
+        company = self._company(tmp_path)
+        (company / "state" / "doctor.json").write_text(json.dumps({
+            "ok": True, "ts": "2026-11-03T00:00:00Z", "version": "0.7.1",
+            "checks": [{"name": "LLM provider configured", "ok": True,
+                        "detail": "provider=openai model=panel-model "
+                                  "base=http://x key=env HIVE_API_KEY"}],
+            "warnings": [],
+            "llm": {"configured": True, "provider": "openai",
+                    "model": "panel-model", "base_url": "http://x",
+                    "key_source": "env HIVE_API_KEY"}}))
+        (company / "state" / "llm-test.json").write_text(json.dumps({
+            "ok": True, "ts": "2026-11-03T00:01:00Z",
+            "latency_ms": 12, "reply": "OK", "provider": "openai",
+            "model": "panel-model", "base_url": "http://x",
+            "key_source": "env HIVE_API_KEY"}))
+        s = socket.socket(); s.bind(("127.0.0.1", 0))
+        port = s.getsockname()[1]; s.close()
+        proc = self._start_server(company, port)
+        try:
+            assert self._wait(port), "dashboard did not start"
+            with urllib.request.urlopen(
+                    f"http://127.0.0.1:{port}/api/config", timeout=5) as r:
+                data = json.loads(r.read())
+            assert data["doctor"]["llm"]["provider"] == "openai"
+            assert data["doctor"]["llm"]["model"] == "panel-model"
+            assert data["doctor"]["ok"] is True
+            assert data["llm_test"]["ok"] is True
+            assert data["llm_test"]["reply"] == "OK"
+        finally:
+            proc.terminate()
+            try:
+                proc.wait(timeout=5)
+            except Exception:
+                proc.kill()
+
+    def test_api_config_never_returns_api_key(self, tmp_path):
+        """The redacted key never appears (zero-trace pattern on the
+        fixture): even a doctor.json that (improperly) carries an
+        api_key field must not serve the value."""
+        import socket
+        import urllib.request
+        company = self._company(tmp_path)
+        key = "sk-supersecret-" + "value1234567890abcdef"
+        (company / "state" / "doctor.json").write_text(json.dumps({
+            "ok": True, "checks": [], "warnings": [],
+            "llm": {"provider": "openai", "model": "m",
+                    "base_url": "http://x", "key_source": "env HIVE_API_KEY",
+                    "api_key": key}}))
+        s = socket.socket(); s.bind(("127.0.0.1", 0))
+        port = s.getsockname()[1]; s.close()
+        proc = self._start_server(company, port)
+        try:
+            assert self._wait(port), "dashboard did not start"
+            with urllib.request.urlopen(
+                    f"http://127.0.0.1:{port}/api/config", timeout=5) as r:
+                body = r.read().decode()
+            assert key not in body, "the key value crossed the wire"
+        finally:
+            proc.terminate()
+            try:
+                proc.wait(timeout=5)
+            except Exception:
+                proc.kill()
+
+    def test_panel_nav_and_render_markers(self):
+        """The Config panel exists in the SPA: nav button wired to
+        showConfig(), which fetches /api/config and renders the resolved
+        provider + the doctor PASS/FAIL badge."""
+        content = Path(f"{DASHBOARD_DIR}/server.js").read_text()
+        assert 'onclick="showConfig()">Config</button>' in content
+        assert "async function showConfig()" in content
+        assert "await api('config')" in content
+        assert "cfg-panel-hdr" in content
+        assert "key source" in content
+        assert "never run" in content
 
 
 class TestTicketBoardWritePath:

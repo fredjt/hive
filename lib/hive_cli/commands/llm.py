@@ -30,6 +30,29 @@ def _key_source_label(resolved) -> str:
     return "none (keyless endpoint)" if not resolved.needs_key else "none"
 
 
+_TEST_RECORD: dict = {}
+
+
+def _save_llm_test(rc: int) -> int:
+    """C2: persist the latest `hive llm test` result to
+    .company/state/llm-test.json so the dashboard's Config panel can show
+    the last run's outcome + timestamp. Best-effort: never changes rc."""
+    rec = dict(_TEST_RECORD)
+    rec["ok"] = (rc == 0)
+    try:
+        from datetime import datetime, timezone
+        rec["ts"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        company = Path(os.environ.get("COMPANY_DIR") or (Path.cwd() / ".company"))
+        if company.is_dir():
+            state = company / "state"
+            state.mkdir(parents=True, exist_ok=True)
+            import json as _json
+            (state / "llm-test.json").write_text(_json.dumps(rec, indent=2))
+    except Exception:
+        pass
+    return rc
+
+
 def _llm_test() -> int:
     """B1: one small round trip through the exact resolver path the harness
     uses (llm_providers.resolve + its wire builders). Prints provider,
@@ -50,6 +73,10 @@ def _llm_test() -> int:
     if not resolved.is_configured:
         print("llm test: LLM unconfigured — "
               + llm_providers.unconfigured_hint(env=env))
+        _TEST_RECORD.clear()
+        _TEST_RECORD.update(provider="", model="", base_url="",
+                            key_source="", latency_ms=None, reply="",
+                            error="LLM unconfigured")
         return 1
     for w in resolved.warnings:
         print(f"  warning: {w}")
@@ -61,6 +88,12 @@ def _llm_test() -> int:
               f"(api_style={resolved.api_style or '?'}, "
               f"base_url={resolved.base_url or '?'}, "
               f"model={resolved.model or '?'})")
+        _TEST_RECORD.clear()
+        _TEST_RECORD.update(provider=resolved.provider or "", model=resolved.model or "",
+                            base_url=resolved.base_url or "",
+                            key_source=_key_source_label(resolved),
+                            latency_ms=None, reply="",
+                            error="cannot derive request URL")
         return 1
     headers = llm_providers.build_headers(resolved.api_style, resolved.api_key,
                                           provider=resolved.provider)
@@ -82,10 +115,22 @@ def _llm_test() -> int:
         latency_ms = (time.monotonic() - t0) * 1000
         print(f"llm test: FAIL — HTTP {status} from {resolved.base_url}")
         print(f"  response: {body[:300]}")
+        _TEST_RECORD.clear()
+        _TEST_RECORD.update(provider=resolved.provider or "", model=resolved.model or "",
+                            base_url=resolved.base_url or "",
+                            key_source=_key_source_label(resolved),
+                            latency_ms=round(latency_ms), reply="",
+                            error=f"HTTP {status}: {body[:200]}")
         return 1
     except Exception as e:
         latency_ms = (time.monotonic() - t0) * 1000
         print(f"llm test: FAIL — {resolved.base_url}: {type(e).__name__}: {e}")
+        _TEST_RECORD.clear()
+        _TEST_RECORD.update(provider=resolved.provider or "", model=resolved.model or "",
+                            base_url=resolved.base_url or "",
+                            key_source=_key_source_label(resolved),
+                            latency_ms=round(latency_ms), reply="",
+                            error=f"{resolved.base_url}: {type(e).__name__}: {e}")
         return 1
     latency_ms = (time.monotonic() - t0) * 1000
 
@@ -101,14 +146,32 @@ def _llm_test() -> int:
     except _json.JSONDecodeError:
         print(f"llm test: FAIL — endpoint at {resolved.base_url} returned "
               f"non-JSON: {body[:200]}")
+        _TEST_RECORD.clear()
+        _TEST_RECORD.update(provider=resolved.provider or "", model=resolved.model or "",
+                            base_url=resolved.base_url or "",
+                            key_source=_key_source_label(resolved),
+                            latency_ms=round(latency_ms), reply="",
+                            error=f"non-JSON response: {body[:200]}")
         return 1
     parsed = llm_providers.parse_response_body(resolved.api_style, data)
     if not parsed.get("ok"):
         print(f"llm test: FAIL — {parsed.get('error', 'no content in response')}")
+        _TEST_RECORD.clear()
+        _TEST_RECORD.update(provider=resolved.provider or "", model=resolved.model or "",
+                            base_url=resolved.base_url or "",
+                            key_source=_key_source_label(resolved),
+                            latency_ms=round(latency_ms), reply="",
+                            error=parsed.get("error", "no content in response"))
         return 1
     first_line = (parsed.get("content") or "").strip().splitlines() or [""]
     print(f"  reply:    {first_line[0][:200]}")
     print("RESULT: PASS")
+    _TEST_RECORD.clear()
+    _TEST_RECORD.update(provider=resolved.provider or "", model=resolved.model or "",
+                        base_url=resolved.base_url or "",
+                        key_source=_key_source_label(resolved),
+                        latency_ms=round(latency_ms),
+                        reply=first_line[0][:200], error="")
     return 0
 
 
@@ -126,7 +189,7 @@ def _usage_log_path(cd: Path) -> Path | None:
 
 def handle(args) -> int:
     if args.action == "test":
-        return _llm_test()
+        return _save_llm_test(_llm_test())
     cd = _company_dir()
     log_path = _usage_log_path(cd)
     if log_path is None:

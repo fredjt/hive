@@ -229,15 +229,36 @@ def handle(args) -> int:
         import io
         with contextlib.redirect_stdout(io.StringIO()):
             all_ok = _run_checks(args)
-        payload = {"ok": bool(all_ok), "checks": checks,
-                   "warnings": warnings, "llm": llm_info}
-        version_file = HIVE_INSTALL_DIR / "VERSION"
-        if version_file.is_file():
-            payload["version"] = version_file.read_text().strip()
-        print(json.dumps(payload, indent=2))
     else:
         all_ok = _run_checks(args)
+    payload = {"ok": bool(all_ok), "checks": checks,
+               "warnings": warnings, "llm": llm_info}
+    version_file = HIVE_INSTALL_DIR / "VERSION"
+    if version_file.is_file():
+        payload["version"] = version_file.read_text().strip()
+    _save_doctor_dump(args, payload)
+    if json_mode:
+        print(json.dumps(payload, indent=2))
     return 0 if all_ok else 1
+
+
+def _save_doctor_dump(args, payload: dict) -> None:
+    """C2: persist the dump to <project>/.company/state/doctor.json so the
+    dashboard's Config panel can render the last run without spawning
+    anything. Best-effort — a failed write never fails the doctor run."""
+    try:
+        from datetime import datetime, timezone
+        project_dir = Path(getattr(args, "project_dir", ".")).resolve()
+        company_dir = project_dir / ".company"
+        if not company_dir.is_dir():
+            return
+        state_dir = company_dir / "state"
+        state_dir.mkdir(parents=True, exist_ok=True)
+        payload = dict(payload)
+        payload["ts"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        (state_dir / "doctor.json").write_text(json.dumps(payload, indent=2))
+    except Exception:
+        pass
 
 
 def _run_checks(args) -> bool:
