@@ -521,6 +521,110 @@ class TestInstallScaffoldsUserConfig:
         assert "LLM settings go in" in install
 
 
+class TestCutReleaseScript:
+    """E1 — packaging/cut-release.sh: the release cut, as a command.
+
+    The 0.7.0/0.7.1 dance (suite -> build -> listing -> credential scan
+    -> sha256 -> tag -> push -> gh release) is codified with a hard gate
+    at every step. These tests exercise the gates on a scratch tree:
+    --dry-run runs everything up to the tag; a red suite refuses the cut
+    before anything is built.
+    """
+
+    _GIT_IDENTITY = {
+        "GIT_AUTHOR_NAME": "cut-test", "GIT_AUTHOR_EMAIL": "cut-test@example.com",
+        "GIT_COMMITTER_NAME": "cut-test", "GIT_COMMITTER_EMAIL": "cut-test@example.com",
+    }
+
+    @pytest.fixture()
+    def scratch_tree(self, tmp_path):
+        """A git checkout of the current working tree (uncommitted runtime
+        changes included), committed, so the script's git gates can run."""
+        repo = _repo_root()
+        tree = tmp_path / "tree"
+        tree.mkdir()
+        tar = subprocess.run(
+            ["tar", "-cf", "-",
+             "--exclude=.git", "--exclude=unsloth-tmp", "--exclude=dist",
+             "--exclude=__pycache__", "--exclude=*.pyc", "."],
+            cwd=str(repo), capture_output=True, timeout=300,
+        )
+        assert tar.returncode == 0, tar.stderr.decode(errors="replace")
+        extract = subprocess.run(
+            ["tar", "-xf", "-", "-C", str(tree)],
+            input=tar.stdout, capture_output=True, timeout=300,
+        )
+        assert extract.returncode == 0, extract.stderr.decode(errors="replace")
+        env = {**os.environ, **self._GIT_IDENTITY}
+        for args in (["git", "init", "-q", "-b", "main"],
+                     ["git", "add", "-A"],
+                     ["git", "commit", "-qm", "cut"]):
+            subprocess.run(args, cwd=str(tree), env=env, check=True, timeout=120)
+        return tree
+
+    def _run(self, tree, out_dir, suite):
+        return subprocess.run(
+            ["bash", str(tree / "packaging" / "cut-release.sh"),
+             "--dry-run", "--out-dir", str(out_dir), "--suite", suite],
+            capture_output=True, text=True, timeout=600, cwd=str(tree),
+        )
+
+    def test_dry_run_produces_tarball_sha256_scan_report(self, scratch_tree, tmp_path):
+        out = tmp_path / "dist"
+        r = self._run(
+            scratch_tree, out,
+            "python -m pytest tests/test_installation.py::TestTarballContentGuard -q -x",
+        )
+        assert r.returncode == 0, r.stdout + "\n" + r.stderr
+        version = (scratch_tree / "VERSION").read_text().strip()
+        assert (out / f"hive-{version}.tar.gz").is_file(), \
+            "dry-run must build the tarball"
+        assert (out / f"hive-{version}.sha256").is_file(), \
+            "dry-run must carry the sha256 sidecar"
+        report = out / f"hive-{version}.scan-report"
+        assert report.is_file(), "dry-run must write the scan report"
+        assert "RESULT: CLEAN" in report.read_text(), \
+            "the current tree scans clean; the report must say so"
+        assert (out / f"hive-{version}.release-notes.md").is_file(), \
+            "dry-run must extract the release notes from the CHANGELOG"
+        assert "git tag v" in r.stdout, \
+            "dry-run must announce (not run) the tag step"
+        tags = subprocess.run(["git", "tag", "-l"], cwd=str(scratch_tree),
+                              capture_output=True, text=True, timeout=30)
+        assert tags.stdout == "", \
+            "--dry-run must stop before the tag: no tag may exist"
+
+    def test_refuses_on_dirty_suite(self, scratch_tree, tmp_path):
+        """A deliberately red suite must refuse the cut — and refuse before
+        anything is built (no tarball, no sidecar)."""
+        env = {**os.environ, **self._GIT_IDENTITY}
+        (scratch_tree / "tests" / "test_e1_dirty.py").write_text(
+            "def test_deliberately_broken():\n    assert False, 'dirty suite'\n"
+        )
+        for args in (["git", "add", "tests/test_e1_dirty.py"],
+                     ["git", "commit", "-qm", "dirty"]):
+            subprocess.run(args, cwd=str(scratch_tree), env=env, check=True,
+                           timeout=60)
+        out = tmp_path / "dist"
+        r = self._run(scratch_tree, out,
+                      "python -m pytest tests/test_e1_dirty.py -q -x")
+        assert r.returncode != 0, \
+            "a red suite must refuse the cut"
+        assert "not green" in r.stdout + r.stderr, \
+            "the refusal must say the suite is not green"
+        assert not any(out.glob("hive-*.tar.gz")), \
+            "the suite gate is before the build: no tarball may exist"
+
+    def test_refuses_when_tree_dirty(self, scratch_tree, tmp_path):
+        (scratch_tree / "junk.txt").write_text("untracked junk\n")
+        r = self._run(
+            scratch_tree, tmp_path / "dist",
+            "python -m pytest tests/test_json_structures.py -q -x",
+        )
+        assert r.returncode != 0, "a dirty tree must refuse the cut"
+        assert "dirty" in r.stdout + r.stderr
+
+
 class TestTarballContentGuard:
     """E2 — pin the files install.sh reads at runtime in the tarball.
 
