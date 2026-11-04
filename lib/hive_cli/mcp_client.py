@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import sys
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
@@ -84,13 +85,35 @@ async def _http_session():
             yield session
 
 
+def _stdio_python() -> str:
+    """Interpreter for the stdio MCP server child.
+
+    Prefer the install venv (the installed layout). When the install
+    dir is a source checkout with no venv (the documented PYTHONPATH=lib
+    dev mode), use this interpreter — it just imported the mcp SDK
+    successfully, so it has the server's dependencies. Same contract as
+    agent-spawn.sh's venv fallback: degrade with a note, don't die with
+    a FileNotFoundError.
+    """
+    venv_py = HIVE_INSTALL_DIR / "venv" / "bin" / "python"
+    if venv_py.is_file():
+        return str(venv_py)
+    print(f"NOTE: install venv not found at {venv_py}; spawning the stdio "
+          f"MCP server with {sys.executable} instead.", file=sys.stderr)
+    return sys.executable
+
+
 @asynccontextmanager
 async def _stdio_session():
     """Open an MCP ClientSession over stdio (one-shot subprocess)."""
-    venv_py = HIVE_INSTALL_DIR / "venv" / "bin" / "python"
+    command = _stdio_python()
     server_script = HIVE_INSTALL_DIR / "lib" / "hive_mcp" / "server.py"
+    if not server_script.is_file():
+        raise RuntimeError(
+            f"MCP server script not found at {server_script} "
+            f"(HIVE_INSTALL_DIR={HIVE_INSTALL_DIR})")
     params = StdioServerParameters(
-        command=str(venv_py),
+        command=command,
         args=[str(server_script), "--transport", "stdio"],
         env={**os.environ,
              "HIVE_INSTALL_DIR": str(HIVE_INSTALL_DIR),

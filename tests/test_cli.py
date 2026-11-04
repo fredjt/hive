@@ -1,6 +1,11 @@
 """Tests for hive_cli.main — CLI argument parsing."""
+import json
+import os
+import socket
+import subprocess
 import sys
 from pathlib import Path
+from unittest import mock
 
 import pytest
 
@@ -250,3 +255,63 @@ class TestMain:
             main(["--help"])
         except SystemExit as e:
             assert e.code == 0
+
+
+class TestMcpStdioFallback:
+    """The CLI's stdio MCP fallback must work when the install dir is a
+    source checkout with no venv (the documented PYTHONPATH=lib dev mode).
+
+    Regression: every MCP-routed command (ticket, chat, company, gates, …)
+    died with a raw `FileNotFoundError: <install>/venv/bin/python` because
+    _stdio_session() hard-coded the venv interpreter and had no fallback —
+    the same missing-venv failure class 0.8.3 fixed in agent-spawn.sh.
+    """
+
+    def test_stdio_python_prefers_venv_when_present(self, tmp_path):
+        from hive_cli import mcp_client as mc
+        venv_py = tmp_path / "venv" / "bin" / "python"
+        venv_py.parent.mkdir(parents=True)
+        venv_py.write_text("#!/bin/sh\n")
+        with mock.patch.object(mc, "HIVE_INSTALL_DIR", tmp_path):
+            assert mc._stdio_python() == str(venv_py)
+
+    def test_stdio_python_falls_back_to_current_interpreter(self, tmp_path):
+        from hive_cli import mcp_client as mc
+        # tmp_path has no venv/ — the source-checkout case.
+        with mock.patch.object(mc, "HIVE_INSTALL_DIR", tmp_path):
+            assert mc._stdio_python() == sys.executable
+
+    def test_cli_ticket_create_without_venv_uses_stdio_fallback(self, tmp_project_dir):
+        """End-to-end: HTTP server down + no venv in the install dir, and an
+        MCP-routed CLI command still succeeds (stdio fallback, not a
+        FileNotFoundError)."""
+        pytest.importorskip("mcp")  # stdio transport needs the SDK
+        # Dead port → the HTTP probe fails → the stdio transport is forced.
+        s = socket.socket()
+        s.bind(("127.0.0.1", 0))
+        dead_port = s.getsockname()[1]
+        s.close()
+
+        install_dir = Path(__file__).resolve().parent.parent  # repo: no venv/
+        assert not (install_dir / "venv" / "bin" / "python").exists()
+
+        company = tmp_project_dir / ".company"
+        (company / "departments" / "it" / "tickets" / "backlog").mkdir(parents=True)
+
+        env = {**os.environ,
+               "HIVE_INSTALL_DIR": str(install_dir),
+               "HIVE_MCP_PORT": str(dead_port),
+               "PYTHONPATH": str(install_dir / "lib")}
+        r = subprocess.run(
+            [sys.executable, "-m", "hive_cli.main", "ticket", "create",
+             "it", "feature", "medium", "stdio-fallback", "regression"],
+            capture_output=True, text=True, timeout=120,
+            cwd=str(tmp_project_dir), env=env)
+        combined = r.stdout + r.stderr
+        assert "FileNotFoundError" not in combined, combined
+        assert r.returncode == 0, combined
+        # Ticket files are flat JSON: departments/<dept>/tickets/<status>/<TID>.json
+        tickets = list(
+            (company / "departments" / "it" / "tickets" / "backlog").glob("*.json"))
+        assert len(tickets) == 1
+        assert json.loads(tickets[0].read_text())["status"] == "backlog"
