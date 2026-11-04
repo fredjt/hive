@@ -1618,3 +1618,102 @@ class TestCompanyStartNoJsonTraceback:
             assert len(data["processes"]) >= len(self.INFRA_DAEMONS)
         finally:
             self._stop_company(proj, company)
+
+
+class TestPublisherTargetBranch:
+    """publishers/github.sh must target the project's default branch, not a
+    hard-coded 'main'. Regression: master-based and trunk-based projects
+    got `gh release create --target main` — a branch that does not exist
+    there — the same main/master portability class the worktree cleanup
+    fixed. Precedence: [github].default_branch in the user config (explicit
+    operator intent), then the remote's actual default branch, then main.
+    """
+
+    PUBLISHER = (Path(__file__).resolve().parent.parent /
+                 "lib" / "templates" / "publishers" / "github.sh")
+
+    def _git(self, cwd, *args):
+        r = subprocess.run(["git", *args], cwd=str(cwd),
+                           capture_output=True, text=True)
+        assert r.returncode == 0, r.stderr
+        return r.stdout
+
+    def _make_repo(self, tmp_path, branch):
+        origin = tmp_path / "origin.git"
+        proj = tmp_path / "proj"
+        proj.mkdir()
+        self._git(proj, "init", "-q", "-b", branch)
+        self._git(proj, "config", "user.email", "t@example.com")
+        self._git(proj, "config", "user.name", "test")
+        (proj / "f.txt").write_text("x\n")
+        self._git(proj, "add", ".")
+        self._git(proj, "commit", "-qm", "init")
+        subprocess.run(["git", "init", "-q", "--bare", str(origin)], check=True)
+        self._git(proj, "remote", "add", "origin", str(origin))
+        self._git(proj, "push", "-q", "-u", "origin", branch)
+        return proj
+
+    def _stub_gh(self, tmp_path, log, repo_view_answer):
+        """A gh that records every invocation and answers the
+        default-branch query with repo_view_answer (empty = no answer)."""
+        bindir = tmp_path / "bin"
+        bindir.mkdir(exist_ok=True)
+        stub = bindir / "gh"
+        # gh repo view -q .field prints the bare value (no JSON quotes)
+        answer = repo_view_answer
+        stub.write_text(
+            "#!/bin/sh\n"
+            f"echo \"$*\" >> \"{log}\"\n"
+            f"if [ \"$1\" = \"repo\" ] && [ \"$2\" = \"view\" ]; then echo {answer}; fi\n"
+            "exit 0\n")
+        stub.chmod(0o755)
+        return bindir
+
+    def _run_publisher(self, tmp_path, proj, log, extra_env, bindir):
+        tarball = tmp_path / "hive-9.9.9.tar.gz"
+        tarball.write_bytes(b"tarball")
+        sha = tmp_path / "hive-9.9.9.sha256"
+        sha.write_text("x  hive-9.9.9.tar.gz\n")
+        notes = tmp_path / "notes.md"
+        notes.write_text("# Release 9.9.9\n")
+        env = os.environ.copy()
+        env["PATH"] = str(bindir) + os.pathsep + env["PATH"]
+        # Isolate the host user config unless the test supplies its own.
+        env.setdefault("HOME", str(tmp_path))
+        env.update(extra_env)
+        r = subprocess.run(
+            ["bash", str(self.PUBLISHER), "9.9.9",
+             str(tarball), str(sha), str(notes)],
+            capture_output=True, text=True, timeout=30,
+            cwd=str(proj), env=env)
+        assert r.returncode == 0, r.stdout + r.stderr
+        return log.read_text() if log.exists() else ""
+
+    def test_config_default_branch_wins(self, tmp_path):
+        proj = self._make_repo(tmp_path, "master")
+        cfg = tmp_path / "cfg.toml"
+        cfg.write_text('[github]\ndefault_branch = "master"\n')
+        log = tmp_path / "gh.log"
+        bindir = self._stub_gh(tmp_path, log, repo_view_answer="")
+        out = self._run_publisher(
+            tmp_path, proj, log,
+            {"HIVE_CONFIG": str(cfg), "HOME": str(tmp_path)}, bindir)
+        assert "--target master" in out, out
+
+    def test_remote_default_branch_when_config_has_none(self, tmp_path):
+        proj = self._make_repo(tmp_path, "trunk")
+        log = tmp_path / "gh.log"
+        bindir = self._stub_gh(tmp_path, log, repo_view_answer="trunk")
+        out = self._run_publisher(
+            tmp_path, proj, log,
+            {"HIVE_CONFIG": str(tmp_path / "no-such-config.toml")}, bindir)
+        assert "--target trunk" in out, out
+
+    def test_falls_back_to_main_when_unknown(self, tmp_path):
+        proj = self._make_repo(tmp_path, "master")
+        log = tmp_path / "gh.log"
+        bindir = self._stub_gh(tmp_path, log, repo_view_answer="")
+        out = self._run_publisher(
+            tmp_path, proj, log,
+            {"HIVE_CONFIG": str(tmp_path / "no-such-config.toml")}, bindir)
+        assert "--target main" in out, out
