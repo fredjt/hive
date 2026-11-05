@@ -302,6 +302,23 @@ restart_daemon() {
   local role="$2"
   local interval="$3"
 
+  # A2: an LLM-outage halt is an operator action, not a crash to heal.
+  # A runner that exited under a fresh halt marker is marked dead for the
+  # session - no restart, no restart-budget burn. 'hive start' clears the
+  # marker (an explicit operator action), re-arming normal restarts.
+  local halt_marker="$COMPANY_DIR/rounds/halt"
+  if [ "$role" = "sprint-lifecycle" ] && [ -f "$halt_marker" ]; then
+    local halt_age halt_ttl halt_reason
+    halt_ttl="${HIVE_HALT_TTL:-3600}"
+    halt_age=$(( $(date +%s) - $(stat -c %Y "$halt_marker" 2>/dev/null || echo 0) ))
+    if [ "$halt_age" -ge 0 ] && [ "$halt_age" -le "$halt_ttl" ]; then
+      halt_reason=$(jq -r '.reason // "LLM outage halt"' "$halt_marker" 2>/dev/null)
+      echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] health: $role (pid=$pid) exited under a fresh halt marker - marking dead for the session (no restart): $halt_reason" >> "$COMPANY_DIR/logs/health.log"
+      mark_daemon_dead "$pid" "halted: $halt_reason"
+      return 1
+    fi
+  fi
+
   # Check restart count (env-var inputs)
   local restart_count
   restart_count=$(CH_PROCS_FILE="$COMPANY_DIR/processes.json" CH_PID="$pid" python3 - <<'PYEOF' 2>/dev/null

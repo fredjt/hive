@@ -84,9 +84,11 @@ def _print_sprint(sprint: dict | None) -> None:
         return
     if sprint.get("halted"):
         h = sprint["halted"]
+        limit = h.get("limit")
+        limit_note = f"; outage threshold: {limit}" if limit else ""
         print()
         print(f"  \033[31m\u26d4 Sprint {sprint.get('sprint_id', '?')} HALTED: {h.get('reason', '')}\033[0m"
-              f"  ({h.get('ts', '')}; fix the LLM endpoint, then 'hive start')")
+              f"  ({h.get('ts', '')}{limit_note}; fix the LLM endpoint, then 'hive start')")
         return
     stage = sprint.get("stage", "")
     if stage == "idle":
@@ -233,6 +235,8 @@ def _sprint_info(company_dir: str) -> dict | None:
                 "ts": h.get("ts", ""),
                 "sprint_id": h.get("sprint_id", ""),
                 "endpoint": h.get("endpoint", ""),
+                "limit": h.get("limit"),
+                "failed_spawns": h.get("failed_spawns"),
             }
         except json.JSONDecodeError:
             out["halted"] = {"reason": "halt marker unreadable", "ts": ""}

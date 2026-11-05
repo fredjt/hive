@@ -29,6 +29,11 @@ if [ ! -d "$COMPANY_DIR" ]; then
   exit 1
 fi
 
+# A2: 'hive start' is the explicit operator action that re-arms the runner
+# after an LLM-outage halt - clear the halt marker (and the stale outage
+# counter; a successful planning spawn clears it anyway).
+rm -f "$COMPANY_DIR/rounds/halt" "$COMPANY_DIR/status/llm-outage-count" 2>/dev/null || true
+
 # Refuse to start if .company is corrupted (most commonly: an agent
 # replaced it with a self-symlink, which crashes everything that opens
 # the directory with ELOOP). The check prints concrete recovery steps.

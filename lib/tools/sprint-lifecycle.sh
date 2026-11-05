@@ -39,6 +39,14 @@ HIVE_SPRINT_MAX_ACTIVE_TICKETS="${HIVE_SPRINT_MAX_ACTIVE_TICKETS:-5}"
 # run the wait fast, same convention as HIVE_HEALTH_INTERVAL).
 IDLE_POLL_INTERVAL="${HIVE_IDLE_POLL_INTERVAL:-30}"
 
+# A2: the LLM-outage circuit breaker. A planning/release-verify spawn that
+# dies because the endpoint did not answer bumps a persisted counter; at
+# the threshold the runner HALTS with escalation instead of spinning empty
+# sprints. Env-overridable so tests can trip the halt fast (same convention
+# as HIVE_IDLE_POLL_INTERVAL).
+LLM_OUTAGE_LIMIT="${HIVE_LLM_OUTAGE_LIMIT:-3}"
+LLM_OUTAGE_COUNTER_FILE="$COMPANY_DIR/status/llm-outage-count"
+
 # ── Singleton lock ──────────────────────────────────────────────────
 RUNNER_PID="$COMPANY_DIR/rounds/runner.pid"
 mkdir -p "$(dirname "$RUNNER_PID")"
@@ -154,6 +162,122 @@ enter_idle_if_no_work() {
   run_sprint_fill
   ss_set_stage tdd-red
   return 0
+}
+
+# ── A2: LLM-outage circuit breaker ────────────────────────────────
+# The harness already fails fast with result subtype llm-unavailable when
+# the endpoint cannot answer (the 0.9.0 B.4 fail-fast), but the lifecycle
+# used to ignore the exit codes and "complete" the sprint anyway — 14 dead
+# spawns per sprint, a failed unversioned release, nothing escalated. Now
+# every planning spawn (ceo-plan, vp-plan) and release-verify spawn that
+# fails llm-unavailable increments a persisted counter under .company/status/
+# (the existing health-status-dir pattern); any successful planning spawn
+# resets it to zero. At LLM_OUTAGE_LIMIT the runner HALTS: an incident in
+# chat/incidents.md names the error, the endpoint and the sprint; the
+# RELEASE-BLOCKER ticket makes the blockage visible to the next planning;
+# a halt marker in .company/rounds/halt tells company-health.sh that this
+# death is an operator action, not a crash to heal (no restart, no
+# restart-budget burn). 'hive start' clears the marker and the counter.
+llm_outage_count() {
+  local n
+  n=$(cat "$LLM_OUTAGE_COUNTER_FILE" 2>/dev/null | tr -dc '0-9')
+  echo "${n:-0}"
+}
+
+# $1: the spawn log; $2: the stage; $3: the spawn exit code.
+# Counts ONLY a failure that is specifically "the endpoint did not
+# answer": the harness's fail-fast result event is the LAST line of the
+# spawn log (a stale llm-unavailable line from an earlier run in the same
+# appended log must not count), and a generic spawn failure (MCP hiccup,
+# bad prompt, non-LLM crash) never halts the company.
+llm_outage_note_failure() {
+  local spawn_log="$1" stage="$2" exit_code="$3"
+  [ "$exit_code" -eq 0 ] 2>/dev/null && return 0
+  [ -f "$spawn_log" ] || return 0
+  tail -n 1 "$spawn_log" 2>/dev/null | grep -q '"subtype": "llm-unavailable"' || return 0
+  local n
+  n=$(( $(llm_outage_count) + 1 ))
+  mkdir -p "$(dirname "$LLM_OUTAGE_COUNTER_FILE")"
+  echo "$n" > "$LLM_OUTAGE_COUNTER_FILE"
+  log "LLM outage counter: $n/$LLM_OUTAGE_LIMIT (stage=$stage)"
+  if [ "$n" -ge "$LLM_OUTAGE_LIMIT" ]; then
+    llm_outage_halt "$stage"
+  fi
+}
+
+# A successful planning spawn means the endpoint answers — reset the
+# outage counter (the marker is cleared by 'hive start' itself).
+llm_outage_reset() {
+  rm -f "$LLM_OUTAGE_COUNTER_FILE" 2>/dev/null || true
+}
+
+# Resolve the endpoint the harness would call: HIVE_API_BASE env first
+# (what the daemons run with), then [llm].base_url from the config chain
+# (user config > defaults). Named in the incident and the halt marker so
+# the operator knows WHICH endpoint to fix.
+llm_outage_endpoint() {
+  local e="${HIVE_API_BASE:-}"
+  if [ -z "$e" ]; then
+    local cfg
+    for cfg in "$HOME/.config/hive/config.toml" "$SKILL_DIR/etc/config.defaults.toml"; do
+      [ -f "$cfg" ] || continue
+      _bu=$(awk '/^[[:space:]]*\[llm\]/{s=1;next} /^[[:space:]]*\[/{s=0} s && /^[[:space:]]*base_url[[:space:]]*=/{sub(/^[[:space:]]*base_url[[:space:]]*=[[:space:]]*/,""); gsub(/["'"'"']/,""); print; exit}' "$cfg" 2>/dev/null) || _bu=""
+      if [ -n "$_bu" ]; then
+        e="$_bu"
+        break
+      fi
+    done
+  fi
+  echo "${e:-unconfigured}"
+}
+
+llm_outage_halt() {
+  local stage="$1"
+  local sprint_id endpoint ts failed_spawns halt_reason
+  sprint_id=$(ss_get_field .sprint_id)
+  endpoint=$(llm_outage_endpoint)
+  failed_spawns=$(llm_outage_count)
+  ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+  halt_reason="LLM unavailable after $failed_spawns failed LLM spawns (last stage: $stage; threshold: $LLM_OUTAGE_LIMIT)"
+
+  # 1. The incident: who, what, where, and the operator's next step.
+  mkdir -p "$COMPANY_DIR/chat"
+  {
+    echo ""
+    echo "## LLM outage — runner halted ($ts)"
+    echo ""
+    echo "- Sprint: $sprint_id"
+    echo "- Endpoint: $endpoint"
+    echo "- Failed LLM spawns: $failed_spawns (threshold $LLM_OUTAGE_LIMIT; last stage $stage)"
+    echo "- Error: LLM unavailable — the endpoint answered no usable response"
+    echo "- Action: fix the endpoint (availability / auth / model), then run 'hive start' to re-arm the runner."
+  } >> "$COMPANY_DIR/chat/incidents.md"
+  log "LLM outage incident written to chat/incidents.md"
+
+  # 2. A visible critical bug ticket in the it backlog, so the blockage
+  # survives the halt — the retry-cap blocker path can never fire from an
+  # outage (an unparseable verdict deliberately does not burn a retry).
+  file_release_blocker "$failed_spawns" "LLM unavailable"
+
+  # 3. The halt marker: company-health.sh marks a runner that dies under
+  # a fresh marker dead for the session (no restart, no budget burn);
+  # 'hive start' clears it.
+  mkdir -p "$COMPANY_DIR/rounds"
+  cat > "$COMPANY_DIR/rounds/halt" <<HALT
+{
+  "reason": "$halt_reason",
+  "endpoint": "$endpoint",
+  "sprint_id": "$sprint_id",
+  "failed_spawns": $failed_spawns,
+  "limit": $LLM_OUTAGE_LIMIT,
+  "stage": "$stage",
+  "ts": "$ts"
+}
+HALT
+
+  log "HALT: $halt_reason"
+  log "HALT: halt marker at .company/rounds/halt — the runner is exiting; 'hive start' clears the marker and re-arms"
+  exit 1
 }
 
 # Create worktree for a ticket. Idempotent.
@@ -298,8 +422,10 @@ runs next automatically."
   local EC=$?
   if [ $EC -eq 0 ]; then
     log "CEO plan completed successfully"
+    llm_outage_reset
   else
     log "CEO plan failed (exit=$EC), continuing without direction"
+    llm_outage_note_failure "$LOG_TO" "${1:-ceo-plan}" "$EC"
   fi
 }
 
@@ -366,6 +492,9 @@ After filing/refining, EXIT. Sprint-fill and ticket processing run next."
     local VPEC=$?
     if [ "$VPEC" -ne 0 ]; then
       log "  VP $dept planning failed (exit=$VPEC)"
+      llm_outage_note_failure "$LOG_TO" "${1:-vp-plan}" "$VPEC"
+    else
+      llm_outage_reset
     fi
   done
 
@@ -1025,6 +1154,8 @@ run_release_verify() {
   HIVE_AGENT="release-ic" HIVE_DEPT="executive" HIVE_ROLE="Release-IC" HIVE_TICKET="" \
   bash "$SKILL_DIR/lib/core/agent-spawn.sh" -- "$PROMPT" \
     9<&- >> "$VERIFY_LOG_PATH" 2>&1
+  local RIC_EC=$?
+  llm_outage_note_failure "$VERIFY_LOG_PATH" "release-verify" "$RIC_EC"
 
   VERDICT=$(grep -m1 -E '^VERDICT:' "$VERIFY_LOG_PATH" 2>/dev/null | awk -F: '{gsub(/^[ ]+/,"",$2); print $2}')
 

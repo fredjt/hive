@@ -51,10 +51,14 @@ class StubLLM:
         stub.stop()
     """
 
-    def __init__(self, responder=None):
+    def __init__(self, responder=None, fail_status=None):
         self.responder = responder or default_responder
         self.requests: list[dict] = []
         self.failures: list[str] = []
+        # A2: when set, every request answers with this HTTP status and an
+        # error body (checked per request, so a test can clear it at
+        # runtime to simulate the endpoint recovering).
+        self.fail_status = fail_status
         outer = self
 
         class _Handler(http.server.BaseHTTPRequestHandler):
@@ -63,6 +67,17 @@ class StubLLM:
                     length = int(self.headers.get("Content-Length", 0))
                     body = json.loads(self.rfile.read(length) or b"{}")
                     outer.requests.append(body)
+                    if outer.fail_status is not None:
+                        err = json.dumps({"error": {
+                            "message": "stub endpoint failure",
+                            "type": "authentication_error",
+                        }}).encode("utf-8")
+                        self.send_response(outer.fail_status)
+                        self.send_header("Content-Type", "application/json")
+                        self.send_header("Content-Length", str(len(err)))
+                        self.end_headers()
+                        self.wfile.write(err)
+                        return
                     resp = outer.responder(body)
                     payload = json.dumps(resp).encode("utf-8")
                     self.send_response(200)
