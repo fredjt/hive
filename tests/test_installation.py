@@ -573,10 +573,14 @@ class TestCutReleaseScript:
         tree.mkdir()
         tar = subprocess.run(
             ["tar", "-cf", "-",
-             "--exclude=.git", "--exclude=unsloth-tmp", "--exclude=dist",
-             "--exclude=__pycache__", "--exclude=*.pyc", "."],
+             "--exclude=.git", "--exclude=unsloth-tmp", "--exclude=.local",
+             "--exclude=dist", "--exclude=__pycache__", "--exclude=*.pyc",
+             "."],
             cwd=str(repo), capture_output=True, timeout=300,
         )
+        # .local holds runtime-local state (container storage with
+        # permission-restricted overlay layers) that must not be part of
+        # the snapshot — tar exits non-zero if it can't read one.
         assert tar.returncode == 0, tar.stderr.decode(errors="replace")
         extract = subprocess.run(
             ["tar", "-xf", "-", "-C", str(tree)],
