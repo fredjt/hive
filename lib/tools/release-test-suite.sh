@@ -84,8 +84,16 @@ _run_with_resource_guard() {
   return "$rc"
 }
 
+# B2: the version header must not lie — a leading v on the
+# unversioned-<ts> fallback made the run's logs read "vunversioned-…". Prefix v
+# only when the value looks like semver (leading digit); the unversioned
+# fallback prints as-is.
+VERSION_LABEL="$VERSION"
+if [[ "$VERSION" =~ ^[0-9] ]]; then
+  VERSION_LABEL="v$VERSION"
+fi
 {
-  echo "[$(ts)] release-test-suite for v$VERSION (project_root=$PROJECT_ROOT)"
+  echo "[$(ts)] release-test-suite for $VERSION_LABEL (project_root=$PROJECT_ROOT)"
 } > "$LOG"
 
 # Detect + run. Same detection table as verification-gates.sh detect_test_cmd,

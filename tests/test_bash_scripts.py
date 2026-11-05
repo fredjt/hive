@@ -451,6 +451,74 @@ class TestQuotedProjectPaths:
         assert state["release"]["sha256"] == sidecar
         assert os.path.exists(sidecar)
 
+    def test_release_test_suite_version_header_does_not_lie(self, tmp_path):
+        """B2: the test-log header printed 'release-test-suite for v$VERSION'
+        for EVERY value of VERSION, so the unversioned-<ts> fallback read
+        "vunversioned-…" in the run's logs. The v prefix belongs to semver
+        values (leading digit) only; the unversioned fallback prints as-is.
+        A company WITH a VERSION file (the e2e fixture shape) prints v0.x.y
+        exactly as before."""
+        def _run_version_case(subdir: str, version_file: str | None,
+                              preset_version: str | None = None
+                              ) -> tuple[dict, str]:
+            proj = tmp_path / subdir
+            proj.mkdir(parents=True)
+            if version_file is not None:
+                (proj / "VERSION").write_text(version_file)
+            sprints = proj / ".company" / "sprints"
+            sprints.mkdir(parents=True)
+            (sprints / "current.json").write_text(json.dumps({
+                "sprint_id": "sprint-test",
+                "stage": "build-and-test",
+                # preset_version: the header is written BEFORE version
+                # detection (the log is renamed to <version>-test.log
+                # afterwards), so a company that already knows its version
+                # — ceo-plan set it, or a prior build-and-test pass did —
+                # carries it in the sprint state when the header is
+                # written. That is the shape the label assertion needs.
+                "release": {"version": preset_version} if preset_version
+                           else {},
+            }, indent=2))
+            r = run_script(f"{SCRIPTS_DIR}/release-test-suite.sh", [str(proj)],
+                           env={"COMPANY_DIR": str(proj / ".company")},
+                           timeout=60)
+            assert r.returncode == 0, (
+                f"exit={r.returncode}\n{r.stdout}\n{r.stderr}"
+            )
+            state = json.loads((sprints / "current.json").read_text())
+            log_file = proj / ".company" / "releases" / (
+                state["release"]["test_log"][len(str(proj) + "/.company/releases/"):]
+            )
+            return state["release"], log_file.read_text().splitlines()[0]
+
+        def _label(header: str) -> str:
+            """The version label in the header line: '[ts] release-test-suite
+            for <LABEL> (project_root=…)' → <LABEL>."""
+            return header.split("release-test-suite for ", 1)[1].split(" (", 1)[0]
+
+        # No VERSION file: the unversioned-<ts> fallback prints as-is,
+        # without a v prefix.
+        rel, header = _run_version_case("no-version", None)
+        assert rel.get("version") is None, (
+            f"no version should be detected without a VERSION file: {rel}"
+        )
+        label = _label(header)
+        assert label.startswith("unversioned-"), (
+            f"the fallback is not in the header as-is: {header}"
+        )
+        assert not label.startswith("v"), (
+            f"the fallback got a v prefix in the header: {header}"
+        )
+
+        # A VERSION file (the e2e fixture shape) with the version already in
+        # sprint state: v0.x.y as today (a digit-led value keeps the v
+        # prefix). NB: not 0.5.x — TestNoStaleVersionStrings forbids it
+        # outside CHANGELOG.md.
+        rel2, header2 = _run_version_case("with-version", "0.7.4\n",
+                                          preset_version="0.7.4")
+        assert rel2.get("version") == "0.7.4", rel2
+        assert _label(header2) == "v0.7.4", header2
+
 
 class TestGitWorktreeCreate:
     """git-worktree.sh create must be non-destructive for existing worktrees.
