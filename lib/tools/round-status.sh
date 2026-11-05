@@ -147,7 +147,10 @@ PYEOF
 import json, os
 f = os.environ["FILE"]
 d = json.load(open(f))
-entries = d.get("entries", [])
+# `or []` — an explicit null 'entries' (truncated write or hand edit)
+# means 'no entries', not a TypeError out of len(None). The --history
+# path already guards this shape.
+entries = d.get("entries") or []
 cur = d.get("cursor", 0)
 if cur < len(entries):
   e = entries[cur]

@@ -2249,6 +2249,46 @@ class TestRoundStatusCost:
         assert h["totals"] == {"calls": 0, "tokens": 0, "cost_usd": 0}
 
 
+class TestRoundStatusForceAdvance:
+    """--force-advance (admin skip of the running entry) must return a
+    structured JSON result for every current-round.json shape — an
+    'entries' field that is explicit null (a truncated or hand-edited
+    state) used to crash the heredoc with a raw Python traceback, which
+    'hive round advance' would have printed verbatim."""
+
+    @staticmethod
+    def _company(tmp_path, entries):
+        company = tmp_path / ".company"
+        (company / "rounds").mkdir(parents=True)
+        (company / "rounds" / "current-round.json").write_text(json.dumps({
+            "round_id": "round-x", "source": "sprint-lifecycle",
+            "started_at": "2026-11-04T12:00:00Z", "entries": entries,
+            "cursor": 0}))
+        return company
+
+    def test_null_entries_is_structured_not_traceback(self, tmp_path):
+        company = self._company(tmp_path, None)
+        r = run_script(Path(SCRIPTS_DIR, "round-status.sh"),
+                       ["--force-advance"], env={"COMPANY_DIR": str(company)})
+        assert r.returncode == 0, r.stderr
+        assert "Traceback" not in (r.stdout + r.stderr), r.stderr
+        assert json.loads(r.stdout) == {"ok": False,
+                                        "error": "queue already at end"}
+
+    def test_running_entry_is_skipped_and_cursor_advances(self, tmp_path):
+        company = self._company(tmp_path, [
+            {"id": "e1", "kind": "spawn", "agent": "ceo",
+             "status": "running"}])
+        r = run_script(Path(SCRIPTS_DIR, "round-status.sh"),
+                       ["--force-advance"], env={"COMPANY_DIR": str(company)})
+        assert r.returncode == 0, r.stderr
+        assert json.loads(r.stdout) == {"ok": True, "advanced_past": "e1"}
+        d = json.loads((company / "rounds" / "current-round.json")
+                       .read_text())
+        assert d["cursor"] == 1
+        assert d["entries"][0]["status"] == "skipped"
+
+
 class TestSprintCostSummary:
     """B4 (0.9.0): the sprint archive writes the cost summary report.
 
