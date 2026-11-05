@@ -166,5 +166,6 @@ hive round promote                # archive current round, promote next
 ```
 hive doctor                       # check agent harness, jq, git, node, venv, MCP server, LLM provider
 hive doctor --deep                # + probe LLM endpoint reachability (uses network)
+hive selftest [<project-dir>]     # probe the agent spawn path for real (no LLM call)
 hive version
 ```

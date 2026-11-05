@@ -376,6 +376,58 @@ class TestTicketListPriority:
         assert "--priority" in capsys.readouterr().out
 
 
+class TestSelftest:
+    """A2 (0.9.0): hive selftest probes the spawn path for real."""
+
+    @staticmethod
+    def _repo():
+        return Path(__file__).resolve().parent.parent
+
+    def test_healthy_spawn_path_exit_0(self, tmp_path, monkeypatch, capfd):
+        for k, v in {"HIVE_PROVIDER": "openai", "HIVE_MODEL": "probe-model",
+                     "HIVE_API_BASE": "http://127.0.0.1:9", "HIVE_API_KEY": "k"}.items():
+            monkeypatch.setenv(k, v)
+        from hive_cli.main import main
+        rc = main(["selftest", str(tmp_path)])
+        out = capfd.readouterr().out
+        assert rc == 0, out
+        assert "SELFTEST: OK" in out
+
+    def test_missing_httpx_fails_naming_module(self, tmp_path):
+        repo = self._repo()
+        shadow = tmp_path / "shadow"
+        shadow.mkdir()
+        (shadow / "httpx.py").write_text(
+            'raise ImportError("blocked for selftest")\n')
+        env = {k: v for k, v in os.environ.items()
+               if not k.startswith("HIVE_")}
+        env.update({"PYTHONPATH": str(shadow), "HIVE_ROOT": str(repo),
+                    "HOME": str(tmp_path), "HIVE_PROVIDER": "openai",
+                    "HIVE_MODEL": "m", "HIVE_API_BASE": "http://127.0.0.1:9",
+                    "HIVE_API_KEY": "k"})
+        r = subprocess.run(
+            [sys.executable, str(repo / "lib" / "core" / "agent-harness.py"),
+             "--selftest"],
+            capture_output=True, text=True, timeout=60, env=env)
+        assert r.returncode == 1
+        assert "FAIL import httpx" in r.stdout + r.stderr
+
+    def test_unconfigured_provider_fails_naming_keys(self, tmp_path):
+        repo = self._repo()
+        env = {k: v for k, v in os.environ.items()
+               if not k.startswith("HIVE_")}
+        env.update({"PYTHONPATH": str(repo / "lib"),
+                    "HIVE_ROOT": str(repo), "HOME": str(tmp_path)})
+        r = subprocess.run(
+            [sys.executable, str(repo / "lib" / "core" / "agent-harness.py"),
+             "--selftest"],
+            capture_output=True, text=True, timeout=60, env=env)
+        assert r.returncode == 1
+        out = r.stdout + r.stderr
+        assert "FAIL llm_providers.resolve" in out
+        assert "HIVE_PROVIDER" in out or "[llm]" in out
+
+
 class TestCliDocsDrift:
     """E1 (0.9.0): share/docs/CLI.md tracks the dispatcher. A subcommand
     the parser serves but the docs omit — or a command line the docs show

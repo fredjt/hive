@@ -768,6 +768,43 @@ def parse_actions(text: str, no_mcp: bool = False,
 # Main entry point
 # ---------------------------------------------------------------------------
 
+def _run_selftest(resolved) -> int:
+    """A2: the spawn path, probed for real — the exact pre-turn sequence a
+    real agent runs (interpreter, LLM client import, provider resolution),
+    one line per step with a final verdict. It never calls the LLM."""
+    failures = 0
+    root = Path(os.environ.get("HIVE_ROOT", "") or "")
+    venv_py = root / "venv" / "bin" / "python" if root else None
+    expected = str(venv_py) if (venv_py is not None and venv_py.is_file()) else sys.executable
+    ok = os.path.realpath(str(sys.executable)) == os.path.realpath(expected)
+    if not ok:
+        failures += 1
+    print("[selftest] " + ("ok" if ok else "FAIL") + " interpreter: "
+          + sys.executable + " (agent-spawn would pick " + expected + ")")
+    if httpx is not None:
+        print("[selftest] ok import httpx (LLM client module)")
+    else:
+        failures += 1
+        print("[selftest] FAIL import httpx (LLM client module): "
+              "No module named 'httpx'")
+    if resolved is None:
+        failures += 1
+        print("[selftest] FAIL llm_providers.resolve: module not importable")
+    elif resolved.is_configured:
+        print("[selftest] ok llm_providers.resolve: provider="
+              + str(resolved.provider) + " model=" + str(resolved.model)
+              + " base=" + str(resolved.base_url or "(default)"))
+    else:
+        failures += 1
+        print("[selftest] FAIL llm_providers.resolve: "
+              + llm_providers.unconfigured_hint(hive_root=root))
+    if failures:
+        print("SELFTEST: FAIL — " + str(failures) + " step(s) failed")
+        return 1
+    print("SELFTEST: OK — spawn path healthy (no LLM call made)")
+    return 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         prog="agent-harness",
@@ -786,9 +823,16 @@ def main() -> int:
     parser.add_argument("--provider", default=None,
                         help="LLM provider name (openai, anthropic, groq, openrouter, "
                              "ollama, google, unsloth; overrides HIVE_PROVIDER/[llm].provider)")
+    parser.add_argument("--selftest", action="store_true",
+                        help="A2: probe the spawn path, no LLM call; exit 0/1")
     parser.add_argument("--api-style", dest="api_style", default=None,
                         help="Wire style override (openai, anthropic, gemini)")
     args = parser.parse_args()
+
+    # A2: the spawn path probe short-circuits before any LLM work.
+    if args.selftest:
+        resolved = llm_providers.resolve() if llm_providers is not None else None
+        return _run_selftest(resolved)
 
     # Resolve LLM provider config: CLI args > HIVE_* env > [llm] config
     # > provider defaults (lib/core/llm_providers.py). Warnings go to

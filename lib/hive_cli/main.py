@@ -2,8 +2,8 @@
 
 Subcommands:
   init, start, stop, status, dashboard, restart, ticket, chat, agent, gates,
-  backlog, config, doctor, killall, llm, round, gh, release, tool, tools,
-  version
+  backlog, config, doctor, selftest, killall, llm, round, gh, release,
+  tool, tools, version
 
 Bare `hive` (no args) launches the dashboard for the project in CWD.
 """
@@ -22,7 +22,7 @@ if str(_LIB) not in sys.path:
 
 from hive_cli.commands import (  # noqa: E402
     company, dashboard, init, ticket, chat, agent, gates, backlog,
-    config, doctor, tool, killall, llm, round as round_cmd,
+    config, doctor, tool, killall, llm, round as round_cmd, selftest,
     gh as gh_cmd, release as release_cmd,
     restart,
 )
@@ -195,6 +195,12 @@ def _add_doctor(sub) -> None:
     p.set_defaults(_handler=doctor.handle)
 
 
+def _add_selftest(sub) -> None:
+    p = sub.add_parser("selftest", help="Probe the agent spawn path (no LLM call)")
+    p.add_argument("project_dir", nargs="?", default=".", help="Project root")
+    p.set_defaults(_handler=selftest.handle)
+
+
 def _add_killall(sub) -> None:
     p = sub.add_parser("killall", help="Emergency: kill ALL hive processes (sledgehammer)")
     p.add_argument("--dry-run", action="store_true", help="List what would be killed without doing it")
@@ -317,6 +323,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     _add_config(sub)
     _add_doctor(sub)
+    _add_selftest(sub)
     _add_killall(sub)
     _add_llm(sub)
     _add_round(sub)
