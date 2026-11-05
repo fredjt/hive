@@ -1,5 +1,35 @@
 # Changelog
 
+## 0.9.0
+
+Bugfix round on top of the 0.9.0 feature line, each fix with a
+regression test (the 0.8.x bugfix pattern — failures the suite did
+not see, found by live-driving the new surfaces).
+
+- fix(doctor): the spawn path probe runs under the interpreter
+  agent-spawn.sh actually picks (the install venv's python, via the
+  shared selftest.spawn_python helper), not the CLI's own — a healthy
+  install with a packageless CLI python no longer reads red, and a
+  broken venv is diagnosed on the module import, not the interpreter.
+  'Present' becomes 'executable' (agent-spawn's own `[ -x ]` test).
+- fix(cli): the round, release, ticket, chat, backlog, and gates
+  commands honor the COMPANY_DIR environment variable (the
+  codebase-wide convention every bash tool and `hive llm stats`
+  already follows) instead of silently retargeting to the company in
+  the CWD whenever the CWD happens to have a .company.
+- fix(llm): `hive llm stats` counts a present-but-non-numeric
+  cost_usd as 0 instead of raising ValueError out of the whole run —
+  the 'never a crash' contract the sibling tokens field already
+  honored.
+- fix(rounds): `round-status.sh --force-advance` returns the
+  structured {"ok": false, ...} result for a current-round.json with
+  an explicit null 'entries' instead of a raw TypeError traceback
+  (the --history path already guarded the shape).
+
+Seven new regression tests: TestDoctorHarnessProbe (venv probe pair),
+TestCliCompanyDirEnv, TestLlmStatsWindow::test_non_numeric_cost_field_*,
+TestRoundStatusForceAdvance.
+
 ## 0.8.4
 
 Bugfix round: seven fixes across the CLI, config, and the release
