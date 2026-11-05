@@ -3,14 +3,9 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
 
 from hive_cli import mcp_client
-
-
-def _cd():
-    p = Path.cwd() / ".company"
-    return str(p) if p.is_dir() else None
+from hive_cli.commands import company_dir as _company_dir
 
 
 def _print(obj):
@@ -18,7 +13,7 @@ def _print(obj):
 
 
 def handle(args) -> int:
-    cd = _cd()
+    cd = _company_dir()
     base = {"company_dir": cd} if cd else {}
 
     if args.action == "status":

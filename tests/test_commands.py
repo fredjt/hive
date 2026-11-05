@@ -1121,6 +1121,62 @@ class TestStatusDaemonSection:
         assert "sprint-lifecycle" in captured.out
 
 
+class TestCliCompanyDirEnv:
+    """CLI commands must honor the COMPANY_DIR environment variable, not
+    just CWD — the codebase-wide convention (every bash tool resolves
+    COMPANY_DIR="${COMPANY_DIR:-$PWD/.company}", `hive llm stats` does
+    the same, and the MCP tools fall back to it when the CLI passes no
+    company_dir). A command run from a directory that has its own
+    .company (such as a repo checkout carrying a live company) must not
+    silently retarget round/release/ticket/chat/backlog/gates to the
+    wrong company when COMPANY_DIR points elsewhere."""
+
+    @staticmethod
+    def _fixture_company() -> Path:
+        return Path(__file__).resolve().parent / "fixtures" / "company"
+
+    @staticmethod
+    def _cli(cwd: Path, company_dir: str, *argv: str) -> dict:
+        r = subprocess.run(
+            [sys.executable, "-m", "hive_cli.main", *argv],
+            capture_output=True, text=True, timeout=120,
+            cwd=str(cwd),
+            env={**os.environ,
+                 "PYTHONPATH": str(Path(__file__).resolve()
+                                   .parent.parent / "lib"),
+                 # dead port — force the stdio MCP fallback so a live
+                 # HTTP server on the default port can never answer
+                 "HIVE_MCP_PORT": "1",
+                 "COMPANY_DIR": company_dir})
+        assert r.returncode == 0, f"{argv} rc={r.returncode}\n{r.stdout}\n{r.stderr}"
+        return json.loads(r.stdout[r.stdout.find("{"):])
+
+    def test_round_status_honors_company_dir_env(self, tmp_path):
+        # CWD has its own .company with a different current round.
+        cwd_comp = tmp_path / ".company"
+        (cwd_comp / "rounds").mkdir(parents=True)
+        (cwd_comp / "rounds" / "current-round.json").write_text(
+            json.dumps({"round_id": "cwd-round", "entries": [],
+                        "cursor": 0}))
+        out = self._cli(tmp_path, str(self._fixture_company()),
+                        "round", "status")
+        data = out.get("data") or {}
+        assert data.get("round_id") == "round-010", (
+            "round status read the CWD company, not $COMPANY_DIR: "
+            f"{out}")
+
+    def test_release_status_honors_company_dir_env(self, tmp_path):
+        (tmp_path / ".company").mkdir(parents=True)
+        # release_status returns the sprint state dict directly (no
+        # shell-run data wrapper).
+        out = self._cli(tmp_path, str(self._fixture_company()),
+                        "release", "status")
+        assert out.get("sprint_id") == "sprint-20261103T000000Z", (
+            "release status read the CWD company, not $COMPANY_DIR: "
+            f"{out}")
+
+
+
 class TestRestartDashboardMissing:
     """B.4: `hive restart` fails cleanly with a useful message when no
     dashboard is recorded in processes.json — a restart implies there was

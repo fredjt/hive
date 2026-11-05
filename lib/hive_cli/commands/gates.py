@@ -3,20 +3,15 @@
 from __future__ import annotations
 
 import json
-import os
 import sys
 from pathlib import Path
 
 from hive_cli import mcp_client
-
-
-def _cd():
-    p = Path.cwd() / ".company"
-    return str(p) if p.is_dir() else None
+from hive_cli.commands import company_dir as _company_dir
 
 
 def handle(args) -> int:
-    cd = _cd()
+    cd = _company_dir()
     if args.action == "run":
         payload = {"dept": args.dept, "project_root": str(Path(args.project_dir).resolve())}
         if cd: payload["company_dir"] = cd
@@ -32,7 +27,7 @@ def handle(args) -> int:
         return 0 if res.get("ok") else 1
 
     if args.action == "status":
-        company_dir = cd or os.environ.get("COMPANY_DIR") or str(Path.cwd() / ".company")
+        company_dir = cd or str(Path.cwd() / ".company")
         depts_dir = Path(company_dir) / "departments"
         if not depts_dir.is_dir():
             print(f"ERROR: no departments directory at {depts_dir}", file=sys.stderr)

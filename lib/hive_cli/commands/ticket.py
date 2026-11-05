@@ -4,18 +4,13 @@ from __future__ import annotations
 
 import json
 import sys
-from pathlib import Path
 
 from hive_cli import mcp_client
-
-
-def _company_dir(args) -> str | None:
-    cwd_company = Path.cwd() / ".company"
-    return str(cwd_company) if cwd_company.is_dir() else None
+from hive_cli.commands import company_dir as _company_dir
 
 
 def handle(args) -> int:
-    cd = _company_dir(args)
+    cd = _company_dir()
     action = args.action
     if action == "create":
         payload = {
