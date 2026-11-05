@@ -1,5 +1,6 @@
 """Integration tests."""
 import json, os, subprocess, sys
+from datetime import datetime, timezone
 from pathlib import Path
 import pytest
 
@@ -122,7 +123,10 @@ class TestLLMUsageCost:
         company = tmp_path / "company"
         (company / "logs").mkdir(parents=True)
         log = company / "logs" / "llm-usage.log"
-        now = "2026-11-04T00:00:00Z"
+        # Dynamic timestamp: stats counts a 24h window, so a hardcoded
+        # date goes stale and the entries age out of the window (the
+        # suite was green on the write date and red the day after).
+        now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         log.write_text(
             json.dumps({"ts": now, "caller": "ic-engineer", "mode": "agent",
                         "model": "gpt-4o", "turn": 1, "tokens": 100,
