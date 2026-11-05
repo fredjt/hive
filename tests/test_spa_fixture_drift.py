@@ -18,7 +18,7 @@ import pytest
 # The C1 module owns the shared fixture locations, the node/git
 # availability checks, and the scratch-project + server helpers.
 from tests.test_spa_smoke import (
-    REPO, SPA_FIX_DIR, TREES,
+    SPA_FIX_DIR,
     TestSpaSmoke as _Helpers,
 )
 

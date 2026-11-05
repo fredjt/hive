@@ -17,12 +17,12 @@ comparison below fails) and/or renders literal 'undefined' in the SPA
 (the content invariant fails) — the browser is never the first consumer
 of a new shape.
 """
+import hashlib
 import json
 import os
 import shutil
 import socket
 import subprocess
-import sys
 import time
 import urllib.request
 from pathlib import Path
@@ -107,6 +107,29 @@ def _wait_http(url, timeout=15):
     raise AssertionError(f"dashboard never answered {url}: {last}")
 
 
+# Deterministic mtime for the copied fixture trees (C2). The dashboard serves
+# file mtimes verbatim and orders some endpoints by mtime, so a fresh copy or
+# a fresh CI checkout would stamp the tree with "now" and every recorded
+# manifest would drift on the next run on another machine. Pin every file to
+# a fixed base plus a per-path offset: reproducible anywhere, and distinct
+# per path so mtime-ordered listings stay stable.
+FIXED_MTIME_BASE = 1767225600  # 2026-01-01T00:00:00Z
+FIXED_MTIME_SPAN = 86400  # offsets stay within one day of the base
+
+
+def _pin_tree_times(proj: Path):
+    """Pin every file/dir mtime under proj to a deterministic value derived
+    from its relative path (a fixed base + path-hash offset)."""
+    for p in sorted(proj.rglob("*")):
+        if ".git" in p.parts:
+            continue
+        rel = p.relative_to(proj).as_posix()
+        offset = int.from_bytes(
+            hashlib.sha256(rel.encode()).digest()[:4], "big") % FIXED_MTIME_SPAN
+        ts = FIXED_MTIME_BASE + offset
+        os.utime(p, (ts, ts))
+
+
 class TestSpaSmoke:
     """C1 (render-everything) + C2 (one fixture set, two consumers)."""
 
@@ -121,13 +144,15 @@ class TestSpaSmoke:
         """Copy BOTH fixture trees under one tmp project root with the
         deterministic scratch repo (record mode must never touch the
         repo's fixture trees — /api/departments writes ensureTicketBoard
-        skeletons into the company dir)."""
+        skeletons into the company dir). File mtimes are pinned so
+        mtime-bearing API fields are stable across machines."""
         proj = tmp_path / "proj"
         proj.mkdir()
         for name in ("healthy", "degenerate"):
             shutil.copytree(TREES[name], proj / ("company" if name == "healthy"
                                                  else "company-degenerate"))
         build_scratch_repo(proj)
+        _pin_tree_times(proj)
         return proj
 
     def _start_server(self, company):

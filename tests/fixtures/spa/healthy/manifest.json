@@ -255,8 +255,8 @@
             "dept": "marketing",
             "type": "marketing-report",
             "author": "",
-            "date": "2026-11-04T19:23:51.855Z",
-            "mtime": "2026-11-04T19:23:51.855Z",
+            "date": "2026-01-01T06:32:13.000Z",
+            "mtime": "2026-01-01T06:32:13.000Z",
             "title": "Pricing survey",
             "size": 25,
             "content": "# Pricing survey\n\nDraft.\n"
@@ -267,8 +267,8 @@
             "dept": "it",
             "type": "dept-report",
             "author": "",
-            "date": "2026-11-04T19:23:51.855Z",
-            "mtime": "2026-11-04T19:23:51.855Z",
+            "date": "2026-01-01T01:50:15.000Z",
+            "mtime": "2026-01-01T01:50:15.000Z",
             "title": "Incident 1",
             "size": 24,
             "content": "# Incident 1\n\nResolved.\n"
@@ -848,7 +848,7 @@
           {
             "file": "pricing-survey.md",
             "size": 25,
-            "modified": "2026-11-04T19:23:51.855Z"
+            "modified": "2026-01-01T06:32:13.000Z"
           }
         ],
         "output": []
