@@ -219,6 +219,7 @@ echo "Starting company at $PROJECT_ROOT"
 echo "================================================"
 
 PIDS=()
+ROLES=()
 PROCS='[]'
 
 add_proc() {
@@ -241,6 +242,7 @@ json.dump(procs,sys.stdout)
 PYEOF
 )
   PIDS+=($pid)
+  ROLES+=($role)
   echo "  Started $role ($dept) PID=$pid"
 }
 
@@ -318,7 +320,7 @@ fi
 # the live WebSocket connection. We only start a new dashboard when
 # company-start is run standalone (no prior `hive`).
 
-DASHBOARD_PORT=3456
+DASHBOARD_PORT="${HIVE_DASHBOARD_PORT:-3456}"
 DASHBOARD_ALREADY_RUNNING=false
 if nc -z 127.0.0.1 "$DASHBOARD_PORT" 2>/dev/null; then
   echo "Dashboard already running on port $DASHBOARD_PORT — reusing it."
@@ -500,6 +502,43 @@ tmp=f+'.tmp.'+str(os.getpid())
 json.dump(result, open(tmp,'w'), indent=2)
 os.replace(tmp,f)
 PYEOF
+
+# --- Prove the daemons are alive before reporting success ---------------
+# company-start used to report success the moment the PIDs were recorded:
+# a daemon that died inside the grace window left a half-started company
+# that only `hive status` revealed later (the 0.8.4 processes.json
+# sibling). Wait a short grace period, then verify every recorded PID is
+# alive; a dead daemon fails the start and names role + PID. HIVE_START_GRACE
+# overrides the window (tests shorten it).
+pid_alive() {
+  local pid=$1 state
+  kill -0 "$pid" 2>/dev/null || return 1
+  # An exited-but-unreaped child is a zombie: kill -0 still succeeds on
+  # it, so state Z must count as dead.
+  state=$(awk '{print $3}' "/proc/$pid/stat" 2>/dev/null)
+  [ "$state" = "Z" ] && return 1
+  return 0
+}
+
+START_GRACE="${HIVE_START_GRACE:-5}"
+sleep "$START_GRACE"
+DEAD_PROCS=()
+for _i in "${!PIDS[@]}"; do
+  if ! pid_alive "${PIDS[$_i]}"; then
+    DEAD_PROCS+=("${ROLES[$_i]} PID=${PIDS[$_i]}")
+  fi
+done
+if [ "${#DEAD_PROCS[@]}" -gt 0 ]; then
+  {
+    echo "================================================"
+    echo "ERROR: ${#DEAD_PROCS[@]} of ${#PIDS[@]} daemon(s) died during the ${START_GRACE}s start grace:"
+    for d in "${DEAD_PROCS[@]}"; do echo "  - $d"; done
+    echo "Surviving daemons are recorded in $COMPANY_DIR/processes.json;"
+    echo "run 'bash $SCRIPT_DIR/company-stop.sh $PROJECT_ROOT' to clean them up" >&2
+    echo "and check $COMPANY_DIR/logs/ for why the daemon exited."
+  } >&2
+  exit 1
+fi
 
 echo ""
 echo "================================================"

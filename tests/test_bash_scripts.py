@@ -1487,6 +1487,10 @@ class TestCompanyStartNoJsonTraceback:
         try:
             env = os.environ.copy()
             env["HIVE_INSTALL_DIR"] = str(Path(__file__).resolve().parent.parent)
+            # The A4 liveness check sleeps HIVE_START_GRACE (default 5 s)
+            # before the summary; these tests spawn real, healthy daemons,
+            # so 1 s keeps the suite fast while still exercising the check.
+            env["HIVE_START_GRACE"] = "1"
             with open(out_path, "wb") as out_f, open(err_path, "wb") as err_f:
                 proc = subprocess.Popen(
                     ["bash", f"{SCRIPTS_DIR}/{script}", str(proj)],
@@ -1636,6 +1640,213 @@ class TestCompanyStartNoJsonTraceback:
             assert len(data["processes"]) >= len(self.INFRA_DAEMONS)
         finally:
             self._stop_company(proj, company)
+
+
+class TestCompanyStartLiveness:
+    """A4 (0.9.0): `hive start` proves the daemons are alive.
+
+    company-start.sh used to report success the moment the PIDs were
+    recorded; a daemon that died inside the grace window left a
+    half-started company that only `hive status` revealed later (the
+    0.8.4 processes.json sibling). The script now waits HIVE_START_GRACE
+    (default 5 s) after spawning, verifies every recorded PID, and exits
+    nonzero naming role + PID for each dead daemon.
+
+    These tests run the real company-start.sh against a scratch install
+    whose infra daemons are fakes: the alive fake loops on `sleep 1` and
+    reaps itself when its parent subshell dies (a failed stop can never
+    leak a loop), the dying fake exits immediately and turns into a
+    zombie the script must not count as alive."""
+
+    INFRA_DAEMONS = (
+        "sprint-lifecycle", "roster-rebuild", "status-rebuild",
+        "org-chart-rebuild", "worktree-merger", "verification-gates",
+        "company-health",
+    )
+
+    ALIVE_FAKE = (
+        "#!/bin/bash\n"
+        "_ppid=$PPID\n"
+        "while :; do\n"
+        "  kill -0 \"$_ppid\" 2>/dev/null || exit 0\n"
+        "  sleep 1\n"
+        "done\n"
+    )
+    DYING_FAKE = "#!/bin/bash\nexit 1\n"
+
+    @staticmethod
+    def _free_port():
+        import socket
+        s = socket.socket()
+        s.bind(("127.0.0.1", 0))
+        port = s.getsockname()[1]
+        s.close()
+        return port
+
+    def _scratch_install(self, tmp_path, dying=()):
+        """A scratch install carrying the real company-start/stop scripts
+        plus fake infra daemons (dying named in `dying`, alive otherwise).
+        No venv, so the MCP server is not spawned (the scratch
+        INSTALL_DIR has no venv/bin/python)."""
+        install = tmp_path / "install"
+        tools = install / "lib" / "tools"
+        tools.mkdir(parents=True)
+        for name in ("company-start.sh", "company-stop.sh"):
+            shutil.copy(Path(SCRIPTS_DIR) / name, tools / name)
+        for name in self.INFRA_DAEMONS:
+            fake = tools / f"{name}.sh"
+            fake.write_text(self.DYING_FAKE if name in dying else self.ALIVE_FAKE)
+        return install
+
+    def _run_company(self, install, proj, timeout=120):
+        """Run the scratch company-start.sh with FILE-based output capture
+        (daemons inherit the script's stdout; pipe capture would block on
+        EOF until every daemon died — same convention as
+        TestCompanyStartNoJsonTraceback._run_company)."""
+        import socket
+        import tempfile
+        import threading
+        import types
+
+        # Occupy an ephemeral dashboard port so company-start takes the
+        # "already running — reusing it" path and starts no node of its
+        # own (a test-started dashboard would leak: company-stop
+        # deliberately does not kill it).
+        dash_port = self._free_port()
+        listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        listener.bind(("127.0.0.1", dash_port))
+        listener.listen(8)
+
+        def _serve():
+            while True:
+                try:
+                    conn, _ = listener.accept()
+                    conn.close()
+                except OSError:
+                    return
+
+        threading.Thread(target=_serve, daemon=True).start()
+
+        # Never source the real ~/.config/hive/env.sh — isolate the env.
+        env_file = tempfile.NamedTemporaryFile(
+            prefix="company-start-liveness-env-", delete=False)
+        env_file.close()
+
+        out_path = tempfile.mktemp(prefix="company-start-liveness-", suffix=".out")
+        err_path = tempfile.mktemp(prefix="company-start-liveness-", suffix=".err")
+        proc = None
+        try:
+            env = os.environ.copy()
+            env["HIVE_ROOT"] = str(install)
+            env["HIVE_INSTALL_DIR"] = str(install)
+            env["HIVE_DASHBOARD_PORT"] = str(dash_port)
+            env["HIVE_MCP_PORT"] = str(self._free_port())  # nothing listens; no venv
+            env["HIVE_START_GRACE"] = "1"  # dying fakes exit at t=0; 1 s is ample
+            env["HIVE_ENV_FILE"] = env_file.name
+            with open(out_path, "wb") as out_f, open(err_path, "wb") as err_f:
+                proc = subprocess.Popen(
+                    ["bash", str(install / "lib" / "tools" / "company-start.sh"),
+                     str(proj)],
+                    stdin=subprocess.DEVNULL, stdout=out_f, stderr=err_f,
+                    env=env,
+                )
+                try:
+                    proc.wait(timeout=timeout)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+                    proc.wait(timeout=10)
+                    raise
+            stdout = Path(out_path).read_text(errors="replace")
+            stderr = Path(err_path).read_text(errors="replace")
+        finally:
+            listener.close()
+            for p in (env_file.name, out_path, err_path):
+                try:
+                    os.unlink(p)
+                except FileNotFoundError:
+                    pass
+
+        return types.SimpleNamespace(
+            returncode=proc.returncode, stdout=stdout, stderr=stderr)
+
+    def _stop_company(self, install, proj):
+        """Stop via the scratch company-stop.sh, then belt-and-braces
+        SIGKILL anything still recorded in processes.json, so a failure
+        here (or in company-stop.sh) can never leave live fakes behind."""
+        import signal
+        company = proj / ".company"
+        procs_file = company / "processes.json"
+        subprocess.run(
+            ["bash", str(install / "lib" / "tools" / "company-stop.sh"), str(proj)],
+            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL, timeout=60,
+        )
+        try:
+            data = json.loads(procs_file.read_text())
+        except Exception:
+            return
+        for p in data.get("processes", []):
+            pid = p.get("pid")
+            if not isinstance(pid, int):
+                continue
+            try:
+                os.kill(pid, signal.SIGKILL)
+            except OSError:
+                pass  # already dead
+
+    def _make_project(self, tmp_path):
+        proj = tmp_path / "proj"
+        (proj / ".company" / "logs").mkdir(parents=True)
+        (proj / ".company" / "departments" / "it").mkdir(parents=True)
+        return proj
+
+    def test_dying_daemon_fails_start_naming_role(self, tmp_path):
+        install = self._scratch_install(tmp_path, dying=("sprint-lifecycle",))
+        proj = self._make_project(tmp_path)
+        try:
+            r = self._run_company(install, proj)
+            combined = r.stdout + r.stderr
+            assert r.returncode != 0, (
+                f"hive start must exit nonzero when a daemon dies in the "
+                f"grace window, got {r.returncode}:\n{combined}"
+            )
+            assert "sprint-lifecycle" in r.stderr, (
+                f"the dead daemon's role must be named on stderr: {r.stderr}"
+            )
+            assert "PID=" in r.stderr, (
+                f"the dead daemon's PID must be named on stderr: {r.stderr}"
+            )
+            assert "Company started with" not in r.stdout, (
+                "the success summary must not print when the start failed"
+            )
+            # processes.json is still written (before the check) so that
+            # company-stop can clean up the surviving daemons.
+            data = json.loads((proj / ".company" / "processes.json").read_text())
+            roles = {p["role"] for p in data["processes"]}
+            assert "sprint-lifecycle" in roles
+            assert len(data["processes"]) == len(self.INFRA_DAEMONS)
+        finally:
+            self._stop_company(install, proj)
+
+    def test_all_live_daemons_start_succeeds(self, tmp_path):
+        install = self._scratch_install(tmp_path)
+        proj = self._make_project(tmp_path)
+        try:
+            r = self._run_company(install, proj)
+            combined = r.stdout + r.stderr
+            assert r.returncode == 0, (
+                f"healthy start must succeed: {combined}"
+            )
+            assert (f"Company started with {len(self.INFRA_DAEMONS)} processes"
+                    ) in r.stdout, combined
+            data = json.loads((proj / ".company" / "processes.json").read_text())
+            assert len(data["processes"]) == len(self.INFRA_DAEMONS)
+            for p in data["processes"]:
+                assert os.kill(p["pid"], 0) is None, (
+                    f"recorded daemon {p['role']} PID={p['pid']} is not alive"
+                )
+        finally:
+            self._stop_company(install, proj)
 
 
 class TestReleasePublishNoGhFallback:
