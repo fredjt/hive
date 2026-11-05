@@ -656,6 +656,38 @@ class TestCutReleaseScript:
         assert r.returncode != 0, "a dirty tree must refuse the cut"
         assert "dirty" in r.stdout + r.stderr
 
+    def test_dry_run_notes_extraction_survives_large_changelog(
+            self, scratch_tree, tmp_path):
+        """Gate 7 extracts the release title by piping the notes through
+        'grep | grep | first-line' under set -euo pipefail. A first-line
+        consumer that exits early (head -1) SIGPIPEs the middle grep the
+        instant the notes exceed the pipe buffer (64KB) — exit 141
+        aborts the cut via set -e after the tarball, scan, and sha256
+        have all passed. The consumer must drain the pipe (sed -n 1p),
+        so the extraction completes no matter how big the section is.
+        The 0.9.0 cut's own gate run found this on a loaded box with a
+        feature-sized changelog section."""
+        v = (scratch_tree / "VERSION").read_text().strip()
+        (scratch_tree / "CHANGELOG.md").write_text(
+            "## %s\n\nProof by execution.\n\n" % v
+            + "\n".join("Line %d of a deliberately oversized section."
+                        % i for i in range(8000))
+            + "\n\n## 0.0.0\n\nOlder release.\n"
+        )
+        env = {**os.environ, **self._GIT_IDENTITY}
+        for args in (["git", "add", "CHANGELOG.md"],
+                     ["git", "commit", "-qm", "big-notes"]):
+            subprocess.run(args, cwd=str(scratch_tree), env=env, check=True,
+                           timeout=60)
+        out = tmp_path / "dist"
+        r = self._run(scratch_tree, out,
+                      "python -m pytest tests/test_json_structures.py -q -x")
+        assert r.returncode == 0, r.stdout + "\n" + r.stderr
+        notes = out / f"hive-{v}.release-notes.md"
+        assert notes.is_file(), "dry-run must extract the release notes"
+        assert "Line 0 of a deliberately oversized section." \
+            in notes.read_text()
+
 
 class TestCutReleaseResumeHints:
     """D3: a failing cut-release gate ends with a 'Resume:' line naming the

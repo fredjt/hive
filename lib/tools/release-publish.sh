@@ -74,7 +74,7 @@ $excerpt"
         url=$(gh release view "$VERSION" --json url -q .url 2>/dev/null)
       else
         url=$(gh release create "$VERSION" "$tarball" "$sha_file" \
-              --title "hive $VERSION" --notes "$notes" 2>&1 | grep -oE 'https://github.com/[^[:space:]]+' | head -1)
+              --title "hive $VERSION" --notes "$notes" 2>&1 | grep -oE 'https://github.com/[^[:space:]]+' | sed -n 1p)
       fi
     else
       cat /tmp/release-publish.preflight >&2

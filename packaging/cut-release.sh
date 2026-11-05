@@ -206,7 +206,10 @@ if [ ! -s "$NOTES" ]; then
 fi
 # Title: the section's first prose line, e.g.
 #   "Hive 0.7.1 — config streamlining"
-FIRST_LINE="$(grep -v '^#' "$NOTES" | grep -v '^\s*$' | head -1)"
+# sed, not head: head exits after one line and, under set -o pipefail,
+# SIGPIPEs the middle grep the instant the notes exceed the pipe buffer
+# (exit 141 aborts the cut via set -e). sed drains the pipe.
+FIRST_LINE="$(grep -v '^#' "$NOTES" | grep -v '^\s*$' | sed -n 1p)"
 TITLE="Hive $VERSION"
 [ -n "$FIRST_LINE" ] && TITLE="Hive $VERSION — $(echo "$FIRST_LINE" | sed 's/\s\{2,\}/ /g')"
 

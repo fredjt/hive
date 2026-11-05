@@ -59,7 +59,7 @@ if [ -f "$CFG" ]; then
   PUBLISHER=$(awk -F= '/^[[:space:]]*publisher_script[[:space:]]*=/{
     gsub(/^[[:space:]]+|[[:space:]]+$/,"",$2);
     gsub(/^"|"$/,"",$2); print $2
-  }' "$CFG" 2>/dev/null | head -1)
+  }' "$CFG" 2>/dev/null | sed -n 1p)
 fi
 [ -z "$PUBLISHER" ] && PUBLISHER="$SKILL_DIR/lib/templates/publishers/github.sh"
 

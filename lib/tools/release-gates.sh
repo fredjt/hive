@@ -52,7 +52,7 @@ else
   # publish that pushed the tag before the release — it is the newest
   # v* tag, and comparing a version against itself fails every retry.
   prev_tag=$(git tag --list 'v*' --sort=-version:refname \
-    | grep -vFx "v${VERSION#v}" | head -1)
+    | grep -vFx "v${VERSION#v}" | sed -n 1p)
   if [ -n "$prev_tag" ]; then
     if [ "$(printf '%s\n%s\n' "$prev_tag" "$VERSION" | sort -V | tail -1)" != "$VERSION" ] || [ "$prev_tag" = "$VERSION" ]; then
       record "semver" "fail" "$VERSION is not greater than previous tag $prev_tag"
