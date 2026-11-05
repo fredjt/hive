@@ -1147,7 +1147,15 @@ run_release_verify() {
 
   After writing the verdict, EXIT."
 
-  VERIFY_LOG_PATH="$COMPANY_DIR/releases/${VERSION:-unversioned}-verify.log"
+  # B1: the verify log is per sprint. The old path (releases/<version>-verify.log,
+  # shared by EVERY unversioned sprint and appended across runs) let a VERDICT: GO
+  # written by sprint N be parsed inside sprint N+1 (grep -m1 of a file that
+  # never ended). Keying the path by sprint id makes each sprint's verdict file
+  # its own; consumers (release-verdict-write.sh, the agents, the dashboard)
+  # read the path from .release.verify_log, so the switch is seamless.
+  local VERIFY_SPRINT_ID
+  VERIFY_SPRINT_ID=$(ss_get_field .sprint_id)
+  VERIFY_LOG_PATH="$COMPANY_DIR/releases/${VERIFY_SPRINT_ID:-unknown}-${VERSION:-unversioned}-verify.log"
   ss_set_release_field verify_log "$VERIFY_LOG_PATH"
   mkdir -p "$(dirname "$VERIFY_LOG_PATH")"
 

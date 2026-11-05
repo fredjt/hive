@@ -717,6 +717,78 @@ def test_unparseable_release_verdict_fails_explicitly(tmp_path):
     )
     assert current.get("stage") == "ceo-plan"
 
+
+def test_verify_log_is_per_sprint(tmp_path):
+    """B1: the verify log is per sprint. The old path
+    (releases/unversioned-verify.log) was shared by EVERY unversioned sprint
+    and appended across runs, so a VERDICT: GO written by sprint N was
+    parseable inside sprint N+1. The path is now keyed by sprint id — two
+    consecutive unversioned sprints carry distinct verify-log paths, and a
+    VERDICT line pre-seeded into the old shared path is NOT picked up by the
+    new per-sprint file (a release with a silent verdict still fails
+    explicitly)."""
+    h = LifecycleHarness(tmp_path, mode="go", with_code_branch=True)
+    _seed_ticket(h)
+    r1 = h.run()
+    assert r1.returncode == 0, r1.stderr
+
+    s1 = json.loads(h.sprint_archive.read_text())
+    sid1 = s1["sprint_id"]
+    rel_dir = h.project / ".company" / "releases"
+    vlog1 = s1.get("release", {}).get("verify_log")
+    assert vlog1 and f"{sid1}-unversioned-verify.log" in vlog1, (
+        f"sprint 1 verify log is not per-sprint: {vlog1!r}" 
+    )
+    assert (rel_dir / f"{sid1}-unversioned-verify.log").is_file(), (
+        f"per-sprint verify log missing: {rel_dir / (sid1 + '-unversioned-verify.log')}" 
+    )
+    assert s1.get("release", {}).get("verdict") == "GO"
+    assert not (rel_dir / "unversioned-verify.log").exists(), (
+        "the old SHARED unversioned verify log was created"
+    )
+
+    # Second consecutive unversioned sprint → a distinct verify-log path.
+    _seed_ticket(h)
+    r2 = h.run()
+    assert r2.returncode == 0, r2.stderr
+    s2 = json.loads(h.sprint_archive.read_text())
+    sid2 = s2["sprint_id"]
+    assert sid2 != sid1, "the second run must archive a new sprint"
+    vlog2 = s2.get("release", {}).get("verify_log")
+    assert vlog2 and f"{sid2}-unversioned-verify.log" in vlog2, (
+        f"sprint 2 verify log is not per-sprint: {vlog2!r}" 
+    )
+    assert vlog2 != vlog1, "two consecutive sprints shared a verify log"
+    assert (rel_dir / f"{sid2}-unversioned-verify.log").is_file()
+    assert s2.get("release", {}).get("verdict") == "GO"
+
+    # A VERDICT line pre-seeded into the OLD shared path is invisible to the
+    # next sprint: a release-IC that writes nothing must fail explicitly —
+    # under the old shared path the seeded GO would have been parsed as this
+    # sprint's verdict (grep -m1 of a file that already contained a GO).
+    (rel_dir / "unversioned-verify.log").write_text(
+        "VERDICT: GO\n"
+        "RATIONALE: seeded into the old shared path by a prior sprint.\n"
+    )
+    _seed_ticket(h)
+    h.mode = "noop"  # release-IC writes no verdict this pass
+    r3 = h.run()
+    assert r3.returncode == 0, r3.stderr
+    assert "no parseable verdict" in r3.stderr, (
+        f"the seeded GO in the old shared path was picked up (or no verify ran)\n"
+        f"stderr: {r3.stderr[-500:]}"
+    )
+    s3 = json.loads(h.sprint_archive.read_text())
+    rel3 = s3.get("release", {})
+    assert rel3.get("verdict") is None, (
+        f"sprint 3 inherited a verdict from the old shared path: {rel3}" 
+    )
+    assert rel3.get("publish_status") == "failed"
+    # The per-sprint file for sprint 3 exists and carries NO verdict line.
+    vlog3_file = rel_dir / f"{s3['sprint_id']}-unversioned-verify.log"
+    assert vlog3_file.is_file()
+    assert "VERDICT:" not in vlog3_file.read_text()
+
 def _seed_current_state(h, retries=0):
     """Write .company/sprints/current.json with the given retry count so
     the release build fields can be seeded before h.run()."""
