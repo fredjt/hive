@@ -250,13 +250,18 @@ def handle(args) -> int:
         mode = e.get("mode", "?")
         model = e.get("model", "") or "(unknown)"
         # Backward compat: pre-0.9.0 entries have no cost_usd (and odd ones
-        # have no tokens) — both count as 0, never a crash.
+        # have no tokens) — both count as 0, never a crash. A present but
+        # non-numeric value (e.g. a string) is malformed the same way.
         tokens = e.get("tokens") or 0
-        cost = float(e.get("cost_usd") or 0.0)
+        cost = e.get("cost_usd") or 0.0
         try:
             tokens = int(tokens)
         except (TypeError, ValueError):
             tokens = 0
+        try:
+            cost = float(cost)
+        except (TypeError, ValueError):
+            cost = 0.0
         total_tokens += tokens
         total_cost += cost
         by_caller[caller] += 1

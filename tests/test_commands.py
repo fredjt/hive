@@ -833,6 +833,26 @@ class TestLlmStatsWindow:
         assert j["calls"] == 1 and j["tokens"] == 50
         assert j["cost_usd"] == pytest.approx(0.0)
 
+    def test_non_numeric_cost_field_sums_zero_not_crash(self, tmp_path):
+        """A cost_usd that is present but not numeric counts as 0 — the
+        same 'never crash' contract the numeric tokens field already
+        honors (its try/except). The comment above both says so; only
+        cost was missing the guard, so one bad entry took down the
+        whole `hive llm stats` run with a traceback."""
+        from datetime import datetime, timezone
+        now = datetime.now(timezone.utc)
+        company = tmp_path / ".company"
+        company.mkdir()
+        e = dict(self._entries(now)[0])  # a normal entry, inside 1h
+        e["cost_usd"] = "n/a"
+        self._seed(company, [e])
+        r = self._run(company, "stats", "--window", "1h", "--json")
+        assert r.returncode == 0, (r.stdout[-400:], r.stderr[-400:])
+        j = json.loads(r.stdout)
+        assert j["calls"] == 1
+        assert j["tokens"] == 100
+        assert j["cost_usd"] == pytest.approx(0.0)
+
 
 class TestDoctorJson:
     """C1: `hive doctor --json` — a machine-readable dump of every check
