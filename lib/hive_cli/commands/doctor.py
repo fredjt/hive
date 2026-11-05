@@ -333,11 +333,15 @@ def _run_checks(args) -> bool:
         p = HIVE_ROOT / sub
         all_ok &= _check(f"  scaffold/{sub}/", p.is_dir())
 
-    # Python venv (always from install dir).
+    # Python venv (always from install dir). The `[ -x ]` test mirrors
+    # agent-spawn.sh — the venv only counts as the spawn interpreter
+    # when spawn can actually exec it.
+    from hive_cli.commands.selftest import venv_python_executable
     venv_py = HIVE_INSTALL_DIR / "venv" / "bin" / "python"
-    all_ok &= _check("Python venv", venv_py.is_file(), str(venv_py))
+    all_ok &= _check("Python venv", venv_python_executable(venv_py),
+                     str(venv_py))
 
-    if venv_py.is_file():
+    if venv_python_executable(venv_py):
         # tomllib is stdlib on Python 3.11+; fall back to tomli on older versions
         check_code = (
             "import mcp; import fastapi; import httpx; "
@@ -357,15 +361,23 @@ def _run_checks(args) -> bool:
 
     # External tools
     # Agent harness: A3 — the static file check is now the A2 spawn
-    # path probe (one line per step, no LLM call).
-    harness_path = HIVE_ROOT / "lib" / "core" / "agent-harness.py"
+    # path probe (one line per step, no LLM call). The probe runs under
+    # the interpreter agent-spawn.sh picks (the install venv's python,
+    # via the shared spawn_python helper — the same one `hive selftest`
+    # uses), with HIVE_ROOT pinned to the install root so the harness's
+    # own interpreter check agrees with the spawn path.
+    from hive_cli.commands.selftest import install_root, spawn_python
+    probe_root = install_root()
+    harness_path = probe_root / "lib" / "core" / "agent-harness.py"
     if not harness_path.is_file():
         all_ok &= _check("agent harness (spawn path probe)", False,
                          f"{harness_path} missing")
     else:
-        r = subprocess.run([sys.executable, str(harness_path),
+        r = subprocess.run([spawn_python(probe_root), str(harness_path),
                             "--selftest"], capture_output=True, text=True,
-                           timeout=60)
+                           timeout=60,
+                           env={**os.environ,
+                                "HIVE_ROOT": str(probe_root)})
         for line in (r.stdout or "").splitlines():
             print(line)
         all_ok &= _check("agent harness (spawn path probe)",

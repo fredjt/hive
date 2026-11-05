@@ -775,7 +775,14 @@ def _run_selftest(resolved) -> int:
     failures = 0
     root = Path(os.environ.get("HIVE_ROOT", "") or "")
     venv_py = root / "venv" / "bin" / "python" if root else None
-    expected = str(venv_py) if (venv_py is not None and venv_py.is_file()) else sys.executable
+    # agent-spawn.sh's `[ -x ... ]` test: a present-but-non-executable
+    # venv python is NOT the spawn interpreter (spawn falls back to
+    # python3 on PATH), so executable — not merely present — is the
+    # contract (pathlib has no is_executable).
+    expected = str(venv_py) if (venv_py is not None
+                                and venv_py.is_file()
+                                and os.access(str(venv_py), os.X_OK)) \
+        else sys.executable
     ok = os.path.realpath(str(sys.executable)) == os.path.realpath(expected)
     if not ok:
         failures += 1

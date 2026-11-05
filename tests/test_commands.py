@@ -3,6 +3,7 @@ import sys
 import os
 import json
 import re
+import shutil
 import subprocess
 from pathlib import Path
 # Ensure lib/ is on the path when running from within hive/ directory
@@ -1386,6 +1387,50 @@ class TestDoctorProcessesJsonCorrupt:
 class TestDoctorHarnessProbe:
     """A3 (0.9.0): doctor runs the A2 spawn path probe."""
 
+    @staticmethod
+    def _cli_has_httpx() -> bool:
+        r = subprocess.run([sys.executable, "-c", "import httpx"],
+                           capture_output=True)
+        return r.returncode == 0
+
+    @staticmethod
+    def _scratch_install(root: Path, with_system_site: bool) -> Path:
+        """A scratch install root: the real harness sources plus a REAL
+        venv (the 0.8.3 scenario, but in the venv where agent-spawn.sh
+        actually runs the harness, not on the CLI's own interpreter).
+
+        with_system_site=False: a plain venv — fresh site-packages, so
+        the venv python lacks httpx (a dead spawn path) even when the
+        CLI's interpreter has it.
+        with_system_site=True: a --system-site-packages venv — the venv
+        python inherits the base env's httpx (a healthy spawn path when
+        the base env has it)."""
+        repo = Path(__file__).resolve().parent.parent
+        core = root / "lib" / "core"
+        core.mkdir(parents=True)
+        for name in ("agent-harness.py", "llm_providers.py", "mcp_http.py"):
+            shutil.copy(repo / "lib" / "core" / name, core / name)
+        args = [sys.executable, "-m", "venv", str(root / "venv")]
+        if with_system_site:
+            args.append("--system-site-packages")
+        r = subprocess.run(args, capture_output=True, text=True, timeout=180)
+        if r.returncode != 0:
+            pytest.skip("cannot create a scratch venv for the probe test: "
+                        + (r.stderr.strip().splitlines() or ["no stderr"])[-1])
+        return root
+
+    @staticmethod
+    def _run_at(tmp_path, root: Path):
+        return subprocess.run(
+            [sys.executable, "-m", "hive_cli.main", "doctor", str(tmp_path)],
+            capture_output=True, text=True, timeout=180,
+            env={**os.environ, "PYTHONPATH": str(Path(__file__).resolve()
+                                               .parent.parent / "lib"),
+                 "HIVE_ROOT": str(root),
+                 "HIVE_INSTALL_DIR": str(root),
+                 "HIVE_PROVIDER": "openai", "HIVE_MODEL": "probe",
+                 "HIVE_API_BASE": "http://127.0.0.1:9", "HIVE_API_KEY": "k"})
+
     def test_doctor_runs_spawn_probe(self, tmp_path, monkeypatch):
         for k, v in {"HIVE_PROVIDER": "openai", "HIVE_MODEL": "probe",
                      "HIVE_API_BASE": "http://127.0.0.1:9",
@@ -1396,3 +1441,37 @@ class TestDoctorHarnessProbe:
         assert "[selftest] ok interpreter" in out, out[-600:]
         assert "[selftest] ok llm_providers.resolve" in out
         assert "agent harness (spawn path probe)" in out
+
+    def test_doctor_probes_under_venv_python_not_cli(self, tmp_path):
+        """The probe must run under the interpreter agent-spawn.sh picks
+        (the install venv's python), not the CLI's: a venv whose python
+        lacks httpx is a dead spawn path, and doctor has to fail on the
+        import step — the same diagnosis `hive selftest` gives — instead
+        of running the probe under a healthy CLI interpreter."""
+        if not self._cli_has_httpx():
+            pytest.skip("CLI python lacks httpx — the broken-venv probe "
+                        "case is indistinguishable from a broken CLI")
+        root = self._scratch_install(tmp_path / "install",
+                                     with_system_site=False)
+        r = self._run_at(tmp_path, root)
+        out = r.stdout + r.stderr
+        assert "FAIL import httpx" in out, (
+            "doctor did not fail on the venv's missing httpx: " + out[-800:])
+        assert "FAIL interpreter" not in out, (
+            "doctor's probe ran under the CLI interpreter, not the "
+            "spawn interpreter: " + out[-800:])
+        assert "SELFTEST: OK" not in out
+
+    def test_doctor_green_on_healthy_venv(self, tmp_path):
+        """Healthy install root (venv python has httpx): the probe runs
+        under the venv python and reports all steps ok."""
+        if not self._cli_has_httpx():
+            pytest.skip("CLI python lacks httpx — the 'healthy' --system-"
+                        "site-packages venv would lack it too")
+        root = self._scratch_install(tmp_path / "install",
+                                     with_system_site=True)
+        r = self._run_at(tmp_path, root)
+        out = r.stdout + r.stderr
+        assert "SELFTEST: OK" in out, out[-800:]
+        assert "[selftest] ok interpreter" in out, out[-800:]
+        assert "FAIL" not in out.replace("spawn path probe failed", "")
