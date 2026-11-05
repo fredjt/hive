@@ -459,12 +459,21 @@ def _run_checks(args) -> bool:
     if company_dir.is_dir() or procs_file.is_file():
         print("\nDaemon health (company supervisor):")
         procs = []
+        corrupt = False
         if procs_file.is_file():
             try:
-                procs = json.loads(procs_file.read_text()).get("processes", [])
-            except json.JSONDecodeError:
-                pass
-        if not procs:
+                data = json.loads(procs_file.read_text())
+                procs = data.get("processes", []) if isinstance(data, dict) else []
+                if not isinstance(data, dict):
+                    corrupt = True
+            except (json.JSONDecodeError, ValueError):
+                corrupt = True
+        if corrupt:
+            all_ok &= _check(
+                "  processes.json (daemon state)", False,
+                f"CORRUPT — {procs_file} is not valid JSON; "
+                f"remove it (rm {procs_file}) and re-run: hive stop && hive start")
+        if not procs and not corrupt:
             print("  (no recorded daemons — company not started, or already stopped)")
         for p in procs:
             role = p.get("role", "unknown")

@@ -1354,4 +1354,30 @@ class TestDoctorReleasePath:
         assert "publisher script" in out
 
 
+class TestDoctorProcessesJsonCorrupt:
+    """E3 (0.9.0): doctor detects processes.json corruption."""
 
+    @staticmethod
+    def _run(tmp_path):
+        lib = Path(__file__).resolve().parent.parent / "lib"
+        return subprocess.run(
+            [sys.executable, "-m", "hive_cli.main", "doctor", str(tmp_path)],
+            capture_output=True, text=True, timeout=180,
+            env={**os.environ, "PYTHONPATH": str(lib)})
+
+    def test_corrupt_processes_json_fails_with_hint(self, tmp_path):
+        comp = tmp_path / ".company"
+        comp.mkdir()
+        (comp / "processes.json").write_text('{"processes": [oops')
+        r = self._run(tmp_path)
+        out = r.stdout + r.stderr
+        assert "CORRUPT" in out, out[-800:]
+        assert "processes.json" in out
+        assert "hive stop && hive start" in out
+
+    def test_valid_processes_json_not_flagged(self, tmp_path):
+        comp = tmp_path / ".company"
+        comp.mkdir()
+        (comp / "processes.json").write_text('{"processes": []}')
+        r = self._run(tmp_path)
+        assert "CORRUPT" not in r.stdout + r.stderr
