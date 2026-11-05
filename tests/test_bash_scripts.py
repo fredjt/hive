@@ -2204,6 +2204,14 @@ exit 0
                         "sha256": f"dist/hive-{cls.VER}.sha256",
                         "publish_status": "pending"}}))
         cls._git(proj, "init", "-q", "-b", "main")
+        # Repo-local identity: the publisher runs `git tag -a` inside a
+        # nested subprocess that inherits no identity env. A clean machine
+        # (CI runner, container) has no global git config and may not have
+        # a resolvable hostname, so git cannot auto-detect one and the
+        # tag fails. Repo config works in every environment — the same
+        # hermetic pattern build_scratch_repo uses for the SPA fixtures.
+        cls._git(proj, "config", "user.name", "pub-test")
+        cls._git(proj, "config", "user.email", "pub-test@example.com")
         cls._git(proj, "add", "-A")
         cls._git(proj, "commit", "-qm", "base")
         origin = tmp_path / "origin.git"
