@@ -356,10 +356,22 @@ def _run_checks(args) -> bool:
     all_ok &= _check("hive on PATH", shutil.which("hive") is not None)
 
     # External tools
-    # Agent harness: Python-based, no external binary needed
+    # Agent harness: A3 — the static file check is now the A2 spawn
+    # path probe (one line per step, no LLM call).
     harness_path = HIVE_ROOT / "lib" / "core" / "agent-harness.py"
-    all_ok &= _check("agent harness", harness_path.is_file(),
-                     f"{harness_path} (Python-based, no CLI required)")
+    if not harness_path.is_file():
+        all_ok &= _check("agent harness (spawn path probe)", False,
+                         f"{harness_path} missing")
+    else:
+        r = subprocess.run([sys.executable, str(harness_path),
+                            "--selftest"], capture_output=True, text=True,
+                           timeout=60)
+        for line in (r.stdout or "").splitlines():
+            print(line)
+        all_ok &= _check("agent harness (spawn path probe)",
+                         r.returncode == 0,
+                         "spawn path healthy" if r.returncode == 0
+                         else "spawn path probe failed (steps above)")
 
     # LLM provider resolution (reports the resolved provider/model and the
     # key's source — never the key value itself).

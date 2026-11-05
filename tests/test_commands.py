@@ -1381,3 +1381,18 @@ class TestDoctorProcessesJsonCorrupt:
         (comp / "processes.json").write_text('{"processes": []}')
         r = self._run(tmp_path)
         assert "CORRUPT" not in r.stdout + r.stderr
+
+
+class TestDoctorHarnessProbe:
+    """A3 (0.9.0): doctor runs the A2 spawn path probe."""
+
+    def test_doctor_runs_spawn_probe(self, tmp_path, monkeypatch):
+        for k, v in {"HIVE_PROVIDER": "openai", "HIVE_MODEL": "probe",
+                     "HIVE_API_BASE": "http://127.0.0.1:9",
+                     "HIVE_API_KEY": "k"}.items():
+            monkeypatch.setenv(k, v)
+        r = TestDoctorProcessesJsonCorrupt._run(tmp_path)
+        out = r.stdout + r.stderr
+        assert "[selftest] ok interpreter" in out, out[-600:]
+        assert "[selftest] ok llm_providers.resolve" in out
+        assert "agent harness (spawn path probe)" in out
