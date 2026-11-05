@@ -17,6 +17,7 @@
 # All operations are flock'd on the file itself so concurrent reads don't tear writes.
 
 SS_VALID_STAGES=(
+  idle
   ceo-plan
   vp-plan
   sprint-fill
@@ -31,6 +32,9 @@ SS_VALID_STAGES=(
   vp-review
   complete
 )
+# 'idle' (A1): a sprint with no active tickets and an empty backlog waits
+# here for work instead of falling through the release pipeline. See
+# sprint-lifecycle.sh enter_idle_if_no_work.
 
 ss_state_file() {
   echo "${COMPANY_DIR:?COMPANY_DIR not set}/sprints/current.json"
@@ -130,6 +134,35 @@ ss_inc_release_retry() {
 ss_set_release_field() {
   local key="$1" val="$2"
   ss__atomic_jq '.release[$k] = $v' --arg k "$key" --arg v "$val"
+}
+
+# ── Manifest sync (A1/E1) ────────────────────────────────────────────
+# The manifest is company-level truth (project_name, cycle_count,
+# current_sprint, idle_mode). The sprint-state writers keep it in lockstep
+# with the sprint state on the SAME atomic path (flock + tmp + rename), so a
+# kill mid-update can never leave a torn or 0-byte manifest. No-op when the
+# manifest does not exist (companies inited by older hive get one on the
+# next 'hive init'; the lifecycle never invents one).
+
+ss_manifest_file() {
+  echo "${COMPANY_DIR:?ss_manifest_file: COMPANY_DIR not set}/manifest.json"
+}
+
+# ss_sync_manifest '<jq program>' [jq args...]
+# Applies the program to manifest.json atomically, then stamps updated_at.
+# Example: ss_sync_manifest '.idle_mode = true'
+#          ss_sync_manifest '.current_sprint = $s' --arg s "$sid"
+ss_sync_manifest() {
+  local prog="$1"; shift
+  local f; f=$(ss_manifest_file)
+  [ -f "$f" ] || return 0
+  local lock; lock=$(ss__lock_fd)
+  local tmp="${f}.tmp.$$"
+  (
+    flock -x 9
+    jq "$prog" "$f" 2>/dev/null | \
+      jq --arg t "$(ss_now)" '.updated_at = $t' > "$tmp" && mv "$tmp" "$f"
+  ) 9>"$lock"
 }
 
 ss_set_ceo_direction_path() {

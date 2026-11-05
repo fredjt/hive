@@ -596,7 +596,8 @@ def test_no_go_retry_terminal_path(tmp_path):
     """Release goal A.3: a NO-GO verdict consumes one release retry and
     re-enters the bugfix cycle (fresh planning + sprint-fill) instead of
     archiving the sprint."""
-    h = LifecycleHarness(tmp_path, mode="nogo")  # no tickets: pure release path
+    h = LifecycleHarness(tmp_path, mode="nogo")
+    _seed_ticket(h)  # A1: zero-work sprints idle; the release path needs a ticket
 
     r = h.run()
     assert r.returncode == 0, r.stderr
@@ -623,6 +624,7 @@ def test_retry_cap_terminal_path(tmp_path):
     blocker instead of the loop churning forever."""
     h = LifecycleHarness(tmp_path, mode="nogo", preset_release_retries=3)
     # HIVE_MAX_RELEASE_RETRIES defaults to 3; the next retry would be 4.
+    _seed_ticket(h)  # A1: zero-work sprints idle; the release path needs a ticket
 
     r = h.run()
     assert r.returncode == 0, r.stderr
@@ -692,6 +694,7 @@ def test_unparseable_release_verdict_fails_explicitly(tmp_path):
     consumed, verdict_error + publish_status=failed recorded, stage
     vp-review so the operator sees it."""
     h = LifecycleHarness(tmp_path, mode="badverdict")
+    _seed_ticket(h)  # A1: zero-work sprints idle; the release path needs a ticket
     r = h.run()
     assert r.returncode == 0, r.stderr
 
@@ -734,6 +737,16 @@ def _seed_current_state(h, retries=0):
     }
     (h.project / ".company" / "sprints" / "current.json").write_text(
         json.dumps(state, indent=2))
+
+
+def _seed_ticket(h, status="sprint-current"):
+    """A1: a zero-work sprint now idles instead of falling through to the
+    release pipeline, so every test that drives the release path needs a
+    ticket in the sprint (the ticket bounces to backlog under the noop
+    stub — that is what makes the release pipeline reachable)."""
+    f = (h.project / ".company" / "departments" / DEPT / "tickets"
+         / status / f"{TICKET}.json")
+    f.write_text(_ticket_json(status))
 
 
 def _seed_release_build(h):
@@ -790,6 +803,7 @@ def test_release_retry_cap_never_publishes_and_files_blocker_ticket(tmp_path):
     code path ever creates, so the blockage was invisible to planning)."""
     h = LifecycleHarness(tmp_path, mode="nogo", preset_release_retries=3)
     # The retry cap is 3; the next NO-GO is retry 4 -> cap exceeded.
+    _seed_ticket(h)  # A1: zero-work sprints idle; the release path needs a ticket
     _seed_release_build(h)
     cfg, marker = _fake_publisher(h)
 
@@ -823,6 +837,7 @@ def test_unparseable_verdict_never_publishes(tmp_path):
     build that could NOT be verified still got published (publish_status
     flipped failed -> published). Unverifiable releases must never ship."""
     h = LifecycleHarness(tmp_path, mode="badverdict")
+    _seed_ticket(h)  # A1: zero-work sprints idle; the release path needs a ticket
     _seed_current_state(h, retries=0)
     _seed_release_build(h)
     cfg, marker = _fake_publisher(h)
@@ -851,6 +866,7 @@ def test_build_failure_retry_cap_skips_release_verify(tmp_path):
     h = LifecycleHarness(tmp_path, mode="noop",
                          failing_release_tests=True,
                          preset_release_retries=3)
+    _seed_ticket(h)  # A1: zero-work sprints idle; the release path needs a ticket
     _seed_release_build(h)
     cfg, marker = _fake_publisher(h)
 
@@ -877,7 +893,8 @@ def test_stage_machine_tracks_each_stage(tmp_path):
     during their own planning stage were denied, and every relaunch
     re-ran CEO + VP planning on an already-planned sprint. Each stage must
     be recorded as it runs."""
-    h = LifecycleHarness(tmp_path, mode="noop")  # no tickets: plan -> build -> release
+    h = LifecycleHarness(tmp_path, mode="noop")  # one ticket: plan -> ticket loop -> release
+    _seed_ticket(h)  # A1: zero-work sprints idle; the release path needs a ticket
     r = h.run()
     assert r.returncode == 0, r.stderr
     spawns = h.spawn_blocks()
@@ -902,6 +919,7 @@ def test_relance_on_planned_sprint_skips_planning(tmp_path):
     old code double-spent the CEO and every VP on every bugfix cycle and
     risked duplicate ticket filings."""
     h = LifecycleHarness(tmp_path, mode="noop")
+    _seed_ticket(h)  # A1: zero-work sprints idle; the release path needs a ticket
     _seed_current_state(h, retries=0)
     f = h.project / ".company" / "sprints" / "current.json"
     state = json.loads(f.read_text())

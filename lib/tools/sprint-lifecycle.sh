@@ -18,6 +18,10 @@ export COMPANY_DIR PROJECT_ROOT SKILL_DIR
 
 # shellcheck disable=SC1091
 . "$SKILL_DIR/lib/tools/sprint-state.sh"
+# load_agent_prompt is used on code paths that skip planning (resume at the
+# ticket loop, vp-review after a halted relaunch) - source it unconditionally
+# instead of relying on run_vp_plan to have sourced it earlier in this shell.
+. "$SKILL_DIR/lib/tools/load-agent-prompt.sh"
 ss_init
 
 LOG="$COMPANY_DIR/logs/sprint-lifecycle.log"
@@ -30,6 +34,10 @@ MAX_VERIFICATION_BOUNCES="${HIVE_MAX_VERIFICATION_BOUNCES:-5}"
 MAX_RELEASE_RETRIES="${HIVE_MAX_RELEASE_RETRIES:-3}"
 MAX_LOOP_ITERATIONS="${HIVE_MAX_LOOP_ITERATIONS:-100}"
 HIVE_SPRINT_MAX_ACTIVE_TICKETS="${HIVE_SPRINT_MAX_ACTIVE_TICKETS:-5}"
+
+# A1: how often an idle runner polls for work (env-overridable so tests can
+# run the wait fast, same convention as HIVE_HEALTH_INTERVAL).
+IDLE_POLL_INTERVAL="${HIVE_IDLE_POLL_INTERVAL:-30}"
 
 # ── Singleton lock ──────────────────────────────────────────────────
 RUNNER_PID="$COMPANY_DIR/rounds/runner.pid"
@@ -105,6 +113,47 @@ has_active_tickets() {
   local n
   n=$(find "$depts_dir"/*/tickets/{sprint-current,in-progress,in-review} -maxdepth 1 -name '*.json' -type f 2>/dev/null | wc -l)
   [ "$n" -gt 0 ]
+}
+
+# Check if any backlog tickets exist anywhere (A1: the wake condition).
+has_backlog_tickets() {
+  local depts_dir="$COMPANY_DIR/departments"
+  [ -d "$depts_dir" ] || return 1
+  local n
+  n=$(find "$depts_dir"/*/tickets/backlog -maxdepth 1 -name '*.json' -type f 2>/dev/null | wc -l)
+  [ "$n" -gt 0 ]
+}
+
+# ── A1: idle on a zero-ticket sprint ────────────────────────────────
+# A company with no work is a legitimate state, not a bug to paper over:
+# the old fall-through ("no active tickets → advancing to build-and-test")
+# let a brand-new company "complete" sprints with failed unversioned
+# releases and no archived work, and an exiting runner burned the health
+# restart budget on pure idling. Now: after planning + fill, if there are
+# no active tickets AND the backlog is empty, the runner goes IDLE — no
+# build-and-test, no release-verify, no vp-review, no archive, no exit.
+# It polls for backlog / sprint-current work; when work appears it runs
+# sprint-fill and re-enters the ticket loop. Returns 1 (and does nothing)
+# when there IS work, so the caller just falls through.
+enter_idle_if_no_work() {
+  has_active_tickets && return 1
+  has_backlog_tickets && return 1
+
+  ss_set_stage idle
+  ss_sync_manifest '.idle_mode = true'
+  log "IDLE: no active tickets and empty backlog — going idle (polling every ${IDLE_POLL_INTERVAL}s; no release, no archive, no exit)"
+  while true; do
+    sleep "$IDLE_POLL_INTERVAL"
+    if has_active_tickets || has_backlog_tickets; then
+      break
+    fi
+  done
+
+  ss_sync_manifest '.idle_mode = false'
+  log "IDLE: work detected — running sprint-fill and re-entering the ticket loop"
+  run_sprint_fill
+  ss_set_stage tdd-red
+  return 0
 }
 
 # Create worktree for a ticket. Idempotent.
@@ -313,7 +362,11 @@ After filing/refining, EXIT. Sprint-fill and ticket processing run next."
 
     HIVE_AGENT="$agent" HIVE_DEPT="$dept" HIVE_ROLE="VP" HIVE_TICKET="" \
     bash "$SKILL_DIR/lib/core/agent-spawn.sh" -- "$PROMPT" \
-      9<&- >> "$LOG_TO" 2>&1 || log "  VP $dept planning failed"
+      9<&- >> "$LOG_TO" 2>&1
+    local VPEC=$?
+    if [ "$VPEC" -ne 0 ]; then
+      log "  VP $dept planning failed (exit=$VPEC)"
+    fi
   done
 
   log "VP planning complete"
@@ -796,6 +849,12 @@ fi
 
 log "entering ticket processing loop"
 
+# A1: the only exit for "there is no work". No-op whenever a ticket is
+# active or the backlog holds work (companies starting with tickets behave
+# exactly as before); on a zero-ticket company it waits for work instead of
+# manufacturing an empty release.
+enter_idle_if_no_work
+
 LOOP_ITERATION=0
 SAFETY_DEPT=""
 SAFETY_TICKET=""
@@ -897,6 +956,27 @@ run_release_verify() {
   TEST_LOG=$(ss_get_field .release.test_log)
   TARBALL=$(ss_get_field .release.tarball)
   SHA256=$(ss_get_field .release.sha256)
+
+  # A1 defense in depth: a release needs something to release. Require
+  # release.version to be set OR the sprint to have carried at least one
+  # ticket — a fresh company with no VERSION file can never produce an
+  # unversioned-* release of nothing, even on the non-idle path (a ticket
+  # that was deferred after bounces still counts: the sprint carried work,
+  # and the release test suite ran against its code).
+  local TIX SHIPPED=0
+  TIX=$(ss_get_field .tickets_in_sprint)
+  case "$TIX" in
+    ""|null) SHIPPED=0 ;;
+    *) SHIPPED=$(jq 'length' <<<"$TIX" 2>/dev/null || echo 0) ;;
+  esac
+  if [ -z "$VERSION" ] && [ "${SHIPPED:-0}" -eq 0 ]; then
+    log "release-verify SKIPPED: no release.version and no tickets in this sprint — nothing to release (a fresh company must never cut an unversioned release)"
+    ss_set_release_field verdict_error "nothing to release: no version, no tickets in sprint"
+    ss_set_release_field publish_status skipped
+    ss_set_stage vp-review
+    RELEASE_BLOCKED=1
+    return 0
+  fi
 
   . "$SKILL_DIR/lib/tools/load-agent-prompt.sh"
   PROMPT="$(load_agent_prompt "$SKILL_DIR/lib/agents/release-ic.md")

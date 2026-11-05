@@ -77,6 +77,26 @@ def _daemon_table(company_dir: str) -> list[dict]:
     return out
 
 
+def _print_sprint(sprint: dict | None) -> None:
+    """Human-readable sprint line for `hive status` (A1: idle must read as
+    a state, not as a hang; A2: a halt must read as an action needed)."""
+    if not sprint:
+        return
+    if sprint.get("halted"):
+        h = sprint["halted"]
+        print()
+        print(f"  \033[31m\u26d4 Sprint {sprint.get('sprint_id', '?')} HALTED: {h.get('reason', '')}\033[0m"
+              f"  ({h.get('ts', '')}; fix the LLM endpoint, then 'hive start')")
+        return
+    stage = sprint.get("stage", "")
+    if stage == "idle":
+        label = "idle — no work (runner polls the backlog; file a ticket to wake it)"
+    else:
+        label = f"stage={stage}"
+    print()
+    print(f"  Sprint: {sprint.get('sprint_id', '?')} — {label}")
+
+
 def _print_daemons(daemons: list[dict]) -> None:
     """Human-readable daemon section for `hive status`."""
     if not daemons:
@@ -189,6 +209,36 @@ def handle_stop(args) -> int:
     return 1
 
 
+def _sprint_info(company_dir: str) -> dict | None:
+    """A1/A2: sprint state straight from sprints/current.json — independent
+    of the MCP server. 'idle' (a zero-ticket sprint waiting for work) and
+    the halt marker are the two states that must be visible here: an idle
+    company is healthy-but-waiting, a halted company needs operator action."""
+    cur = Path(company_dir) / "sprints" / "current.json"
+    out: dict = {}
+    if cur.is_file():
+        try:
+            data = json.loads(cur.read_text())
+            out["sprint_id"] = data.get("sprint_id", "")
+            out["stage"] = data.get("stage", "")
+            out["stage_started_at"] = data.get("stage_started_at", "")
+        except json.JSONDecodeError:
+            pass
+    halt = Path(company_dir) / "rounds" / "halt"
+    if halt.is_file():
+        try:
+            h = json.loads(halt.read_text())
+            out["halted"] = {
+                "reason": h.get("reason", ""),
+                "ts": h.get("ts", ""),
+                "sprint_id": h.get("sprint_id", ""),
+                "endpoint": h.get("endpoint", ""),
+            }
+        except json.JSONDecodeError:
+            out["halted"] = {"reason": "halt marker unreadable", "ts": ""}
+    return out or None
+
+
 def _config_drift_note(company_dir: str) -> str | None:
     """D2: the user config is read once at daemon spawn — if the file was
     modified after the recorded daemon start, the running daemons still
@@ -233,6 +283,9 @@ def handle_status(args) -> int:
     # Daemon state comes straight from processes.json — independent of the
     # MCP server, which matters when the MCP daemon is exactly what died.
     daemons = _daemon_table(company_dir)
+    # Sprint state comes straight from sprints/current.json — same reason
+    # (A1: the idle stage must be visible even when the MCP server is down).
+    sprint = _sprint_info(company_dir)
     # D2: config drift — the note must surface even when the MCP server
     # is down (that is precisely when the operator is looking for why
     # nothing picks up the new config).
@@ -240,6 +293,8 @@ def handle_status(args) -> int:
     if args.json:
         if isinstance(res, dict):
             res["daemons"] = daemons
+            if sprint:
+                res["sprint"] = sprint
             if drift:
                 res["config_drift"] = drift
         print(json.dumps(res, indent=2))
@@ -249,6 +304,7 @@ def handle_status(args) -> int:
         print(f"\033[33m\u26a0 {drift}\033[0m")
     if not res.get("ok"):
         print(f"ERROR: {res.get('stderr') or res.get('error')}", file=sys.stderr)
+        _print_sprint(sprint)
         _print_daemons(daemons)
         return 1
 
@@ -269,6 +325,7 @@ def handle_status(args) -> int:
             velocity = st.get("velocity_per_window", 0)
             stuck = st.get("stuck_tickets", 0)
             print(f"  {sym} {dept:<30} health={health:<8} bl={bl} sp={sp} ip={ip} ir={ir} done={dn} stuck={stuck} velocity={velocity}")
+    _print_sprint(sprint)
     _print_daemons(daemons)
     if drift:
         print(f"\033[33m\u26a0 {drift}\033[0m")
