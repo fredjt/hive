@@ -164,16 +164,27 @@ DETECTED_TARBALL=""
 if [ -n "$CURRENT_VERSION" ]; then
   # Search common build output dirs for a tarball matching the version.
   # Prefer the most-recently-modified hit.
-  while IFS= read -r cand; do
+  #
+  # Null-delimited end to end (find -print0 + per-candidate stat). The old
+  # `find ... | xargs -r ls -t` word-split paths on whitespace: for a
+  # project under e.g. "/home/u/My Projects/app" the tarball argument
+  # became the bare directory "/home/u/My", and ls listing a directory
+  # printed its "dir:" header line — which the loop below then stored as
+  # .release.tarball, and release-publish-runner rejected ("tarball not
+  # found"). Every release from a space-path project failed publish.
+  BEST_TARBALL_MTIME=0
+  while IFS= read -r -d '' cand; do
     [ -z "$cand" ] && continue
-    DETECTED_TARBALL="$cand"
-    break
+    cand_mtime=$(stat -c %Y "$cand" 2>/dev/null || echo 0)
+    if [ "$cand_mtime" -gt "$BEST_TARBALL_MTIME" ]; then
+      BEST_TARBALL_MTIME=$cand_mtime
+      DETECTED_TARBALL="$cand"
+    fi
   done < <(
     find "$PROJECT_ROOT/dist" "$PROJECT_ROOT/build" "$PROJECT_ROOT/target/release" \
          -maxdepth 3 -type f \
          \( -name "*${CURRENT_VERSION}*.tar.gz" -o -name "*${CURRENT_VERSION}*.tgz" \) \
-         2>/dev/null \
-      | xargs -r ls -t 2>/dev/null
+         -print0 2>/dev/null
   )
 fi
 

@@ -409,6 +409,48 @@ class TestQuotedProjectPaths:
         assert (quoted_company_dir / "departments" / "it" / "tickets"
                 / "in-review" / f"{tid}.json").exists()
 
+    def test_release_test_suite_tarball_detection_space_in_path(self, tmp_path):
+        """Regression (0.9.0 A1): release-test-suite.sh's tarball detection
+        ran `find dist/ ... | xargs -r ls -t`. xargs word-splits paths on
+        whitespace, so for a project at e.g. /home/u/My Projects/app the
+        tarball argument became the bare directory /home/u/My — and ls,
+        listing a directory, printed its `dir:` header line, which the
+        detection loop stored as .release.tarball ("/home/u/My:").
+        release-publish-runner then exited 2 ("tarball not found") and
+        every release from a space-path project failed publish."""
+        proj = tmp_path / "My Projects" / "app"
+        dist = proj / "dist"
+        dist.mkdir(parents=True)
+        sprints = proj / ".company" / "sprints"
+        sprints.mkdir(parents=True)
+        (sprints / "current.json").write_text(json.dumps({
+            "sprint_id": "sprint-test",
+            "stage": "build-and-test",
+            "release": {"version": "1.2.3"},
+        }, indent=2))
+        # NB: not a 0.5.x version string — TestNoStaleVersionStrings
+        # forbids 0.5.* outside CHANGELOG.md.
+        older = dist / "app-1.2.3.tar.gz"
+        newer = dist / "app-1.2.3-rc2.tar.gz"
+        older.write_bytes(b"tarball payload")
+        newer.write_bytes(b"tarball payload")
+        now = time.time()
+        os.utime(older, (now - 3600, now - 3600))
+        os.utime(newer, (now, now))
+
+        r = run_script(f"{SCRIPTS_DIR}/release-test-suite.sh", [str(proj)],
+                       env={"COMPANY_DIR": str(proj / ".company")},
+                       timeout=60)
+        assert r.returncode == 0, f"exit={r.returncode}\n{r.stdout}\n{r.stderr}"
+        state = json.loads((sprints / "current.json").read_text())
+        # The most-recently-modified matching tarball, full path intact.
+        assert state["release"]["tarball"] == str(newer), state["release"]
+        # Sidecar convention: <tarball minus .tar.gz>.sha256 (the same
+        # derivation release-publish-runner uses when sha256 is unset).
+        sidecar = str(newer)[:-len(".tar.gz")] + ".sha256"
+        assert state["release"]["sha256"] == sidecar
+        assert os.path.exists(sidecar)
+
 
 class TestGitWorktreeCreate:
     """git-worktree.sh create must be non-destructive for existing worktrees.
