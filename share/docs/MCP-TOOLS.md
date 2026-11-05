@@ -421,6 +421,7 @@ List tickets in a department. Optional status filter (backlog, sprint-current, i
 Args:
   - `dept`: string (required)
   - `status`: string
+  - `priority`: string
   - `company_dir`: string
 
 ### `ticket_move`
