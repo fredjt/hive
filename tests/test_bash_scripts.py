@@ -1188,6 +1188,22 @@ class TestBuildPackagePublicSurface:
             f"tarball is missing public-surface files: {missing} — a " \
             "tarball install must carry the same public surface as the repo"
 
+    def test_tarball_never_ships_python_build_leftovers(self, tmp_path):
+        """The tarball must be free of __pycache__ dirs and .pyc/.pyo
+        files even when the source tree is LIVE (a running suite keeps
+        creating them in the same tree mid-build). Regression: the build
+        staged with cp -r over the live tree and raced concurrent .pyc
+        writers — "cp: cannot stat ...pyc.<tmp>" killed the 2026-11-04
+        CI run. Staging now excludes those paths at copy time; this pins
+        the shipped-tree invariant the fix exists to protect."""
+        import importlib
+        importlib.import_module("hive_cli")  # guarantees lib/hive_cli/__pycache__
+        pkg = self._build_and_extract(tmp_path)
+        leftovers = [str(p) for p in pkg.rglob("*")
+                     if "__pycache__" in p.parts or p.suffix in (".pyc", ".pyo")]
+        assert leftovers == [], \
+            f"python build leftovers shipped in the tarball: {leftovers[:5]}"
+
 
 class TestCompanyHealthRestartPolicy:
     """B.3: a failing daemon restarts up to HIVE_MAX_RESTARTS, is then

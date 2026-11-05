@@ -58,12 +58,21 @@ trap 'rm -rf "$STAGE"' EXIT
 echo "Staging Hive $VERSION → $STAGE/$PKG_NAME"
 mkdir -p "$STAGE/$PKG_NAME"
 
-# Copy everything we want to ship
+# Copy everything we want to ship. Stage with tar --exclude, not cp -r:
+# cp -r walks the LIVE tree, and while a test suite runs (xdist workers
+# importing mid-build) __pycache__ files appear and vanish mid-copy —
+# "cp: cannot stat ...pyc.<tmp>" kills the build (2026-11-04 CI flake).
+# tar's exclude prunes those paths at copy time, so the race cannot occur.
+ENTRIES=()
 for d in bin lib etc share packaging VERSION; do
   if [ -e "$SOURCE_DIR/$d" ]; then
-    cp -r "$SOURCE_DIR/$d" "$STAGE/$PKG_NAME/"
+    ENTRIES+=("$d")
   fi
 done
+tar -C "$SOURCE_DIR" -cf - \
+    --exclude='__pycache__' --exclude='*.pyc' --exclude='*.pyc.*' \
+    --exclude='*.pyo' \
+    "${ENTRIES[@]}" | tar -C "$STAGE/$PKG_NAME" -xf -
 
 # Top-level public-surface files: ship the tracked repo files VERBATIM.
 # Regenerating INSTALL/LICENSE from heredocs here is how a stale
