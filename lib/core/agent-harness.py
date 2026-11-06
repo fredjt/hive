@@ -622,6 +622,7 @@ def run_agent(
 
     num_turns = 0
     total_cost_usd = 0.0
+    total_actions = 0  # C2: every action ever executed (the result event's num_actions)
     assistant_text = ""
     start_time = datetime.now(timezone.utc)
 
@@ -650,6 +651,7 @@ def run_agent(
                     "is_error": True,
                     "subtype": "llm-unavailable",
                     "num_turns": 0,
+                    "num_actions": 0,
                     "duration_ms": int((end_time - start_time).total_seconds() * 1000),
                     "total_cost_usd": 0.0,
                     "result": f"LLM unavailable: {llm_result.get('error', 'unknown error')}",
@@ -678,7 +680,21 @@ def run_agent(
         actions = parse_actions(assistant_text, no_mcp=no_mcp, mcp_url=mcp_url, cwd=cwd, company_dir=company_dir)
 
         if not actions:
-            # No actionable blocks — treat as final response
+            # C2: an unparseable NEAR-MISS is fed back, never a success.
+            # The turn tried to emit a command (tool_call-style wrapper,
+            # function= line, or a bash:/mcp: line in a malformed fence)
+            # but parse_actions read nothing — ending the run here is the
+            # live-run failure ("successful final answer" with zero
+            # actions executed). Append the correction and keep going.
+            if _near_miss_command_intent(assistant_text):
+                print(json.dumps({"type": "parse-warning",
+                                  "turn": num_turns + 1,
+                                  "text": assistant_text[:500]}))
+                messages.append({"role": "assistant", "content": assistant_text})
+                messages.append({"role": "user", "content": PARSE_CORRECTION})
+                num_turns += 1
+                continue
+            # Genuinely no command intent (plain prose) — final response.
             messages.append({"role": "assistant", "content": assistant_text})
             break
 
@@ -715,6 +731,7 @@ def run_agent(
         messages.append({"role": "assistant", "content": assistant_text})
         messages.append({"role": "user", "content": f"Action results:\n{combined}\n\nContinue or finish your work."})
 
+        total_actions += len(actions)  # C2: the result event reports this
         num_turns += 1
 
     # Build result event compatible with existing log consumers
@@ -726,6 +743,10 @@ def run_agent(
         "is_error": num_turns >= max_turns,
         "subtype": "final",
         "num_turns": num_turns,
+        # C2: how many actions the run actually executed. "completed
+        # successfully with zero actions executed" (the live-run failure)
+        # is now checkable by any reader of the stream.
+        "num_actions": total_actions,
         "duration_ms": duration_ms,
         "total_cost_usd": total_cost_usd,
         "result": assistant_text if num_turns < max_turns else f"Reached max turns ({max_turns}) without completing.",
@@ -797,6 +818,55 @@ def _append_mcp_action(actions: list, mcp_block: str) -> None:
                         pass
                     args[k] = v
         actions.append({"type": "mcp", "name": name, "args": args})
+
+
+# ---------------------------------------------------------------------------
+# C2: near-miss command detection
+# ---------------------------------------------------------------------------
+
+# The corrective user message fed back when a turn tried to emit a command
+# but parse_actions could not read it (C2). It shows the parser's own
+# accepted forms so the model can self-correct on the next turn.
+PARSE_CORRECTION = (
+    "I could not parse that command. Use exactly this form — the keyword "
+    "glued to the opening fence, nothing else in the block:\n"
+    "```bash: <your command>```\n"
+    "or, for MCP tools:\n"
+    "```mcp: tool_name(arg=value, arg2=value2)```\n"
+    "(A bare fence with the keyword on the next line also works. Do not "
+    "wrap commands in any other markup — no tool-call tags, no function= "
+    "lines.) Retry the command now."
+)
+
+
+def _near_miss_command_intent(text: str) -> bool:
+    """C2: does this turn look like a failed attempt to emit a command?
+
+    True when the turn carries a near-miss marker — the model clearly
+    intended a command, so 'zero parseable actions' must be fed back as a
+    correction, never treated as a successful final answer (the live-run
+    failure: a CEO turn whose only command sat in a broken tool-call
+    wrapper ended the run 'successfully' with nothing executed):
+      - tool_call-style wrappers — any tag spelling with spaces inside
+        ('<tool call>', '</tool_call>', '<Tool-Call>'), the exact failure
+        observed in the 0.10.0 field run;
+      - a 'function=' line (broken tool-call serialization, e.g.
+        'function=bash(command=...)');
+      - a bash:/mcp: line inside an UNCLOSED fence — a well-formed bare
+        fence parses (C1), so only a malformed one (odd number of fence
+        markers, keyword after the last one) lands here.
+    A turn with genuinely no command intent (plain prose) must NOT match:
+    it ends the run as a final answer.
+    """
+    if re.search(r'</?\s*/?\s*tool[ _-]?call', text, re.I):
+        return True
+    if re.search(r'(?m)^\s*function\s*=', text, re.I):
+        return True
+    if text.count('```') % 2 == 1:
+        tail = text[text.rfind('```') + 3:]
+        if re.search(r'(?m)^\s*(?:bash|mcp)\s*:', tail):
+            return True
+    return False
 
 
 # ---------------------------------------------------------------------------
