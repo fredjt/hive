@@ -45,8 +45,25 @@ HIVE_ROOT="${HIVE_ROOT:-$HOME/.local/share/hive}"
 COMPANY_DIR="${COMPANY_DIR:-${PWD}/.company}"
 MCP_HOST="${HIVE_MCP_HOST:-127.0.0.1}"
 MCP_PORT="${HIVE_MCP_PORT:-7891}"
-
 HIVE_AGENT="${HIVE_AGENT:-unknown}"
+HIVE_DEPT="${HIVE_DEPT:-}"
+HIVE_ROLE="${HIVE_ROLE:-}"
+HIVE_TICKET="${HIVE_TICKET:-}"
+
+# D2: resolve and export the FULL env the framework primer's section 6
+# promises — not just whatever the caller happened to have in its
+# environment. In the 0.10.0 field run the CEO spent a turn cat'ing an
+# empty $HIVE_ROOT/config.toml: $HIVE_ROOT was not exported into the
+# agent's shell, so $HIVE_ROOT/... expanded to /... .
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+INSTALL_DIR="${HIVE_INSTALL_DIR:-$(dirname "$(dirname "$SCRIPT_DIR")")}"
+HIVE_INSTALL_DIR="$INSTALL_DIR"
+SKILL_DIR="${SKILL_DIR:-$HIVE_ROOT}"
+PROJECT_ROOT="$(dirname "$COMPANY_DIR")"
+export HIVE_ROOT SKILL_DIR HIVE_INSTALL_DIR INSTALL_DIR COMPANY_DIR PROJECT_ROOT
+export HIVE_AGENT HIVE_DEPT HIVE_ROLE HIVE_TICKET
+# Queue-entry id, present when the round runner set it for this spawn.
+export HIVE_ROUND_ENTRY
 
 # Generate a unique spawn ID
 SPAWN_ID="spawn-$(date +%s)-$$"
@@ -129,11 +146,8 @@ echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) $SPAWN_ID agent=$HIVE_AGENT role=${HIVE_ROL
 # usually lacks them, in which case the harness silently disables LLM and
 # MCP calls ("LLM unavailable: httpx not installed") even though
 # `hive doctor` — which checks the venv interpreter — reports all green.
-# Resolution: HIVE_INSTALL_DIR if set, else derive from this script's own
-# location (it ships at <install>/lib/core/ — the same contract as the
-# Python side's HIVE_INSTALL_DIR default).
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-INSTALL_DIR="${HIVE_INSTALL_DIR:-$(dirname "$(dirname "$SCRIPT_DIR")")}"
+# (INSTALL_DIR was already resolved + exported in the D2 block above:
+# HIVE_INSTALL_DIR if set, else this script's own install location.)
 HARNESS_PY="python3"
 if [ -x "$INSTALL_DIR/venv/bin/python" ]; then
   HARNESS_PY="$INSTALL_DIR/venv/bin/python"
