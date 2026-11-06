@@ -375,7 +375,13 @@ def _log_llm_usage(company_dir: str | None, caller: str, mode: str,
     try:
         log_dir = os.path.join(company_dir, "logs")
         os.makedirs(log_dir, exist_ok=True)
-        first_line = (response or "").strip().splitlines()
+        # C3: record up to 500 chars of the FULL response (multi-line
+        # allowed) plus a truncated flag. The old record kept only the
+        # first 200 chars of the FIRST line — the 0.10.0 field run's
+        # broken tool call sat after the first sentence and was invisible
+        # in the one log built for post-mortems.
+        response_text = response or ""
+        response_record = response_text[:500]
         entry = {
             "ts": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
             "caller": caller or "harness",
@@ -389,7 +395,8 @@ def _log_llm_usage(company_dir: str | None, caller: str, mode: str,
             # cost leave it 0.0. Readers (hive llm stats) treat a missing
             # cost_usd on OLD entries as 0 — never a parse error.
             "cost_usd": float((usage or {}).get("total_cost_usd", 0.0) or 0.0),
-            "response": (first_line[0][:200] if first_line else ""),
+            "response": response_record,
+            "truncated": len(response_text) > 500,
         }
         with open(os.path.join(log_dir, "llm-usage.log"), "a") as f:
             f.write(json.dumps(entry) + "\n")
