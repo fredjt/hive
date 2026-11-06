@@ -9,10 +9,8 @@ whose first turn runs `env` into a file, then assert the file.
 """
 import json
 import os
-import re
 import shlex
 import subprocess
-import sys
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path

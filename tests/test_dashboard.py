@@ -775,6 +775,20 @@ class TestCILintScope:
             "lint job must run ruff over lib/ + tests/ (the full Python " \
             "surface), not just the MCP/CLI packages"
 
+    def test_python_surface_is_ruff_clean(self):
+        """Run the CI lint selection locally so an F401/E722 fails here,
+        not on the CI runner."""
+        if shutil.which("ruff") is None:
+            pytest.skip("ruff not installed (pip install -r "
+                        "packaging/requirements-dev.txt)")
+        result = subprocess.run(
+            ["ruff", "check", "--select", "F401,E722", "lib/", "tests/"],
+            capture_output=True, text=True, timeout=120,
+        )
+        assert result.returncode == 0, \
+            "ruff check --select F401,E722 lib/ tests/ fails:\n" \
+            f"{result.stdout}{result.stderr}"
+
 
 class TestCISecretScan:
     """C.1: CI must run a permanent secret scan — a secret can never

@@ -9,15 +9,12 @@ exit -> "failed", death by signal -> "killed" with the signal name.
 
 import json
 import os
-import shlex
 import signal
 import subprocess
-import sys
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-import pytest
 
 REPO = Path(__file__).resolve().parent.parent
 SPAWN = REPO / "lib" / "core" / "agent-harness.py"

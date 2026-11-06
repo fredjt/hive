@@ -9,6 +9,9 @@
 #                 subprocess-heavy lifecycle tests stop gaining speed.
 # - pytest-cov    coverage (python -m pytest tests/ --cov=lib/hive_cli ...)
 # - pytest-watch  watch loop: ptw --watch lib/ -- tests/  (re-runs on change)
+# - ruff          CI's lint selection, runnable locally (the ruff-clean
+#                 guard in tests/test_dashboard.py skips without it)
+ruff>=0.5
 pytest>=8.0
 pytest-xdist>=3.6
 pytest-cov>=5.0
