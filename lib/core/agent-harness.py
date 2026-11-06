@@ -802,6 +802,11 @@ def parse_actions(text: str, no_mcp: bool = False,
       fence-line form: ```bash:<cmd>```       (the keyword glued to the fence)
       bare-fence form: ```\nbash: <cmd>\n``` (a lone fence, then a line
                                       starting with the keyword)
+
+    Item 3: a bash command whose whole body is an mcp__<server>__name(args)
+    call is routed to MCP (it used to run as a shell command and syntax-
+    error) — the mcp__ shape is unambiguous, so no plain bash command is
+    ever mis-routed.
     """
     actions = []
 
@@ -828,6 +833,23 @@ def parse_actions(text: str, no_mcp: bool = False,
                 block = _strip_keyword_line(match.group(1).strip())
                 if block:
                     _append_mcp_action(actions, block)
+
+    # Item 3: an MCP call typed INSIDE a bash block — the field run's
+    # ```bash: mcp__hive__ticket_get(dept="hr", ...)``` — used to run as a
+    # shell command and die with '/bin/sh: syntax error near unexpected
+    # token'. The mcp__<server>__name(args) shape is unambiguous (no shell
+    # command starts with mcp__), so route it to MCP. Multi-command lines
+    # (cd /x && mcp__...) and MCP-less runs stay bash.
+    if not no_mcp:
+        routed = []
+        for a in actions:
+            if (a["type"] == "bash"
+                    and re.match(r'^\s*mcp__\w+__\w+\s*\(.*\)\s*$',
+                                 a["command"], re.DOTALL)):
+                _append_mcp_action(routed, a["command"].strip())
+            else:
+                routed.append(a)
+        actions = routed
 
     return actions
 

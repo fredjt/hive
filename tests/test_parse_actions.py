@@ -129,6 +129,50 @@ def test_standard_python_fence_is_not_an_action():
     assert HARNESS.parse_actions(text) == []
 
 
+def test_mcp_call_inside_bash_block_is_routed_to_mcp():
+    """Item 3: the field run's ```bash: mcp__hive__ticket_get(dept="hr",
+    ...)``` ran as a shell command and died with '/bin/sh: syntax error
+    near unexpected token'. The whole-body mcp__<server>__name(args)
+    shape is unambiguous in a bash block and must route to MCP — in every
+    fence form."""
+    call = 'mcp__hive__ticket_get(dept="hr", ticket_id="HR-0001")'
+    for text in (
+        f"```bash: {call}```",
+        f"```bash\n{call}\n```",
+        f"```\nbash: {call}\n```",
+    ):
+        acts = HARNESS.parse_actions(text)
+        assert len(acts) == 1, f"{text!r} -> {acts}"
+        assert acts[0]["type"] == "mcp", f"{text!r} -> {acts}"
+        assert acts[0]["name"] == "ticket_get", f"{acts[0]['name']}"
+        assert acts[0]["args"] == {"dept": "hr", "ticket_id": "HR-0001"}
+
+
+def test_bash_commands_are_never_misrouted():
+    """Item 3 guard: only a whole-body mcp__<server>__name(args) call is
+    routed — real bash (multi-command lines, globs, pipelines) stays
+    bash."""
+    cases = [
+        "cd /x && mcp__hive__ticket_get(dept=\"hr\")",   # multi-command line
+        "echo mcp__hive__ticket_get()",                  # in an argument
+        "ls -la | grep mcp__hive__",                     # in a pipeline
+        "mcp__hive__ticket_get(dept=\"hr\") && echo done",  # trailing compound
+        "cat $(mcp__hive__ticket_get(dept=\"hr\"))",     # in command subst
+    ]
+    for cmd in cases:
+        acts = HARNESS.parse_actions(f"```bash: {cmd}```")
+        assert len(acts) == 1 and acts[0]["type"] == "bash" and \
+            acts[0]["command"] == cmd, f"{cmd!r} -> {acts}"
+
+
+def test_mcp_in_bash_stays_bash_when_mcp_disabled():
+    """Item 3: with MCP disabled the call is not routable — it stays a
+    bash action (which fails loudly in the shell, as before)."""
+    call = 'mcp__hive__ticket_get(dept="hr")'
+    acts = HARNESS.parse_actions(f"```bash: {call}```", no_mcp=True)
+    assert acts == [{"type": "bash", "command": call}], f"{acts}"
+
+
 def test_prefixed_tool_names_are_normalized():
     """Item 2: the prompts historically taught mcp__hive__<tool> and
     models still emit it — the parser resolves the prefixed name to the

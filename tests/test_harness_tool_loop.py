@@ -221,6 +221,85 @@ def test_tool_loop_round_trip(mcp_http_server):
         llm_server.server_close()
 
 
+class _McpInBashLLMHandler(BaseHTTPRequestHandler):
+    """Item 3 canned LLM: turn 1 puts an mcp__hive__-prefixed tool call
+    inside a BASH block (the field run's exact failure — it used to run as
+    a shell command and syntax-error), turn 2 finishes. If the harness
+    routes the call to MCP, the ticket lands on disk; if it ran it as a
+    shell command, nothing was created."""
+
+    def do_POST(self):
+        n = int(self.headers.get("Content-Length", 0))
+        self.rfile.read(n)
+        self.server.turn += 1
+        if self.server.turn == 1:
+            content = (
+                "```bash\nmcp__hive__ticket_create(dept=\"" + TICKET_DEPT +
+                "\", type=\"chore\", priority=\"low\", title=\""
+                "Item 3 routing probe\", description=\"item 3 e2e\")\n```"
+            )
+        else:
+            content = "Done: the ticket call is in."
+        payload = json.dumps({"model": "stub",
+                              "choices": [{"message": {"content": content}}]}).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(payload)))
+        self.end_headers()
+        self.wfile.write(payload)
+
+    def log_message(self, *args):  # keep test output quiet
+        pass
+
+
+def test_mcp_call_in_bash_block_routes_to_mcp(mcp_http_server):
+    """Item 3 end to end: a prefixed tool call typed in a bash block is
+    routed to the MCP server (the ticket is created) — not executed by
+    /bin/sh, where it dies with 'syntax error near unexpected token'."""
+    mcp_url, company_dir = mcp_http_server
+
+    llm_base, llm_server = _free_http_port_and_start(_McpInBashLLMHandler)
+    llm_server.turn = 0
+    try:
+        env = {
+            "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
+            "HOME": str(Path(company_dir).parent / "home"),
+            "HIVE_ROOT": str(REPO),
+            "COMPANY_DIR": company_dir,
+            "MCP_URL": mcp_url,
+            "HIVE_PROVIDER": "openai",
+            "HIVE_API_BASE": llm_base,
+            "HIVE_MODEL": "stub",
+            "HIVE_API_KEY": "test-key",
+        }
+        r = subprocess.run(
+            [sys.executable, str(REPO / "lib" / "core" / "agent-harness.py"),
+             "--", "Create the ticket, then finish."],
+            capture_output=True, text=True, timeout=120, env=env,
+            cwd=str(Path(company_dir).parent),
+        )
+        assert r.returncode == 0, f"harness failed: {r.stderr[-800:]}"
+
+        # The MCP call really executed: the ticket exists in the scratch
+        # .company (a shell-executed call would have created nothing).
+        tickets_root = Path(company_dir) / "departments" / TICKET_DEPT / "tickets"
+        found = [f for f in tickets_root.rglob("*.json")
+                 if f.name != "counter.json"]
+        assert len(found) == 1, f"expected the routed ticket, got {found}"
+        assert json.loads(found[0].read_text())["title"] == "Item 3 routing probe"
+
+        # The stream shows an MCP tool_use, not a bash one, and it was ok.
+        events = [json.loads(line) for line in r.stdout.strip().splitlines()
+                  if line.strip().startswith("{")]
+        tool_uses = [e for e in events if e.get("type") == "tool_use"]
+        tool_results = [e for e in events if e.get("type") == "tool_result"]
+        assert [e["tool"] for e in tool_uses] == ["ticket_create"],             f"the bash-embedded call was not routed to MCP: {tool_uses}"
+        assert all(e.get("ok") for e in tool_results), f"{tool_results}"
+    finally:
+        llm_server.shutdown()
+        llm_server.server_close()
+
+
 def _run_round_trip(mcp_url, company_dir, llm_base, llm_server, extra_env=None):
     """Run the harness through the canned 3-turn script; return the
     CompletedProcess. extra_env overrides (C.2 poisons PYTHONPATH)."""
