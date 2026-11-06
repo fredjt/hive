@@ -4,7 +4,7 @@ This file documents the `this directory` area of the Hive project — what it do
 
 ## What is here
 
-Scaffold templates auto-installed by `lib/tools/gh-init.sh` into projects as part of the `.hive/` directory. These files become part of a Hive-initialized project's GitHub integration and release pipeline.
+Templates auto-installed by `lib/tools/gh-init.sh` into a project's `.github/` directory (workflows + PR template) as part of `hive init`. The release publishers are the exception: they stay in this install's tree and run from there (see `publishers/AGENTS.md`) — nothing is ever copied into a per-project scaffold (there is no such thing).
 
 ## Directory layout
 
@@ -15,8 +15,10 @@ templates/
 │   ├── ci.yml                        → <project>/.github/workflows/ci.yml
 │   └── release.yml                   → <project>/.github/workflows/release.yml
 └── publishers/
-    ├── github.sh                     → <project>/.hive/publishers/github.sh (default)
-    ├── local-only.sh                 → <project>/.hive/publishers/local-only.sh
+    ├── github.sh                     (default publisher — runs from the install,
+    │                                  $HIVE_ROOT/lib/templates/publishers/github.sh)
+    ├── local-only.sh                 (runs from the install; operator-selectable
+    │                                  via [release].publisher_script)
     └── AGENTS.md                     (publisher docs)
 ```
 
@@ -39,7 +41,7 @@ Bash scripts invoked by `release-publish-runner.sh` (stage 8 of the sprint cycle
 
 ## Modifying templates
 
-Changes affect **all future project initializations**. Existing projects have their own copy and won't be updated automatically.
+Copied families (workflows, PR template) affect **all future project initializations**; existing projects keep the copy that was installed into their `.github/` and won't be updated automatically. The publisher family is never copied — it always runs from the install, so a publisher change affects every project immediately.
 
 - **GitHub workflows** (`github-workflows/AGENTS.md`): The CI workflow's language detection and gate list should stay in sync with `lib/tools/verification-gates.sh`. The release workflow assumes `packaging/build-package.sh` and a `VERSION` file exist.
 - **Publishers** (`publishers/AGENTS.md`): Custom publishers follow the 4-arg signature.

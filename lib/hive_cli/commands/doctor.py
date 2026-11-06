@@ -328,10 +328,11 @@ def _run_checks(args) -> bool:
     for sub in ("bin", "lib/hive_mcp", "lib/hive_cli", "lib/dashboard"):
         p = HIVE_INSTALL_DIR / sub
         all_ok &= _check(f"  install/{sub}/", p.is_dir())
-    # Install subdirs (used by tools, agents, core).
+    # Agent-facing root subdirs (HIVE_ROOT — the global install; there is
+    # no per-project scaffold, so this is the only copy that exists).
     for sub in ("lib/tools", "lib/agents", "lib/core"):
         p = HIVE_ROOT / sub
-        all_ok &= _check(f"  scaffold/{sub}/", p.is_dir())
+        all_ok &= _check(f"  root/{sub}/", p.is_dir())
 
     # Python venv (always from install dir). The `[ -x ]` test mirrors
     # agent-spawn.sh — the venv only counts as the spawn interpreter

@@ -65,7 +65,7 @@ Direct file reads are appropriate when the operation is simple (parse a JSON fil
 ## Adding a new tool
 
 1. **Decide the module**: Does the tool fit an existing module's domain? If yes, add to that module's `register()`. If no, create a new file.
-2. **Create the bash script**: Add `<project>/.hive/lib/tools/<script-name>.sh` (or the global install equivalent).
+2. **Create the bash script**: Add `$HIVE_ROOT/lib/tools/<script-name>.sh` in the global install (scripts are never copied per-project).
 3. **Add the tool**: Create the `@server.tool()` function inside `register()`. Follow the pattern above.
 4. **Register the module** (new file only): Add the module name to `TOOL_MODULES` in `lib/hive_mcp/server.py`.
 5. **Document**: Update this AGENTS.md's structure table if new.

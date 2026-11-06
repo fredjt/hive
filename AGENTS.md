@@ -38,12 +38,16 @@ Each key subdirectory has its own `AGENTS.md` with deeper detail. See the
 
 ## Key architecture concepts
 
-### Two-root design
+### One install, two env names
 
 - **HIVE_INSTALL_DIR** (~/.local/share/hive): Global install — venv, MCP
   server, CLI, dashboard. Read-only from inside agents.
-- **HIVE_ROOT** (<project>/.hive/): Per-project tweakable scaffold — agents,
-  tools, templates, config.toml. Created by `hive init` via scaffold-extract.
+- **HIVE_ROOT**: The same global install, seen from the agent side —
+  lib/agents (prompts), lib/tools (~100 scripts), lib/templates,
+  lib/core (spawn + harness). Defaults to HIVE_INSTALL_DIR (bin/hive sets
+  both). Shared by every project on the machine; read-only from inside
+  agents. There is NO per-project copy — `hive init` does not create one.
+  Per-project state lives in `.company/`.
 
 ### Runtime paths
 
@@ -355,7 +359,7 @@ When adding a new feature:
 
 Shared fixtures provide isolated test environments:
 
-- **`tmp_project_dir`** — Creates a temporary project with a `.hive/` scaffold extracted from the install
+- **`tmp_project_dir`** — Creates a temporary project directory and points `HIVE_INSTALL_DIR` at the install (no per-project scaffold — the runtime always resolves from the install)
 - **`tmp_company_dir`** — Creates a minimal `.company/` workspace inside the test project
 - **`get_install_dir()`** — Returns the repo root (where `lib/`, `bin/`, etc. live)
 

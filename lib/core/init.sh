@@ -74,17 +74,16 @@ fi
 # 4. Chat channels
 bash "$TOOLS/init-chat-channels.sh"
 
-
-# 6. Marketing scaffold (real deliverables, in <project_root>/marketing/)
+# 5. Marketing scaffold (real deliverables, in <project_root>/marketing/)
 bash "$TOOLS/init-marketing-scaffold.sh" "$PROJECT_ROOT"
 
-# 7. Legal scaffold (privacy, ToS, license inventory, risk register)
+# 6. Legal scaffold (privacy, ToS, license inventory, risk register)
 bash "$TOOLS/init-legal-scaffold.sh" "$PROJECT_ROOT"
 
-# 8. Finance scaffold (budget, runway, unit economics, projections)
+# 7. Finance scaffold (budget, runway, unit economics, projections)
 bash "$TOOLS/init-finance-scaffold.sh" "$PROJECT_ROOT"
 
-# 9. Git repo + GitHub remote.
+# 8. Git repo + GitHub remote.
 #
 # Without this, the very first verification approval crashes: ticket-move.sh
 # tries to merge the PR via gh-pr-merge.sh, which fails (no remote, possibly

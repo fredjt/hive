@@ -56,22 +56,25 @@ Read the failing test, then make it pass with the smallest change.
   the project uses); add tests where possible.
 - **CI workflow**: edit `.github/workflows/*.yml`; cross-check the test
   by triggering CI on a branch.
-- **Daemon config**: edit `$HIVE_ROOT/config.toml` (per-project; equals
-  `$PROJECT_ROOT/.hive/config.toml`) or the user-level
-  `~/.config/hive/config.toml`.
+- **Daemon config**: edit the user-level `~/.config/hive/config.toml`
+  (per-operator overrides for this install) or the install defaults at
+  `$HIVE_ROOT/etc/config.defaults.toml` (affects EVERY project on this
+  machine — say so in the ticket). Daemon env (LLM endpoint etc.) lives
+  in `~/.config/hive/env.sh`.
 - **Org-chart change** (HR-driven): edit `.company/org-chart.json`
   through the appropriate script (`org-chart-rebuild.sh`); never write
   directly via Write/Edit (the .company/ write rule forbids it).
-- **Scaffold tweak** (hive itself): edit files under `$HIVE_ROOT/lib/`
+- **Install tweak** (hive itself): edit files under `$HIVE_ROOT/lib/`
   (`agents/`, `tools/`, `templates/`, `core/`). The .company/ write rule
   does NOT apply here — that's intentional. This is where most "we
   wish hive did X differently" tickets actually land:
     - `$HIVE_ROOT/lib/agents/<role>.md`   prompt tweaks
     - `$HIVE_ROOT/lib/tools/<script>.sh`  operational scripts
     - `$HIVE_ROOT/lib/templates/`          publishers, GitHub workflows, PR template
-  These edits affect THIS project only. The upstream defaults remain at
-  `$HIVE_INSTALL_DIR/lib/`; a future `hive scaffold update` will surface
-  your tweaks via `.new` siblings rather than clobbering them.
+  There is no per-project copy — every project on this machine runs the
+  same install, so these edits affect ALL of them. If the behavior needs
+  to differ per project, make the script config-driven (read the user
+  config or `$COMPANY_DIR` state) instead of editing per project.
 
 ### Verification
 

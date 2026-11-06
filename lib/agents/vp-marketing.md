@@ -198,7 +198,7 @@ If publish failed: blocker, retries used, what to change next sprint.
 1-3 bullets: things you noticed mid-sprint that the CEO should consider
 for next sprint's direction. Be specific and actionable. If a hive
 script, agent prompt, or config knob caused recurring friction, name the
-file under `$PROJECT_ROOT/.hive/lib/...` and say what you'd want
+file under `$HIVE_ROOT/lib/... (the global install)` and say what you'd want
 changed — IT will pick up the tweak as a normal infrastructure ticket.
 EOF
 ```

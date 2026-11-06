@@ -76,18 +76,20 @@ perpetual mode:
 
 ## init.sh — workspace bootstrap
 
-Runs 9 sequential setup steps, each delegated to a script tool in
+Runs 8 sequential setup steps, each delegated to a script tool in
 `$HIVE_ROOT/lib/tools/`:
 
-1. `init-workspace.sh` — creates `.company/` and `.hive/`
-2. `scaffold-extract.sh` — extracts per-project scaffold
-3. `init-manifest.sh` — writes manifest
-4. `init-brief.sh` — writes project brief
-5. `init-chat-channels.sh` — creates chat channels
-6. `init-meeting-schedule.sh` — sets up meeting cadence
-7. `init-marketing-scaffold.sh` — marketing deliverables
-8. `init-legal-scaffold.sh` — privacy, ToS, license inventory
-9. Git init + GitHub remote setup
+1. `init-workspace.sh` — creates `.company/` and gitignore entries
+2. `init-manifest.sh` — writes manifest
+3. `init-brief.sh` — writes project brief
+4. `init-chat-channels.sh` — creates chat channels
+5. `init-marketing-scaffold.sh` — marketing deliverables
+6. `init-legal-scaffold.sh` — privacy, ToS, license inventory
+7. `init-finance-scaffold.sh` — budget, runway, unit economics
+8. Git init + GitHub remote setup
+
+No per-project scaffold is created: the runtime always resolves scripts,
+prompts, and templates from the global install (`$HIVE_ROOT`).
 
 Idempotent: if `.company/` already exists, only fills in missing pieces.
 

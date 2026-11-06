@@ -144,26 +144,29 @@ $HIVE_ROOT/lib/tools/<name>.sh. Common ones:
 DO NOT invent paths under external tool config directories or legacy
 skill locations — none of them exist. Always use $HIVE_ROOT or $SKILL_DIR.
 
-$HIVE_ROOT is the PER-PROJECT scaffold at $PROJECT_ROOT/.hive/. Every
-script, agent prompt, template, and config default lives there and CAN
-be tweaked for this project specifically — the global install ships
-defaults that get extracted on `hive init`, and the company is expected
-to evolve its own scaffold over time. The .company/ write rule (section 3)
-prevents .company/ mutations but does not block .hive/ edits, so tweaks
-are normal operating behavior, not a workaround. Most agents
-should not touch .hive/ directly — file a ticket to the IT department
-(the canonical admin owner of scaffold and infra planning). IT in turn
-files the implementation ticket against whichever engineering dept the
-project has stood up for infra work. The exceptions (ic-infra, vp-it,
-ceo for strategic direction) are noted in their own prompts.
+$HIVE_ROOT is the GLOBAL hive install (~/.local/share/hive by default;
+the HIVE_ROOT env var can point it elsewhere). Every script, agent
+prompt, and template you run lives there — shared by every project on
+this machine. There is NO per-project copy: `hive init` does not create
+one, and the paths below always resolve into the install. The .company/
+write rule (section 3) forbids .company/ mutations, and $HIVE_ROOT is
+the same: agents READ from it (run its scripts, read its prompts) but do
+not edit it. Tweaking hive itself — a prompt, a tool, a config knob — is
+the IT department's job, filed as a normal infrastructure ticket; IT in
+turn files the implementation ticket against whichever engineering dept
+the project has stood up for infra work. The exceptions (ic-infra, vp-it,
+ceo for strategic direction) are noted in their own prompts. Per-project
+state lives ONLY in $COMPANY_DIR.
 
 ## 6. ENVIRONMENT VARIABLES YOU CAN COUNT ON
 
-  $HIVE_ROOT        per-project scaffold ($PROJECT_ROOT/.hive). Holds the
-                    tweakable agents/, lib/tools/, lib/templates/, lib/core/,
-                    config.toml for THIS project. Edit at your own risk.
-  $HIVE_INSTALL_DIR global hive install (~/.local/share/hive by default).
-                    Holds the venv, MCP server, CLI, and dashboard.
+  $HIVE_ROOT        the global hive install (~/.local/share/hive by
+                    default; HIVE_ROOT env override). Holds bin/, lib/
+                    (agents, tools, templates, core, hive_mcp, hive_cli,
+                    dashboard), etc/config.defaults.toml, venv/. Shared
+                    by all projects; read-only from inside agents.
+  $HIVE_INSTALL_DIR same global install, named from the venv/runtime side.
+                    Defaults to the same directory as $HIVE_ROOT.
                     Read-only from inside agents.
   $SKILL_DIR        same as $HIVE_ROOT (legacy alias)
   $PROJECT_ROOT     the project this sprint is running against

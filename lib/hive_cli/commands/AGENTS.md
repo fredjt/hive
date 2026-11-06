@@ -28,7 +28,7 @@ def handle(args) -> int:
     return 0 if res.get("ok") else 1
 ```
 
-**Style B — Direct script execution** (lifecycle commands): Shell out to bash scripts without going through MCP. Used for `company-start.sh`, `company-stop.sh`, `hive-killall.sh`, `init.sh`, `scaffold-extract.sh`, `scaffold-update.sh` — these must bypass MCP because spawned agents were restart-looping the daemons via MCP calls.
+**Style B — Direct script execution** (lifecycle commands): Shell out to bash scripts without going through MCP. Used for `company-start.sh`, `company-stop.sh`, `hive-killall.sh`, `init.sh` — these must bypass MCP because spawned agents were restart-looping the daemons via MCP calls.
 
 ```python
 import subprocess
@@ -74,7 +74,6 @@ proc = subprocess.Popen(
 | `doctor.py` | `doctor` | Filesystem + MCP probe |
 | `dashboard.py` | `dashboard` | Process management (starts MCP + Node) |
 | `init.py` | `init` | Script (init.sh) |
-| `scaffold.py` | `scaffold extract|update|diff` | Script (extract/update), filesystem (diff) |
 | `tool.py` | `tool <name>`, `tools` | MCP |
 | `killall.py` | `killall` | Script (hive-killall.sh) |
 | `__init__.py` | — | Empty (namespace package marker) |

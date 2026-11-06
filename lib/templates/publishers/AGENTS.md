@@ -4,7 +4,7 @@ This file documents the `this directory` area of the Hive project — what it do
 
 ## What is here
 
-Release publisher templates, auto-installed by `lib/tools/gh-init.sh` into projects as part of the `.hive/` scaffold. These are bash scripts that the release pipeline invokes to publish a completed release artifact.
+Release publisher scripts. These live in the install's tree (`$HIVE_ROOT/lib/templates/publishers/`) and run from there — they are never copied into a project (`gh-init.sh` only installs the `.github/` workflows and PR template). The release pipeline invokes one of them to publish a completed release artifact.
 
 ## Runner
 

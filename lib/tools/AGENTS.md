@@ -72,8 +72,7 @@ These scripts are the **runtime core** of Hive. They are called by the MCP serve
 | `init-brief.sh` | Writes the project brief. |
 | `init-manifest.sh` | Creates the manifest. |
 | `init-chat-channels.sh` | Sets up chat channels. |
-| `init-<dept>-scaffold.sh` | Per-department scaffolds (finance, legal, marketing). |
-| `scaffold-extract.sh` / `scaffold-update.sh` | Extracts/updates the per-project `.hive/` scaffold from the install. |
+| `init-<dept>-scaffold.sh` | Per-department scaffolds (finance, legal, marketing) — content under the project, not under a `.hive/` tree. |
 
 ### Agent spawning & cycle control
 | Script | Role |

@@ -30,7 +30,6 @@ lib/hive_cli/
     gh.py            gh status / issues / mirror / pr open/merge/reject
     release.py       start / status / list / publish / abort
     round.py         status / next / history / get / enqueue / advance / promote
-    scaffold.py      extract / update / diff
     tool.py          invoke a single MCP tool / list all tools
 ```
 
@@ -75,7 +74,7 @@ Key env vars: `HIVE_MCP_HOST`, `HIVE_MCP_PORT`, `HIVE_ROOT`, `HIVE_INSTALL_DIR`.
 ## Path resolution
 
 - `HIVE_INSTALL_DIR`: global install root (venv + source). Resolved from `HIVE_INSTALL_DIR` env, or `parents[2]` from this file's location.
-- `HIVE_ROOT`: per-project scaffold root. Set by `bin/hive` launcher. Falls back to `HIVE_INSTALL_DIR` for dev runs.
+- `HIVE_ROOT`: global install root — the SAME directory as `HIVE_INSTALL_DIR`. Set by the `bin/hive` launcher (`export HIVE_ROOT="$HIVE_INSTALL_DIR"`); projects use installed scripts directly. There is no per-project scaffold.
 
 ## Running without install
 

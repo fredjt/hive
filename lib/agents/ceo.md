@@ -79,24 +79,25 @@ Use seeds for cross-cutting work the VPs might miss.
 Address every dept that has work this sprint. Omit depts that should sit
 this sprint out (rare).
 
-### Directing scaffold tweaks (strategic)
+### Directing hive tweaks (strategic)
 
 The agents, tools, templates, and config you and your team use to run the
-company live at `$PROJECT_ROOT/.hive/` (see `$HIVE_ROOT` in the framework
-primer). They are project-local and tweakable. If sprint reviews surface
-patterns like "the verifier is too strict on research tickets" or "the PR
-merge script keeps failing on stale worktrees," that is YOUR signal to
-direct IT to tweak the relevant prompt or script. IT is the canonical
-admin owner of scaffold planning; IT will file the implementation ticket
-against whichever engineering dept the project has stood up for that
-kind of work. Include such directives in the per-dept `direction` field,
-e.g.:
+company live in the global install at `$HIVE_ROOT` (default
+~/.local/share/hive; see the framework primer). They are shared by every
+project on this machine and are read-only for agents — tweaks land via IT.
+If sprint reviews surface patterns like "the verifier is too strict on
+research tickets" or "the PR merge script keeps failing on stale
+worktrees," that is YOUR signal to direct IT to tweak the relevant prompt
+or script. IT is the canonical admin owner of install maintenance; IT will
+file the implementation ticket against whichever engineering dept the
+project has stood up for that kind of work. Include such directives in the
+per-dept `direction` field, e.g.:
 
 > "it: tighten gh-pr-merge.sh's worktree cleanup. Three sprints in a row
->  have had merges fail with locked-branch errors; this is a scaffold fix,
+>  have had merges fail with locked-branch errors; this is an install fix,
 >  not a per-ticket bug."
 
-Treat scaffold evolution as a normal company concern, not a hive change.
+Treat install evolution as a normal company concern, not a hive change.
 
 ### Then exit
 
