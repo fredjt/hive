@@ -58,7 +58,10 @@ ss_init() {
   local f;   f=$(ss_state_file)
   mkdir -p "$dir/history"
   [ -f "$f" ] && return 0
-  local sid="sprint-$(date -u +%Y%m%dT%H%M%SZ)"
+  # E1: the second-granularity timestamp collides when a sprint is
+  # archived and the next one starts in the same second — same id means
+  # history/<sid>.json clobbers the archived cycle. $RANDOM disambiguates.
+  local sid="sprint-$(date -u +%Y%m%dT%H%M%SZ)-$RANDOM"
   local now;  now=$(ss_now)
   cat > "$f" <<JSON
 {
@@ -80,6 +83,9 @@ ss_init() {
   }
 }
 JSON
+  # E1: a sprint just started — the manifest tracks it (current_sprint).
+  # Atomic (flock + tmp + rename); no-op when no manifest exists.
+  ss_sync_manifest '.current_sprint = $s' --arg s "$sid"
 }
 
 ss_get_stage() {
@@ -159,9 +165,18 @@ ss_sync_manifest() {
   local lock; lock=$(ss__lock_fd)
   local tmp="${f}.tmp.$$"
   (
+    # E1: pipefail inside the subshell — without it a failing program
+    # flows through the stamping pipe, which succeeds on empty input and
+    # would mv a 0-byte tmp over the manifest. The mv happens ONLY when
+    # the whole pipeline produced output; otherwise the tmp is removed.
+    set -o pipefail
     flock -x 9
-    jq "$prog" "$f" 2>/dev/null | \
-      jq --arg t "$(ss_now)" '.updated_at = $t' > "$tmp" && mv "$tmp" "$f"
+    if jq "$prog" "$@" "$f" 2>/dev/null | \
+        jq --arg t "$(ss_now)" '.updated_at = $t' > "$tmp"; then
+      mv "$tmp" "$f"
+    else
+      rm -f "$tmp"
+    fi
   ) 9>"$lock"
 }
 
@@ -228,5 +243,7 @@ ss_archive_and_start_new() {
     flock -x 9
     mv "$f" "$(dirname "$f")/history/${sid}.json"
   ) 9>"$lock"
-  ss_init
+  ss_init   # E1: also syncs the manifest's current_sprint to the new sprint
+  # E1: the archived cycle is complete — count it.
+  ss_sync_manifest '.cycle_count = (.cycle_count + 1)'
 }
