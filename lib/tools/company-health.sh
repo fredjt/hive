@@ -348,6 +348,12 @@ PYEOF
   # Launch the restart in background, detached from this script.
   # Redirect output to the appropriate log file.
   local log_file="$COMPANY_DIR/logs/$(echo "$role" | tr '-' '_').log"
+  # Item 6: the sprint-lifecycle log is HYPHEN-named (sprint-lifecycle.log
+  # - company-start.sh and the runner itself write there). The tr above
+  # produced the underscore-named orphan file, so every health restart
+  # appended there and its output was invisible in the log operators read.
+  # Use the real filename for the runner.
+  [ "$role" = "sprint-lifecycle" ] && log_file="$COMPANY_DIR/logs/sprint-lifecycle.log"
 
   _do_restart() {
     local new_pid

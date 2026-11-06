@@ -27,7 +27,15 @@ ss_init
 LOG="$COMPANY_DIR/logs/sprint-lifecycle.log"
 mkdir -p "$COMPANY_DIR/logs"
 ts() { date -u +%Y-%m-%dT%H:%M:%SZ; }
-log() { echo "[$(ts)] $*" | tee -a "$LOG" >&2; }
+log() {
+  # Item 6: stdout only. The runner is started with
+  # ">> sprint-lifecycle.log 2>&1" (company-start.sh) and health
+  # restarts use the same redirect (item 6 fixes the filename), so the
+  # file gets EVERY line exactly once. The old "| tee -a $LOG >&2"
+  # wrote each line twice (tee + the redirected copy) and doubled
+  # every sequence in the log the operator reads.
+  echo "[$(ts)] $*"
+}
 
 # ── Config ──────────────────────────────────────────────────────────
 MAX_VERIFICATION_BOUNCES="${HIVE_MAX_VERIFICATION_BOUNCES:-5}"
@@ -49,10 +57,23 @@ LLM_OUTAGE_COUNTER_FILE="$COMPANY_DIR/status/llm-outage-count"
 
 # ── Singleton lock ──────────────────────────────────────────────────
 RUNNER_PID="$COMPANY_DIR/rounds/runner.pid"
+RUNNER_HEARTBEAT="$COMPANY_DIR/rounds/runner-heartbeat"
 mkdir -p "$(dirname "$RUNNER_PID")"
 PRIOR_PID=$(cat "$RUNNER_PID" 2>/dev/null | head -1 | tr -dc '0-9')
 if [ -n "$PRIOR_PID" ] && [ "$PRIOR_PID" != "$$" ] && kill -0 "$PRIOR_PID" 2>/dev/null; then
-  log "found stale runner pid=$PRIOR_PID; sending SIGTERM"
+  if [ "${HIVE_RUNNER_FORCE:-0}" != "1" ]; then
+    # Item 6: a LIVE prior runner is refused, not killed. The 2026-11-06
+    # double-runner mess came from silent takeovers (this script used
+    # to SIGTERM/KILL the prior runner and carry on); two runners in
+    # one company interleave sprints and rounds. Refusal is explicit
+    # and names the operator actions; HIVE_RUNNER_FORCE=1 overrides
+    # for a deliberate takeover.
+    echo "Refusing to start: another sprint-lifecycle runner is active (pid=$PRIOR_PID)." >&2
+    echo "Two runners in one company corrupt sprints and rounds. Run hive stop first," >&2
+    echo "or set HIVE_RUNNER_FORCE=1 to deliberately take over." >&2
+    exit 1
+  fi
+  echo "HIVE_RUNNER_FORCE=1: taking over from live runner pid=$PRIOR_PID" >&2
   kill -TERM "$PRIOR_PID" 2>/dev/null || true
   for _ in 1 2 3 4 5 6 7 8 9 10; do
     kill -0 "$PRIOR_PID" 2>/dev/null || break
@@ -65,11 +86,18 @@ if [ -n "$PRIOR_PID" ] && [ "$PRIOR_PID" != "$$" ] && kill -0 "$PRIOR_PID" 2>/de
 fi
 exec 9>"$RUNNER_PID"
 if ! flock -n 9; then
-  echo "another sprint-lifecycle is active" >&2
-  exit 0
+  echo "Refusing to start: another sprint-lifecycle holds the runner lock." >&2
+  exit 1
 fi
 echo $$ >&9
 
+# Item 6: heartbeat - lets health and ops distinguish a live runner
+# from a crashed one (dead pid + stale heartbeat = crash, not just a
+# cleaned-up pidfile). Written each loop iteration and while idling.
+runner_heartbeat() {
+  printf '{ "pid": %s, "ts": "%s" }\n' "$$" "$(ts)" > "$RUNNER_HEARTBEAT" 2>/dev/null || true
+}
+runner_heartbeat
 
 # ── Helpers ─────────────────────────────────────────────────────────
 
@@ -153,6 +181,7 @@ enter_idle_if_no_work() {
   log "IDLE: no active tickets and empty backlog — going idle (polling every ${IDLE_POLL_INTERVAL}s; no release, no archive, no exit)"
   while true; do
     sleep "$IDLE_POLL_INTERVAL"
+    runner_heartbeat
     if has_active_tickets || has_backlog_tickets; then
       break
     fi
@@ -1063,6 +1092,7 @@ SAFETY_DEPT=""
 SAFETY_TICKET=""
 
 while true; do
+  runner_heartbeat
   # Check if any active tickets remain
   if ! has_active_tickets; then
     log "no active tickets remaining → advancing to build-and-test"

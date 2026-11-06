@@ -281,6 +281,11 @@ class LifecycleHarness:
             ["bash", str(LIFECYCLE), str(self.project)],
             env=env, capture_output=True, text=True, timeout=timeout,
         )
+        # Item 6: the lifecycle's log() now writes to stdout only (single
+        # write path; the file redirect is owned by the caller). The
+        # tests historically read the log lines from stderr - merge the
+        # streams so those assertions keep working.
+        r.stderr = (r.stderr or "") + (r.stdout or "")
         self.result = r
         return r
 
