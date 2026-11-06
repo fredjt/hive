@@ -929,6 +929,45 @@ echo "STAGES=${{SS_VALID_STAGES[@]}}"
         assert "ceo-plan" in result.stdout
 
 
+class TestStatusRebuildScript:
+    """status-rebuild.sh daemon contract: quiet mode must exit 0 on success.
+
+    2026-11-06 field run: the company's status-rebuild.log held one
+    'exited code=1, restarting in 5s' line PER MINUTE for the whole session —
+    a perpetual crash loop. The script succeeded every time; its final line
+    was `[ "$QUIET" = false ] && echo ...`, which returns 1 when QUIET=true,
+    so the daemon wrapper (company-start.sh) saw a crash each cycle.
+    """
+
+    def _mk_company(self, tmp_path):
+        company = tmp_path / ".company"
+        (company / "departments" / "hr").mkdir(parents=True)
+        return company
+
+    def test_quiet_mode_exits_zero_on_success(self, tmp_path):
+        company = self._mk_company(tmp_path)
+        result = subprocess.run(
+            ["bash", f"{SCRIPTS_DIR}/status-rebuild.sh", "--quiet"],
+            capture_output=True, text=True, timeout=30,
+            env={**os.environ, "COMPANY_DIR": str(company)},
+        )
+        assert result.returncode == 0, (
+            f"status-rebuild --quiet exited {result.returncode} on a "
+            f"successful run (daemon would crash-loop): {result.stderr}")
+        status_file = company / "departments" / "hr" / "status.json"
+        assert status_file.exists(), "status.json was not written"
+
+    def test_loud_mode_still_reports(self, tmp_path):
+        company = self._mk_company(tmp_path)
+        result = subprocess.run(
+            ["bash", f"{SCRIPTS_DIR}/status-rebuild.sh"],
+            capture_output=True, text=True, timeout=30,
+            env={**os.environ, "COMPANY_DIR": str(company)},
+        )
+        assert result.returncode == 0
+        assert "Status rebuilt for 1 departments" in result.stderr
+
+
 class TestDeptHelpersScript:
     """Test dept-helpers.sh."""
 

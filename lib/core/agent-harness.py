@@ -36,6 +36,9 @@ Environment variables:
   HIVE_ALLOW_SHELL        if set to "false", disable shell commands
   HIVE_PROVIDER           explicit provider name (openai, anthropic, groq,
                           openrouter, ollama, google, unsloth)
+  HIVE_LLM_CONNECT_TIMEOUT TCP connect timeout in seconds (default 10)
+  HIVE_LLM_READ_TIMEOUT    per-attempt read/generation timeout in seconds
+                           (default 120)
   HIVE_MODEL              model name (optional; [llm].model if unset)
   HIVE_API_BASE           base URL (optional; provider default if unset)
   HIVE_API_KEY            API key (optional; [llm].api_key or per-provider
@@ -485,10 +488,23 @@ def call_llm_api(
             "model": mdl,
         }
 
+    # F6: one 120s timeout for everything meant a dead endpoint could eat
+    # the full 120s on the TCP handshake alone per attempt — and
+    # TimeoutException had no backoff between retries. After a power outage
+    # the first failed spawn took ~5 minutes before it even counted toward
+    # the outage breaker (field run 2026-11-06: vp-rd, 308s). Short connect
+    # timeout + long read/generation timeout, both env-overridable.
+    try:
+        _connect_to = float(os.environ.get("HIVE_LLM_CONNECT_TIMEOUT", "10"))
+        _read_to = float(os.environ.get("HIVE_LLM_READ_TIMEOUT", "120"))
+    except ValueError:
+        _connect_to, _read_to = 10.0, 120.0
+    _timeout = _httpx.Timeout(_read_to, connect=_connect_to)
+
     last_error = None
     for attempt in range(retries):
         try:
-            with _httpx.Client(timeout=120.0) as client:
+            with _httpx.Client(timeout=_timeout) as client:
                 resp = client.post(url, json=payload, headers=headers)
 
                 if resp.status_code == 429:  # Rate limit
@@ -509,6 +525,9 @@ def call_llm_api(
 
         except _httpx.TimeoutException:
             last_error = _err(0, "request timed out")
+            if attempt < retries - 1:
+                import time as _time
+                _time.sleep(2 ** attempt)  # backoff: a black-holing endpoint won't heal instantly
             continue
         except _httpx.ConnectError as e:
             last_error = _err(0, f"connection error: {e}")
@@ -596,10 +615,26 @@ HEREDOC
 ## Rules
 - Be concise and focused on your assignment.
 - Execute shell commands and MCP tools as needed to complete your task.
-- Exit cleanly when your work is done.
+- When your work is done, finish by running `exit 0` in a bash block —
+  that ends your turn (the system continues automatically). Ending with
+  plain text and no command block also ends your turn. Do NOT repeat
+  exit/completion messages: one `exit 0` is enough.
 - Do NOT spawn other agents — that's the system's job.
 - Do NOT touch PRs directly — use ticket operations instead.
 """)
+
+# F4: a standalone `exit` / `exit <n>` bash block is the agent's explicit
+# "I am done" signal (stage prompts say "EXIT"; see run_agent).
+_EXIT_RE = re.compile(r"^exit(?:\s+(\d{1,3}))?$")
+
+
+def _exit_signal(cmd: str) -> int | None:
+    """Return the exit code if cmd is a standalone agent-exit signal
+    ('exit' or 'exit <n>' as the ENTIRE command), else None. Only exact
+    single-statement forms count — an exit embedded in a compound or
+    multi-line script keeps executing normally."""
+    m = _EXIT_RE.match(cmd.strip())
+    return int(m.group(1) or 0) if m else None
 
 
 def run_agent(
@@ -721,9 +756,26 @@ def run_agent(
             messages.append({"role": "assistant", "content": assistant_text})
             break
 
+        # F4: honor an explicit exit signal. The stage prompts tell the
+        # agent to "EXIT" when done and the system prompt says "exit
+        # cleanly" — but a bare `exit 0` block used to run as a shell no-op
+        # and just add another turn, so agents that followed the instruction
+        # looped on exit/completion messages (field run 2026-11-06: vp-it
+        # burned four extra LLM turns repeating "planning complete / exit 0").
+        # Run the other blocks in this reply first, then end the run.
+        exit_code = None
+        actionable = []
+        for action in actions:
+            if action["type"] == "bash" and exit_code is None:
+                ec = _exit_signal(action["command"])
+                if ec is not None:
+                    exit_code = ec
+                    continue
+            actionable.append(action)
+
         # Execute all actions and collect results
         action_results = []
-        for action in actions:
+        for action in actionable:
             if action["type"] == "bash":
                 print(json.dumps({"type": "tool_use", "tool": "bash",
                                   "args": {"command": action["command"]}}))
@@ -749,12 +801,34 @@ def run_agent(
                                   "ok": bool(result.get("ok")),
                                   "response": response_text[:8000]}))
 
+        if exit_code is not None:
+            print(json.dumps({"type": "tool_use", "tool": "bash",
+                              "args": {"command": f"exit {exit_code}"}}))
+            print(json.dumps({"type": "tool_result", "tool": "bash",
+                              "ok": exit_code == 0,
+                              "response": f"agent exit {exit_code} — ending run"}))
+            messages.append({"role": "assistant", "content": assistant_text})
+            total_actions += len(actionable)
+            num_turns += 1
+            end_time = datetime.now(timezone.utc)
+            return {
+                "type": "result",
+                "is_error": exit_code != 0,
+                "subtype": "final" if exit_code == 0 else "agent-exit-error",
+                "num_turns": num_turns,
+                "num_actions": total_actions,
+                "duration_ms": int((end_time - start_time).total_seconds() * 1000),
+                "total_cost_usd": total_cost_usd,
+                "result": (f"agent exited with code {exit_code}"
+                           if exit_code != 0 else assistant_text),
+            }
+
         # Append action results as user message for the next turn
         combined = "\n\n".join(action_results)
         messages.append({"role": "assistant", "content": assistant_text})
         messages.append({"role": "user", "content": f"Action results:\n{combined}\n\nContinue or finish your work."})
 
-        total_actions += len(actions)  # C2: the result event reports this
+        total_actions += len(actionable)  # C2: the result event reports this
         num_turns += 1
 
     # Build result event compatible with existing log consumers

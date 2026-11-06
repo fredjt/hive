@@ -102,9 +102,15 @@ def _llm_test() -> int:
         return 1
     headers = llm_providers.build_headers(resolved.api_style, resolved.api_key,
                                           provider=resolved.provider)
+    # F5: max_tokens must leave room for a reasoning prefix. Thinking
+    # models (Qwen3 family) emit reasoning tokens before content; a 16-token
+    # budget got fully consumed by the prefix and came back with empty
+    # content — a healthy endpoint then produced a misleading "empty reply"
+    # warning at startup (field run 2026-11-06: llm-test.json said ok:true +
+    # 'empty reply' while every subsequent agent call worked fine).
     payload = llm_providers.build_payload(
         resolved.api_style, [{"role": "user", "content": "Reply with the single word OK."}],
-        resolved.model, temperature=0.0, max_tokens=16)
+        resolved.model, temperature=0.0, max_tokens=256)
 
     t0 = time.monotonic()
     try:

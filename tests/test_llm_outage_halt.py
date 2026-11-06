@@ -265,20 +265,30 @@ class TestLLMOutageHalt:
             assert marker["sprint_id"] in incidents
 
             # The blockage is a visible critical bug ticket in the it
-            # backlog (the existing file_release_blocker path).
+            # backlog (the file_release_blocker path). An outage halt at a
+            # planning stage is NOT a release-pipeline failure — the ticket
+            # must say so: name the LLM outage + stage, not "N failed
+            # release attempts" with pointers at .company/releases/ logs
+            # that were never written (the 2026-11-06 field run's IT-0002).
             def blocker_found():
                 for p in (company / "departments" / "it" / "tickets"
                           / "backlog").glob("*.json"):
                     t = json.loads(p.read_text())
-                    if "RELEASE-BLOCKER" in t.get("title", ""):
+                    if "BLOCKER" in t.get("title", ""):
                         return t
                 return None
 
             assert _wait_until(blocker_found, 20), \
-                f"no RELEASE-BLOCKER ticket in it backlog: {list((company / 'departments' / 'it' / 'tickets' / 'backlog').glob('*.json'))}"
+                f"no blocker ticket in it backlog: {list((company / 'departments' / 'it' / 'tickets' / 'backlog').glob('*.json'))}"
             blocker = blocker_found()
             assert blocker.get("priority") == "critical"
             assert blocker.get("type") == "bug"
+            assert "LLM unavailable" in blocker.get("title", ""), blocker["title"]
+            desc = blocker.get("description", "")
+            assert "failed release attempts" not in desc, \
+                f"outage ticket claims a release failure: {desc}"
+            assert ".company/releases/" not in desc, \
+                f"outage ticket points at nonexistent release logs: {desc}"
 
             # The health supervisor marks the runner dead for the session
             # with the halt reason — no restart, no restart-budget burn.

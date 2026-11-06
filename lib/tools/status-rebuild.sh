@@ -185,7 +185,9 @@ rebuild_dept() {
 }
 
 # Iterate departments
-[ "$QUIET" = false ] && echo "Rebuilding status for departments..." >&2
+if [ "$QUIET" = false ]; then
+  echo "Rebuilding status for departments..." >&2
+fi
 n=0
 for dept_dir in "$COMPANY_DIR/departments"/*/; do
   [ -d "$dept_dir" ] || continue
@@ -196,4 +198,7 @@ for dept_dir in "$COMPANY_DIR/departments"/*/; do
   rebuild_dept "$dept"
   n=$((n + 1))
 done
-[ "$QUIET" = false ] && echo "Status rebuilt for $n departments" >&2
+if [ "$QUIET" = false ]; then
+  echo "Status rebuilt for $n departments" >&2
+fi
+exit 0

@@ -1258,3 +1258,28 @@ def test_round_files_are_emitted(tmp_path):
     assert "tdd-green" in kinds, sorted(kinds)
     running = [e for e in d["entries"] if e["status"] == "running"]
     assert not running, [e["id"] for e in running]
+
+
+def test_round_entries_record_success_not_failure(tmp_path):
+    """2026-11-06 field run: EVERY entry in rounds/current-round.json was
+    status 'failed' — including the CEO plan and two VP plans that had
+    completed cleanly (cycles.jsonl said done/exit 0). The close-out test
+    compared the LITERAL string "EC" instead of the variable:
+        round_entry ... "$([ "EC" -eq 0 ] && echo done || echo failed)"
+    which is always false (and spammed '[: EC: integer expected'). With a
+    stub that exits 0 for every spawn, no entry may ever read 'failed'."""
+    h = LifecycleHarness(tmp_path, mode="noop")
+    _seed_ticket(h)
+    r = h.run(timeout=240)
+    assert r.returncode == 0, r.stderr
+    hist = h.project / ".company" / "rounds" / "history"
+    files = list(hist.glob("*.json"))
+    assert files, "no archived round file in rounds/history/"
+    d = json.loads(files[-1].read_text())
+    closed = [e for e in d["entries"] if e["status"] != "running"]
+    assert closed, "no closed round entries at all"
+    failed = [e for e in closed if e["status"] == "failed"]
+    assert not failed, (f"exit-0 spawns marked failed: "
+                        f"{[(e['id'], e['kind']) for e in failed]}")
+    ceo = [e for e in closed if e["kind"] == "plan-ceo"]
+    assert ceo and all(e["status"] == "done" for e in ceo), ceo

@@ -26,14 +26,18 @@ class _Responder(BaseHTTPRequestHandler):
 
     Mode is a CLASS attribute set by each test before its server starts
     (handler instances can't see per-test server locals otherwise).
+    `requests` counts LLM calls so tests can assert the conversation
+    actually stopped (F4 exit-signal tests).
     """
 
     mode = "done"
+    requests = 0
 
     def log_message(self, *a):
         pass
 
     def do_POST(self):
+        _Responder.requests += 1
         n = int(self.headers.get("Content-Length", 0))
         body = json.loads(self.rfile.read(n) or b"{}")
         self.send_response(200)
@@ -47,6 +51,14 @@ class _Responder(BaseHTTPRequestHandler):
             if isinstance(m.get("content"), str))
         if _Responder.mode == "sleep":
             return self._final("```bash: sleep 4```")
+        if _Responder.mode == "exit0":
+            return self._final("```bash\nexit 0\n```")
+        if _Responder.mode == "exit3":
+            return self._final("```bash\nexit 3\n```")
+        if _Responder.mode == "exitcompound":
+            if "Action results:" in text:
+                return self._final("Done.")
+            return self._final("```bash\necho hi && exit 0\n```")
         if "Action results:" in text:
             return self._final("Done.")
         return self._final("```bash: echo e3-ok```")
@@ -179,3 +191,78 @@ def test_failing_harness_is_logged_failed(tmp_path):
     assert entry is not None, "no cycles.jsonl entry after a failed run"
     assert entry["status"] == "failed", entry
     assert entry["exit_code"] != 0, entry
+
+
+def test_exit_zero_ends_run_after_one_llm_call(tmp_path):
+    """F4: a standalone `exit 0` bash block ends the conversation.
+
+    The stage prompts tell agents to "EXIT" when done and the system prompt
+    says "exit cleanly", but the shell no-op used to just add another turn —
+    field run 2026-11-06: vp-it repeated exit/completion for four extra LLM
+    turns (~190s) after its work was already done. The harness must stop on
+    the first `exit 0`, log the run as done, and make no further LLM calls.
+    """
+    cd = _mk_company(tmp_path)
+    env, server = _base_env(tmp_path, cd, "exit0")
+    before = _Responder.requests
+    try:
+        proc = subprocess.run(
+            ["bash", str(SPAWN_SH), "--no-mcp", "--", "plan and finish"],
+            cwd=str(tmp_path), env=env,
+            capture_output=True, text=True, timeout=60)
+        assert proc.returncode == 0, proc.stderr[-1500:]
+    finally:
+        server.shutdown()
+    calls = _Responder.requests - before
+    assert calls == 1, (
+        f"exit 0 did not end the conversation: {calls} LLM calls")
+    entry = _last_cycle(cd)
+    assert entry is not None, "no cycles.jsonl entry after an exit-0 run"
+    assert entry["status"] == "done", entry
+    assert entry["exit_code"] == 0, entry
+
+
+def test_exit_nonzero_is_a_failed_run(tmp_path):
+    """F4: `exit 3` ends the run too — as a FAILURE (is_error), so the
+    spawn is logged 'failed' and counts toward outage/retry handling."""
+    cd = _mk_company(tmp_path)
+    env, server = _base_env(tmp_path, cd, "exit3")
+    before = _Responder.requests
+    try:
+        proc = subprocess.run(
+            ["bash", str(SPAWN_SH), "--no-mcp", "--", "plan and fail"],
+            cwd=str(tmp_path), env=env,
+            capture_output=True, text=True, timeout=60)
+    finally:
+        server.shutdown()
+    calls = _Responder.requests - before
+    assert calls == 1, (
+        f"exit 3 did not end the conversation: {calls} LLM calls")
+    entry = _last_cycle(cd)
+    assert entry is not None, "no cycles.jsonl entry after an exit-3 run"
+    assert entry["status"] == "failed", entry
+    assert entry["exit_code"] != 0, entry
+
+
+def test_compound_exit_is_not_a_finish_signal(tmp_path):
+    """F4 (conservative match): `echo hi && exit 0` is a compound command,
+    not the standalone finish signal — it executes normally and the
+    conversation continues to the model's plain-text finish."""
+    cd = _mk_company(tmp_path)
+    env, server = _base_env(tmp_path, cd, "exitcompound")
+    before = _Responder.requests
+    try:
+        proc = subprocess.run(
+            ["bash", str(SPAWN_SH), "--no-mcp", "--", "say hi then finish"],
+            cwd=str(tmp_path), env=env,
+            capture_output=True, text=True, timeout=60)
+        assert proc.returncode == 0, proc.stderr[-1500:]
+    finally:
+        server.shutdown()
+    calls = _Responder.requests - before
+    assert calls == 2, (
+        "compound exit was treated as the finish signal (or the run "
+        f"never finished): {calls} LLM calls")
+    entry = _last_cycle(cd)
+    assert entry is not None
+    assert entry["status"] == "done", entry

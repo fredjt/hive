@@ -319,7 +319,11 @@ llm_outage_halt() {
   # 2. A visible critical bug ticket in the it backlog, so the blockage
   # survives the halt — the retry-cap blocker path can never fire from an
   # outage (an unparseable verdict deliberately does not burn a retry).
-  file_release_blocker "$failed_spawns" "LLM unavailable"
+  # The text names the OUTAGE and the stage that halted; this is not a
+  # release-pipeline failure (no release was attempted at $stage).
+  file_release_blocker \
+    "BLOCKER ($sprint_id): LLM unavailable - runner halted at $stage after $failed_spawns failed LLM spawns" \
+    "The sprint runner for $sprint_id halted because the LLM endpoint did not answer (last stage: $stage, $failed_spawns consecutive failed spawns; threshold $LLM_OUTAGE_LIMIT). See .company/rounds/halt and .company/logs/sprint-lifecycle.log. Fix the endpoint (availability / auth / model), then run 'hive start' to re-arm the runner."
 
   # 3. The halt marker: company-health.sh marks a runner that dies under
   # a fresh marker dead for the session (no restart, no budget burn);
@@ -398,25 +402,27 @@ defer_remaining_to_backlog() {
   log "deferred remaining tickets to backlog: $reason_text"
 }
 
-# File a RELEASE-BLOCKER ticket in the it backlog so a blocked release is
-# visible to the next sprint's planning (sprint-fill promotes it there).
+# File a blocker ticket in the it backlog so a blockage is visible to the
+# next sprint's planning (sprint-fill promotes it there).
 # The old code did `scripted_move "it" "RELEASE-BLOCKER" backlog` — a MOVE
 # of a ticket that no code path ever creates (ids are generated IT-NNNN),
 # which always failed, leaving the blockage visible only in sprint state.
+# $1: title, $2: description — each caller names ITS OWN blockage. The old
+# single hardcoded body said "release blocked after N failed release
+# attempts" and pointed at .company/releases/ logs; for an LLM-outage halt
+# at vp-plan that was fiction (no release was ever attempted) — the 2026-11-06
+# field run's IT-0002 read exactly that way.
 file_release_blocker() {
-  local retries="$1" detail="$2"
-  local sprint_id tid
-  sprint_id=$(ss_get_field .sprint_id)
+  local title="$1" description="$2"
+  local tid
   [ -x "$SKILL_DIR/lib/tools/ticket-create.sh" ] || return 0
   tid=$(bash "$SKILL_DIR/lib/tools/ticket-create.sh" \
-      "it" "bug" "critical" \
-      "RELEASE-BLOCKER ($sprint_id): release blocked after $retries failed release attempts" \
-      "The release pipeline for $sprint_id stopped after $retries failed release attempts ($detail). Review .company/logs/sprint-lifecycle.log and the release test/verify logs under .company/releases/, fix the root cause, then re-run the release pipeline." \
+      "it" "bug" "critical" "$title" "$description" \
       "sprint-lifecycle" "sprint-planning" 2>>"$LOG")
   if [ -n "$tid" ]; then
-    log "RELEASE-BLOCKER ticket filed: $tid"
+    log "blocker ticket filed: $tid"
   else
-    log "  failed to file RELEASE-BLOCKER ticket for $sprint_id"
+    log "  failed to file blocker ticket ($title)"
   fi
 }
 
@@ -518,7 +524,7 @@ runs next automatically."
     bash "$SKILL_DIR/lib/core/agent-spawn.sh" -- "$PROMPT" \
       9<&- >> "$LOG_TO" 2>&1
     EC=$?
-    round_entry "plan-ceo" "ceo" "executive" "CEO" "" "$([ "EC" -eq 0 ] && echo done || echo failed)" 2>/dev/null || true
+    round_entry "plan-ceo" "ceo" "executive" "CEO" "" "$([ "$EC" -eq 0 ] && echo done || echo failed)" 2>/dev/null || true
     if [ $EC -ne 0 ]; then
       log "CEO plan failed (exit=$EC), continuing without direction"
       llm_outage_note_failure "$LOG_TO" "${1:-ceo-plan}" "$EC"
@@ -613,7 +619,7 @@ After filing/refining, EXIT. Sprint-fill and ticket processing run next."
       bash "$SKILL_DIR/lib/core/agent-spawn.sh" -- "$PROMPT" \
         9<&- >> "$LOG_TO" 2>&1
       VPEC=$?
-      round_entry "plan-vp" "$agent" "$dept" "VP" "" "$([ "VPEC" -eq 0 ] && echo done || echo failed)" 2>/dev/null || true
+      round_entry "plan-vp" "$agent" "$dept" "VP" "" "$([ "$VPEC" -eq 0 ] && echo done || echo failed)" 2>/dev/null || true
       if [ "$VPEC" -ne 0 ]; then
         break
       fi
@@ -773,7 +779,7 @@ After committing the failing test, EXIT. The engineer will run next.$FRESH_HINT"
     bash "$SKILL_DIR/lib/core/agent-spawn.sh" -- "$PROMPT" \
       9<&- >> "$LOG_TO" 2>&1
     EC=$?
-    round_entry "tdd-red" "ic-tester" "$dept" "IC-Tester" "$ticket" "$([ "EC" -eq 0 ] && echo done || echo failed)" 2>/dev/null || true
+    round_entry "tdd-red" "ic-tester" "$dept" "IC-Tester" "$ticket" "$([ "$EC" -eq 0 ] && echo done || echo failed)" 2>/dev/null || true
 
     if [ $EC -ne 0 ]; then
       TESTER_ITER=$((TESTER_ITER + 1))
@@ -930,7 +936,7 @@ After exit 0, this script will:
   bash "$SKILL_DIR/lib/core/agent-spawn.sh" -- "$PROMPT" \
     9<&- >> "$LOG_TO" 2>&1
   EC=$?
-  round_entry "tdd-green" "$AGENT" "$dept" "IC" "$ticket" "$([ "EC" -eq 0 ] && echo done || echo failed)" 2>/dev/null || true
+  round_entry "tdd-green" "$AGENT" "$dept" "IC" "$ticket" "$([ "$EC" -eq 0 ] && echo done || echo failed)" 2>/dev/null || true
 
   if [ $EC -ne 0 ]; then
     log "$log_prefix: engineer failed (exit=$EC), bouncing to in-progress"
@@ -1092,7 +1098,7 @@ After approve or bounce, EXIT. This script handles the status move."
   bash "$SKILL_DIR/lib/core/agent-spawn.sh" -- "$PROMPT" \
     9<&- >> "$LOG_TO" 2>&1
   EC=$?
-  round_entry "verify" "$VERIF_AGENT" "$dept" "Verification-IC" "$ticket" "$([ "EC" -eq 0 ] && echo done || echo failed)" 2>/dev/null || true
+  round_entry "verify" "$VERIF_AGENT" "$dept" "Verification-IC" "$ticket" "$([ "$EC" -eq 0 ] && echo done || echo failed)" 2>/dev/null || true
 
   if [ $EC -ne 0 ]; then
     log "$log_prefix: verifier failed (exit=$EC), bouncing to in-progress"
@@ -1248,7 +1254,10 @@ else
   RETRY=$(ss_get_field .release_retry_count)
   if [ "$RETRY" -gt "$MAX_RELEASE_RETRIES" ]; then
     log "release retry cap exceeded ($RETRY > $MAX_RELEASE_RETRIES) → vp-review"
-    file_release_blocker "$RETRY" "build-and-test failed"
+    SPRINT_ID_B=$(ss_get_field .sprint_id)
+    file_release_blocker \
+      "RELEASE-BLOCKER ($SPRINT_ID_B): release blocked after $RETRY failed release attempts" \
+      "The release pipeline for $SPRINT_ID_B stopped: build-and-test failed on attempt $RETRY (retry cap exceeded). Review .company/logs/sprint-lifecycle.log and the release test/verify logs under .company/releases/, fix the root cause, then re-run the release pipeline."
     ss_set_release_field publish_status failed
     ss_set_stage vp-review
     RELEASE_BLOCKED=1
@@ -1352,7 +1361,7 @@ run_release_verify() {
   bash "$SKILL_DIR/lib/core/agent-spawn.sh" -- "$PROMPT" \
     9<&- >> "$VERIFY_LOG_PATH" 2>&1
   local RIC_EC=$?
-  round_entry "release-verify" "release-ic" "executive" "Release-IC" "" "$([ "RIC_EC" -eq 0 ] && echo done || echo failed)" 2>/dev/null || true
+  round_entry "release-verify" "release-ic" "executive" "Release-IC" "" "$([ "$RIC_EC" -eq 0 ] && echo done || echo failed)" 2>/dev/null || true
   llm_outage_note_failure "$VERIFY_LOG_PATH" "release-verify" "$RIC_EC"
 
   VERDICT=$(grep -m1 -E '^VERDICT:' "$VERIFY_LOG_PATH" 2>/dev/null | awk -F: '{gsub(/^[ ]+/,"",$2); print $2}')
@@ -1369,7 +1378,11 @@ run_release_verify() {
       RETRY=$(ss_get_field .release_retry_count)
       if [ "$RETRY" -gt "$MAX_RELEASE_RETRIES" ]; then
         log "release retry cap exceeded → vp-review"
-        file_release_blocker "$RETRY" "release-IC verdict NO-GO"
+        local SPRINT_ID_N
+        SPRINT_ID_N=$(ss_get_field .sprint_id)
+        file_release_blocker \
+          "RELEASE-BLOCKER ($SPRINT_ID_N): release blocked after $RETRY failed release attempts" \
+          "The release pipeline for $SPRINT_ID_N stopped: the release-IC ruled NO-GO on attempt $RETRY (retry cap exceeded). Review .company/logs/sprint-lifecycle.log and the release test/verify logs under .company/releases/, fix the blockers, then re-run the release pipeline."
         ss_set_release_field publish_status failed
         ss_set_stage vp-review
         RELEASE_BLOCKED=1
