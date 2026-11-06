@@ -1020,10 +1020,13 @@ def main() -> int:
         print("Error: no prompt provided (stdin is empty)", file=sys.stderr)
         return 1
 
-    # Set up signal handlers for clean shutdown
+    # Set up signal handlers for clean shutdown.
+    # E3: exit with the conventional signal code (128+N), NOT 0 — a spawn
+    # killed by `hive stop` (group TERM, company-stop.sh) must reach
+    # agent-spawn.sh's log as "killed", not as a completed run.
     def handle_signal(signum, frame):
         print(f"\n[agent-harness] Received signal {signum}, shutting down...", file=sys.stderr)
-        sys.exit(0)
+        sys.exit(128 + signum)
 
     signal.signal(signal.SIGTERM, handle_signal)
     signal.signal(signal.SIGINT, handle_signal)

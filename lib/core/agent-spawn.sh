@@ -86,17 +86,57 @@ cat > "$ACTIVE_FILE" <<META
 }
 META
 
-# Cleanup on exit
+# Cleanup on exit.
+# E3: the log must say HOW the spawn ended. In the 0.10.0 field run
+# vp-it was SIGTERMed mid-turn by `hive stop` and still landed in
+# cycles.jsonl as "done" — indistinguishable from a completed run in the
+# log the dashboard and every post-mortem read. Clean exit -> "done",
+# non-zero harness exit -> "failed", death by signal -> "killed" with
+# the signal name. (SIGKILL cannot be trapped: a -9'd spawn leaves its
+# active/<id>.json behind, which is orphan-recovery's business.)
+CLEANUP_RAN=0
+SIGNAL_EXIT=""
 cleanup() {
+  # MUST be the first statement: any command before it (including the
+  # guard test below) would clobber $? — and this once logged every
+  # clean run as "failed" (the guard's [ 0 = 1 ] test leaves $? = 1).
+  local rc=$?
+  [ "$CLEANUP_RAN" = 1 ] && return 0
+  CLEANUP_RAN=1
+  local exit_code status signame=""
+  if [ -n "$SIGNAL_EXIT" ]; then
+    exit_code=$((128 + SIGNAL_EXIT))
+    status="killed"
+    signame=$(kill -l "$SIGNAL_EXIT" 2>/dev/null || echo "?")
+  else
+    exit_code=$rc
+    if [ "$exit_code" -gt 128 ]; then
+      status="killed"
+      signame=$(kill -l $((exit_code - 128)) 2>/dev/null || echo "?")
+    elif [ "$exit_code" -ne 0 ]; then
+      status="failed"
+    else
+      status="done"
+    fi
+  fi
   rm -f "$ACTIVE_FILE"
-  # Append cycle summary
-  if [ -f "$STREAM_FILE" ] && [ -s "$STREAM_FILE" ]; then
-    local last_line
-    last_line=$(tail -1 "$STREAM_FILE")
-    echo "{\"spawn_id\": \"$SPAWN_ID\", \"agent\": \"$HIVE_AGENT\", \"status\": \"done\", \"timestamp\": \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}" >> "$COMPANY_DIR/logs/cycles.jsonl"
+  local sigfield=""
+  [ -n "$signame" ] && sigfield=", \"signal\": \"$signame\""
+  # killed/failed are always logged (even with an empty stream); "done"
+  # only when the run actually produced events (pre-E3 semantics).
+  if [ "$status" != "done" ] || { [ -f "$STREAM_FILE" ] && [ -s "$STREAM_FILE" ]; }; then
+    echo "{\"spawn_id\": \"$SPAWN_ID\", \"agent\": \"$HIVE_AGENT\", \"status\": \"$status\", \"exit_code\": $exit_code$sigfield, \"timestamp\": \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}" >> "$COMPANY_DIR/logs/cycles.jsonl"
   fi
 }
+on_signal() {
+  SIGNAL_EXIT="$1"
+  trap '' TERM INT
+  cleanup
+  exit $((128 + $1))
+}
 trap cleanup EXIT
+trap 'on_signal 15' TERM
+trap 'on_signal 2' INT
 
 # Parse arguments
 NO_MCP=0
