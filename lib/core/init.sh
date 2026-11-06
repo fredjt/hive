@@ -27,6 +27,32 @@ fi
 PROJECT_ROOT="$(cd "$1" && pwd)"
 shift
 
+# Item 5: a hive company must be the TOP LEVEL of its own git repo.
+# Initializing inside a subdirectory of another repo (the 2026-11-06
+# field run: ~/hive/help inside ~/hive) makes every git operation act
+# on the OUTER repo - worktrees branch off the outer main. Refuse
+# unless the operator explicitly accepts the risk.
+if git -C "$PROJECT_ROOT" rev-parse --git-dir >/dev/null 2>&1; then
+  _NESTED_TOP=$(git -C "$PROJECT_ROOT" rev-parse --show-toplevel 2>/dev/null || echo "")
+  if [ -n "$_NESTED_TOP" ] && [ "$_NESTED_TOP" != "$PROJECT_ROOT" ]; then
+    if [ "${HIVE_ALLOW_NESTED_REPO:-0}" != "1" ]; then
+      {
+        echo "Error: $PROJECT_ROOT is inside another git repository:" >&2
+        echo "  repo top: $_NESTED_TOP" >&2
+        echo "" >&2
+        echo "A hive company must be the top level of its own git repo -" >&2
+        echo "inside a nested repo, worktrees branch off the OUTER repo's" >&2
+        echo " main and git operations operate on the outer project." >&2
+        echo "" >&2
+        echo "Initialize the company in its own directory/repo, or deliberately" >&2
+        echo "accept the risk with: HIVE_ALLOW_NESTED_REPO=1 hive init ..." >&2
+      } >&2
+      exit 1
+    fi
+    echo "WARNING: $PROJECT_ROOT is nested in git repo $_NESTED_TOP (HIVE_ALLOW_NESTED_REPO=1 - proceeding)" >&2
+  fi
+fi
+
 BRIEF=""
 BRIEF_FILE=""
 AUTO=false

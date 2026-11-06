@@ -230,6 +230,13 @@ def _add_gh(sub) -> None:
     po.add_argument("branch"); po.add_argument("ticket")
     pm = pr_sp.add_parser("merge",  help="Merge an open PR (verification IC GO path)")
     pm.add_argument("branch"); pm.add_argument("--method", default="merge", choices=["merge","squash","rebase"])
+    # Item 5: per-company push/PR opt-in (the field run's company was
+    # never asked to touch a remote).
+    pu = sp.add_parser("push", help="Per-company push/PR opt-in")
+    pu_sp = pu.add_subparsers(dest="push_action", required=True)
+    pu_sp.add_parser("enable", help="Allow this company to push branches and open/merge PRs")
+    pu_sp.add_parser("disable", help="Disable pushes/PRs for this company")
+
     # No `reject`: PR close is a scripted side-effect of rejecting the
     # ticket (ticket-move ... done rejected -> gh-pr-close.sh). The old
     # gh-pr-reject.sh is a deprecation shim.

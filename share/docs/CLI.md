@@ -19,6 +19,14 @@ and brief, initializes chat channels and meeting schedule.
 sprint-lifecycle, roster-rebuild, status-rebuild, verification-gates,
 verification-runner, worktree-merger, dashboard. PIDs recorded in
 `.company/processes.json`.
+Repo containment: a hive company must be the top level of its own git
+repo. `hive init` and `hive start` refuse to operate in a directory
+nested inside another repository (worktrees would branch off the
+outer repo and git operations would act on the outer project) - set
+`HIVE_ALLOW_NESTED_REPO=1` to override deliberately. `hive start`
+also refuses a `.company/` without the init artifacts (a missing
+`manifest.json` means the directory was never initialized).
+
 
 `hive status` reads the derived `status.json` files and prints per-department
 health, ticket counts, velocity, and stuck-ticket count.
@@ -134,7 +142,10 @@ hive llm test                    # one-shot round trip through the configured en
 
 ```
 hive gh status                   # gh CLI / auth / remote / default branch
-hive gh pr <create|list|view>    # PR operations through the gh CLI
+hive gh pr open <branch> <ticket>   # open a PR for a branch
+hive gh pr merge <branch> [--method merge|squash|rebase]  # merge an open PR
+hive gh push enable               # per-company opt-in: allow pushes / PRs / GitHub releases
+hive gh push disable              # revoke the opt-in (pushes become soft no-ops)
 ```
 
 ## Releases

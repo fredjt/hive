@@ -27,6 +27,9 @@ def test_init_names_the_org_chart_directly(tmp_path):
     directly after init (no rebuild cycle needed)."""
     proj = tmp_path / "proj"
     proj.mkdir()
+    # Item 5: init guard - a company is its own git repo (the tmp dir
+    # sits inside the sandbox checkout).
+    subprocess.run(["git", "init", "-q"], cwd=str(proj), check=True)
     r = subprocess.run(
         ["bash", str(INIT), str(proj), "--brief", "test", "--name", "foo",
          "--github", "skip"],

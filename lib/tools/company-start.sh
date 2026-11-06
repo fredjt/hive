@@ -29,6 +29,30 @@ if [ ! -d "$COMPANY_DIR" ]; then
   exit 1
 fi
 
+# Item 5: a company must be the top level of its own git repo (see
+# lib/core/init.sh) - starting one nested in another project would make
+# every git operation act on the outer repo.
+if [ "${HIVE_ALLOW_NESTED_REPO:-0}" != "1" ] \
+   && git -C "$PROJECT_ROOT" rev-parse --git-dir >/dev/null 2>&1; then
+  _NESTED_TOP=$(git -C "$PROJECT_ROOT" rev-parse --show-toplevel 2>/dev/null || echo "")
+  if [ -n "$_NESTED_TOP" ] && [ "$_NESTED_TOP" != "$PROJECT_ROOT" ]; then
+    echo "Error: $PROJECT_ROOT is inside another git repository ($_NESTED_TOP)." >&2
+    echo "A hive company must be the top level of its own git repo - refusing to start." >&2
+    echo "Set HIVE_ALLOW_NESTED_REPO=1 to override." >&2
+    exit 1
+  fi
+fi
+
+# Item 5: a .company without the init artifacts (manifest.json) is a
+# hand-scraped or half-restored directory, not a real company - starting
+# it manufactures empty rounds (the 2026-11-06 field run). Refuse with a
+# concrete fix. (brief.md is optional - init without --brief is valid.)
+if [ ! -f "$COMPANY_DIR/manifest.json" ]; then
+  echo "Error: $COMPANY_DIR has no manifest.json - it was not created by 'hive init'." >&2
+  echo "Run: hive init $PROJECT_ROOT --brief \"Project description\"" >&2
+  exit 1
+fi
+
 # A2: 'hive start' is the explicit operator action that re-arms the runner
 # after an LLM-outage halt - clear the halt marker (and the stale outage
 # counter; a successful planning spawn clears it anyway).

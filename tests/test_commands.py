@@ -78,6 +78,9 @@ class TestInitPreflight:
     def _run_init(self, tmp_path, home, name):
         project = tmp_path / name
         project.mkdir()
+        # Item 5: init guard - a real company is its own git repo
+        # (the scratch tmp dir sits inside the sandbox checkout).
+        subprocess.run(["git", "init", "-q"], cwd=str(project), check=True)
         return subprocess.run(
             [sys.executable, "-m", "hive_cli.main", "init", str(project),
              "--brief", "preflight test project", "--github", "skip"],
@@ -104,6 +107,7 @@ class TestInitPreflight:
         home.mkdir()
         project = tmp_path / "proj-configured"
         project.mkdir()
+        subprocess.run(["git", "init", "-q"], cwd=str(project), check=True)
         env = self._clean_env(home)
         env["HIVE_PROVIDER"] = "openai"
         env["HIVE_API_BASE"] = "https://api.openai.com/v1"

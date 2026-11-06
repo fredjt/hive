@@ -1341,6 +1341,10 @@ class TestCompanyHealthRestartPolicy:
         proj = tmp_path / "proj"
         company = proj / ".company"
         (company / "logs").mkdir(parents=True)
+        # Item 5: start guards - the project is its own git repo root
+        # and .company carries the init artifacts.
+        subprocess.run(["git", "init", "-q"], cwd=str(proj), check=True)
+        (company / "manifest.json").write_text('{"project_name": "test"}')
         dead_pid = self._dead_pid()
         # status-rebuild exits immediately without a departments/ dir, so
         # every supervised restart is a fresh failure — a perfect stand-in
@@ -1504,6 +1508,10 @@ class TestCompanyStopReapsSupervisor:
         proj = tmp_path / "proj"
         company = proj / ".company"
         (company / "logs").mkdir(parents=True)
+        # Item 5: start guards - the project is its own git repo root
+        # and .company carries the init artifacts.
+        subprocess.run(["git", "init", "-q"], cwd=str(proj), check=True)
+        (company / "manifest.json").write_text('{"project_name": "test"}')
         # Mirror company-start.sh's supervisor spawn (1s cadence so the
         # wrapper visibly loops during the test window).
         launcher = tmp_path / "launcher.sh"
@@ -1678,6 +1686,10 @@ class TestCompanyStartNoJsonTraceback:
         proj = tmp_path / "proj"
         company = proj / ".company"
         (company / "logs").mkdir(parents=True)
+        # Item 5: start guards - the project is its own git repo root
+        # and .company carries the init artifacts.
+        subprocess.run(["git", "init", "-q"], cwd=str(proj), check=True)
+        (company / "manifest.json").write_text('{"project_name": "test"}')
         (company / "departments" / "it").mkdir(parents=True)
 
         try:
@@ -1731,6 +1743,10 @@ class TestCompanyStartNoJsonTraceback:
         proj = tmp_path / "proj"
         company = proj / ".company"
         (company / "logs").mkdir(parents=True)
+        # Item 5: start guards - the project is its own git repo root
+        # and .company carries the init artifacts.
+        subprocess.run(["git", "init", "-q"], cwd=str(proj), check=True)
+        (company / "manifest.json").write_text('{"project_name": "test"}')
         (company / "departments" / "it").mkdir(parents=True)
         (company / "departments" / "rogue-dept").mkdir()
         (company / "roster.json").write_text("")
@@ -1908,6 +1924,10 @@ class TestCompanyStartLiveness:
         proj = tmp_path / "proj"
         (proj / ".company" / "logs").mkdir(parents=True)
         (proj / ".company" / "departments" / "it").mkdir(parents=True)
+        # Item 5: start guards - own git repo root + init artifacts.
+        subprocess.run(["git", "init", "-q"], cwd=str(proj), check=True)
+        (proj / ".company" / "manifest.json").write_text(
+            '{"project_name": "test"}')
         return proj
 
     def test_dying_daemon_fails_start_naming_role(self, tmp_path):
