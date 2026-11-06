@@ -66,6 +66,69 @@ PARSER_CASES = [
      [("bash", "ls", None), ("mcp", "ping", {})]),
 ]
 
+# Item 1: the STANDARD language-tagged fence (```bash\n<cmd>\n```) —
+# the form the models emit by default, which the field run (2026-11-06)
+# proved the parser dropped: the CEO and four other agents' first turns
+# all sat in exactly this shape and parsed to zero actions.
+STANDARD_CASES = [
+    ("```bash\necho hello\n```",
+     [("bash", BASH_CMD, None)]),
+    ("```bash\necho hello```",                    # no trailing newline
+     [("bash", BASH_CMD, None)]),
+    ("```bash   \necho hello\n```",               # trailing spaces on the tag
+     [("bash", BASH_CMD, None)]),
+    ("```bash\ncat > /tmp/f << 'EOF'\nline1\nline2\nEOF\n```",
+     [("bash", "cat > /tmp/f << 'EOF'\nline1\nline2\nEOF", None)]),
+    ("```mcp\nticket_create(dept=\"it\", type=\"bug\", priority=\"high\")\n```",
+     [("mcp", "ticket_create", MCP_ARGS)]),
+    ("```mcp\nping()\n```",
+     [("mcp", "ping", {})]),
+    # Prose around a standard fence (the field-run turns' shape).
+    ("I'll look at the config.\n\n```bash\ncat /path/to/file.txt\n```\n\nDone.",
+     [("bash", "cat /path/to/file.txt", None)]),
+    # A standard fence that repeats the keyword on its first line must
+    # not hand the shell a literal 'bash:' token.
+    ("```bash\nbash: echo hello\n```",
+     [("bash", BASH_CMD, None)]),
+    # The standard form mixed with the legacy forms in one turn.
+    ("```bash\nls -la\n```\nand\n```bash: pwd```\nand\n```\nmcp: ping()\n```",
+     [("bash", "ls -la", None), ("bash", "pwd", None), ("mcp", "ping", {})]),
+]
+
+
+@pytest.mark.parametrize("text, expected", STANDARD_CASES,
+                         ids=[f"std-{i}" for i in range(len(STANDARD_CASES))])
+def test_parse_actions_standard_fence(text, expected):
+    """Item 1: the standard ```bash/```mcp fence — the form the models
+    naturally emit — parses to the right action, exactly like the legacy
+    forms."""
+    actions = HARNESS.parse_actions(text)
+    got = [(a["type"], a.get("command") or a.get("name")) for a in actions]
+    want = [(t, n) for t, n, _ in expected]
+    assert got == want, f"{text!r} -> {actions}"
+    for a, (t, n, args) in zip(actions, expected):
+        if t == "mcp":
+            assert a["args"] == args, f"{text!r} -> {a}"
+        else:
+            assert a["command"] == n, f"{text!r} -> {a}"
+
+
+def test_standard_fence_is_not_double_parsed():
+    """The three fence regexes are disjoint (they key off what follows
+    the opening ```): a single standard block yields exactly one action,
+    and a fence-line block never matches the standard regex."""
+    assert len(HARNESS.parse_actions("```bash\nls\n```")) == 1
+    assert len(HARNESS.parse_actions("```bash: ls```")) == 1
+    assert len(HARNESS.parse_actions("```\nbash: ls\n```")) == 1
+
+
+def test_standard_python_fence_is_not_an_action():
+    """Only bash/mcp-tagged standard fences are actions — a ```python
+    code sample in prose is not one."""
+    text = "Example:\n```python\nprint('hello')\n```\n"
+    assert HARNESS.parse_actions(text) == []
+
+
 
 @pytest.mark.parametrize("text, expected", PARSER_CASES,
                          ids=[f"case-{i}" for i in range(len(PARSER_CASES))])
@@ -106,43 +169,61 @@ def test_no_mcp_disables_both_mcp_forms():
 
 
 def test_system_prompt_examples_parse():
-    """C1 guard: every block example in SYSTEM_PROMPT must parse to the
-    action the prompt documents. The drift this release fixes was exactly
+    """C1 + item 1 guard: every block example in SYSTEM_PROMPT must parse
+    to the action the prompt documents. The drift this fixes was exactly
     an unparsed prompt example — an edit that teaches a form the parser
-    does not accept must fail here, not in a live company."""
+    does not accept must fail here, not in a live company. The prompt
+    documents the standard ```bash/```mcp fence FIRST (item 1: the form
+    the models emit by default, dropped by the 0.9.0 parser), then the
+    two legacy spellings: 5 bash examples + 3 mcp examples = 8."""
     acts = HARNESS.parse_actions(HARNESS.SYSTEM_PROMPT)
     bash_cmds = [a["command"] for a in acts if a["type"] == "bash"]
     mcp_acts = [a for a in acts if a["type"] == "mcp"]
 
-    # The shell example is shown in BOTH forms — both must parse.
-    assert bash_cmds.count("cat /path/to/file.txt") == 2, (
-        f"the shell example does not parse in both forms: {bash_cmds}"
+    # The shell example is shown in ALL THREE forms — all must parse.
+    assert bash_cmds.count("cat /path/to/file.txt") == 3, (
+        f"the shell example does not parse in all three forms: {bash_cmds}"
     )
-    # The mcp example is shown in BOTH forms — both must parse with the
-    # documented args.
-    assert len(mcp_acts) == 2, (
-        f"the mcp example does not parse in both forms: {acts}"
+    # The mcp example is shown in ALL THREE forms — all must parse with
+    # the documented args.
+    assert len(mcp_acts) == 3, (
+        f"the mcp example does not parse in all three forms: {acts}"
     )
     for a in mcp_acts:
         assert a["name"] == "ticket_create", f"{acts}"
         assert a["args"].get("dept") == "backend", f"{a['args']}"
-    # The documented file-write heredoc parses to the full multi-line
-    # command (the form agents copy for writes).
+    # The file-read and file-write examples are standard fences.
+    assert "cat /path/to/file" in bash_cmds, f"{bash_cmds}"
     assert any(c.startswith("cat > /path/to/file << 'HEREDOC'") and
                "HEREDOC" in c for c in bash_cmds), f"{bash_cmds}"
     # No example may silently vanish: every documented fence block
-    # carries an action (6 examples: 4 bash, 2 mcp).
-    assert len(acts) == 6, f"expected 6 parseable examples, got {len(acts)}: {acts}"
+    # carries an action (8 examples: 5 bash, 3 mcp).
+    assert len(acts) == 8, f"expected 8 parseable examples, got {len(acts)}: {acts}"
 
 
-def test_prompt_lists_fence_line_form_first():
-    """C1: SYSTEM_PROMPT presents the fence-line form FIRST (the preferred
-    form) for both bash: and mcp: — the parser accepts both, but the
-    prompt's ordering steers the model to the one it has always handled."""
+def test_prompt_lists_standard_form_first():
+    """Item 1: SYSTEM_PROMPT presents the STANDARD fence first (the
+    preferred form — the one the models emit by default and the 0.9.0
+    parser dropped) for both bash and mcp, before the legacy
+    keyword-glued and bare-fence spellings."""
     p = HARNESS.SYSTEM_PROMPT
+    bash_std = p.index("\n```bash\ncat /path/to/file.txt\n```")
     bash_line = p.index("```bash: cat /path/to/file.txt```")
     bash_bare = p.index("\n```\nbash: cat /path/to/file.txt\n```")
-    assert bash_line < bash_bare, "bash: fence-line form must come first"
-    mcp_line = p.index("```mcp: ticket_create(")
-    mcp_bare = p.index("\n```\nmcp: ticket_create(")
-    assert mcp_line < mcp_bare, "mcp: fence-line form must come first"
+    assert bash_std < bash_line < bash_bare, \
+        "bash: standard form must come first, then the legacy forms"
+    mcp_call = "ticket_create(dept=\"backend\""
+    mcp_std = p.index("\n```mcp\n" + mcp_call)
+    mcp_line = p.index("```mcp: " + mcp_call)
+    mcp_bare = p.index("\n```\nmcp: " + mcp_call)
+    assert mcp_std < mcp_line < mcp_bare, \
+        "mcp: standard form must come first, then the legacy forms"
+
+
+def test_parse_correction_shows_standard_form_first():
+    """Item 1: the correction fed back on an unparseable turn must teach
+    the standard fence first — the model is most likely to retry in the
+    shape it already reached for."""
+    p = HARNESS.PARSE_CORRECTION
+    assert p.index("```bash\n<your command>\n```") < p.index("```bash: <cmd>```"), \
+        "standard form must be listed first in the correction"

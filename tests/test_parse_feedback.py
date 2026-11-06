@@ -67,6 +67,11 @@ BROKEN_WRAPPER = (
     # a bash:/mcp: line inside an UNCLOSED fence (odd fence count).
     ("Running it:\n```\nbash: ls", True),
     ("```\nmcp: ticket_list()", True),
+    # an UNCLOSED standard fence (item 1's form: the ```bash/```mcp
+    # language tag after the last marker) — the field run's dropped
+    # turns used exactly this shape, malformed.
+    ("Running it:\n```bash\ncat /etc/hosts", True),
+    ("```mcp\nticket_list(dept=\"hr\")", True),
     # plain prose — genuinely no command intent — must NOT match.
     ("All done with the analysis. No further action needed.", False),
     ("I reviewed the code and found nothing wrong.", False),

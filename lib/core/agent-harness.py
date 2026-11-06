@@ -539,12 +539,16 @@ in your prompt.
 ## Capabilities
 
 ### Shell Commands
-You can execute shell commands by wrapping them in bash blocks. Two forms
-are accepted — use the first:
+You can execute shell commands by wrapping them in bash blocks. Use the
+standard fenced form — a ```bash fence, the command, then the closing fence:
+
+```bash
+cat /path/to/file.txt
+```
+
+Two alternate spellings are also accepted (prefer the standard form):
 
 ```bash: cat /path/to/file.txt```
-
-or a bare fence with bash: on the next line:
 
 ```
 bash: cat /path/to/file.txt
@@ -556,26 +560,38 @@ Safety rules:
 - Some dangerous commands are blocked (rm -rf, chmod 777, sudo, etc.)
 
 ### MCP Tools
-You can call hive MCP tools by wrapping them in mcp blocks. Two forms are
-accepted — use the first:
+You can call hive MCP tools by wrapping them in mcp blocks. Use the
+standard fenced form:
+
+```mcp
+ticket_create(dept="backend", type="feature", priority="high", title="Add API endpoint", description="...")
+```
+
+The same two alternate spellings are accepted for mcp blocks as for bash:
 
 ```mcp: ticket_create(dept="backend", type="feature", priority="high", title="Add API endpoint", description="...")```
-
-or a bare fence with mcp: on the next line:
 
 ```
 mcp: ticket_create(dept="backend", type="feature", priority="high", title="Add API endpoint", description="...")
 ```
 
 Available tools depend on what's configured. Check the MCP tool list if unsure.
+Tool names are PLAIN (ticket_create, ticket_get, ...) — never mcp__-prefixed.
 
 ### File Operations
-For file reads, use: ```bash: cat /path/to/file```
+For file reads, use:
+
+```bash
+cat /path/to/file
+```
+
 For file writes outside .company/, use:
 
-```bash: cat > /path/to/file << 'HEREDOC'
+```bash
+cat > /path/to/file << 'HEREDOC'
 content
-HEREDOC```
+HEREDOC
+```
 
 ## Rules
 - Be concise and focused on your assignment.
@@ -760,41 +776,58 @@ def run_agent(
     }
 
 
+def _strip_keyword_line(cmd: str) -> str:
+    """A standard fence whose first line repeats the keyword
+    ('````bash` fence, then a 'bash:' line) must not hand the shell a
+    literal 'bash:' token — drop the repeated keyword."""
+    m = re.match(r'^(?:bash|mcp):\s*(.*)$', cmd, re.DOTALL)
+    return (m.group(1).strip() if m else cmd)
+
+
 def parse_actions(text: str, no_mcp: bool = False,
                   mcp_url: str | None = None, cwd: str | None = None,
                   company_dir: str | None = None) -> list[dict]:
-    """Parse bash: and mcp: action blocks from agent output.
+    """Parse bash and mcp action blocks from agent output.
 
     Returns a list of action dicts:
       [{"type": "bash", "command": "..."}, ...]
       [{"type": "mcp", "name": "...", "args": {...}}, ...]
 
-    C1: two block forms are accepted for bash: and mcp: (and SYSTEM_PROMPT
-    documents exactly these two — the prompt's own example used to parse
-    to zero actions):
-      fence-line form: ```bash:<cmd>```          (the keyword glued to the fence)
-      bare-fence form: ```\nbash: <cmd>\n```     (a lone fence, then a
-                                   line starting with the keyword)
+    Three block forms are accepted for bash and mcp (and SYSTEM_PROMPT
+    documents exactly these — a prompt example the parser cannot read is
+    a zero-action "success", the 2026-11-06 field-run failure):
+      standard form:   ```bash\n<cmd>\n```   the language-tagged fence the
+                          models emit by default; every dropped CEO/VP/IC turn
+                          of the field run used it
+      fence-line form: ```bash:<cmd>```       (the keyword glued to the fence)
+      bare-fence form: ```\nbash: <cmd>\n``` (a lone fence, then a line
+                                      starting with the keyword)
     """
     actions = []
 
-    # Parse bash: blocks — fence-line form (the historically supported one).
-    for match in re.finditer(r'```bash:\s*(.+?)\s*```', text, re.DOTALL):
-        cmd = match.group(1).strip()
-        if cmd:
-            actions.append({"type": "bash", "command": cmd})
-    # Parse bash: blocks — bare-fence form (the one the prompt showed).
-    for match in re.finditer(r'```\n[ \t]*bash:\s*(.*?)\s*```', text, re.DOTALL):
-        cmd = match.group(1).strip()
-        if cmd:
-            actions.append({"type": "bash", "command": cmd})
+    bash_fences = (
+        r'```bash[ \t]*\n(.*?)\n?```',     # standard form (preferred)
+        r'```bash:\s*(.+?)\s*```',          # fence-line form
+        r'```\n[ \t]*bash:\s*(.*?)\s*```',  # bare-fence form
+    )
+    for rx in bash_fences:
+        for match in re.finditer(rx, text, re.DOTALL):
+            cmd = _strip_keyword_line(match.group(1).strip())
+            if cmd:
+                actions.append({"type": "bash", "command": cmd})
 
-    # Parse mcp: blocks (only if MCP is enabled), same two forms.
+    # mcp blocks (only if MCP is enabled), the same three forms.
     if not no_mcp:
-        for match in re.finditer(r'```mcp:\s*(.+?)\s*```', text, re.DOTALL):
-            _append_mcp_action(actions, match.group(1).strip())
-        for match in re.finditer(r'```\n[ \t]*mcp:\s*(.*?)\s*```', text, re.DOTALL):
-            _append_mcp_action(actions, match.group(1).strip())
+        mcp_fences = (
+            r'```mcp[ \t]*\n(.*?)\n?```',
+            r'```mcp:\s*(.+?)\s*```',
+            r'```\n[ \t]*mcp:\s*(.*?)\s*```',
+        )
+        for rx in mcp_fences:
+            for match in re.finditer(rx, text, re.DOTALL):
+                block = _strip_keyword_line(match.group(1).strip())
+                if block:
+                    _append_mcp_action(actions, block)
 
     return actions
 
@@ -835,14 +868,14 @@ def _append_mcp_action(actions: list, mcp_block: str) -> None:
 # but parse_actions could not read it (C2). It shows the parser's own
 # accepted forms so the model can self-correct on the next turn.
 PARSE_CORRECTION = (
-    "I could not parse that command. Use exactly this form — the keyword "
-    "glued to the opening fence, nothing else in the block:\n"
-    "```bash: <your command>```\n"
+    "I could not parse that command. Use exactly this form — the standard "
+    "fenced block, nothing else in it:\n"
+    "```bash\n<your command>\n```\n"
     "or, for MCP tools:\n"
-    "```mcp: tool_name(arg=value, arg2=value2)```\n"
-    "(A bare fence with the keyword on the next line also works. Do not "
-    "wrap commands in any other markup — no tool-call tags, no function= "
-    "lines.) Retry the command now."
+    "```mcp\ntool_name(arg=value, arg2=value2)\n```\n"
+    "(The keyword-glued ```bash: <cmd>``` and bare-fence-with-keyword "
+    "spellings also work. Do not wrap commands in any other markup — no "
+    "tool-call tags, no function= lines.) Retry the command now."
 )
 
 
@@ -859,9 +892,11 @@ def _near_miss_command_intent(text: str) -> bool:
         observed in the 0.10.0 field run;
       - a 'function=' line (broken tool-call serialization, e.g.
         'function=bash(command=...)');
-      - a bash:/mcp: line inside an UNCLOSED fence — a well-formed bare
-        fence parses (C1), so only a malformed one (odd number of fence
-        markers, keyword after the last one) lands here.
+      - a bash:/mcp: keyword line inside an UNCLOSED fence, or an
+        unclosed standard fence (its ```bash/```mcp language tag after
+        the last marker) — a well-formed fence parses (C1 / item 1), so
+        only a malformed one (odd number of fence markers, keyword or
+        language tag after the last one) lands here.
     A turn with genuinely no command intent (plain prose) must NOT match:
     it ends the run as a final answer.
     """
@@ -872,6 +907,11 @@ def _near_miss_command_intent(text: str) -> bool:
     if text.count('```') % 2 == 1:
         tail = text[text.rfind('```') + 3:]
         if re.search(r'(?m)^\s*(?:bash|mcp)\s*:', tail):
+            return True
+        # Unclosed STANDARD fence: the last marker is a ```bash/```mcp
+        # language tag (item 1's form — the field run's dropped turns all
+        # used it, so its malformed variant must be fed back too).
+        if re.search(r'(?m)^\s*(?:bash|mcp)\s*$', tail):
             return True
     return False
 
