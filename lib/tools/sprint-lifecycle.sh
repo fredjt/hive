@@ -70,6 +70,7 @@ if ! flock -n 9; then
 fi
 echo $$ >&9
 
+
 # ── Helpers ─────────────────────────────────────────────────────────
 
 # Pick the first ticket from sprint-current, or the first bouncing ticket
@@ -363,6 +364,31 @@ file_release_blocker() {
 # ceo-bugfix-plan for a release bugfix cycle). The stage is the dispatch
 # contract: ticket-move.sh keys VP rejection windows off it, and startup
 # decides whether a relaunch re-plans or resumes.
+# Item 4: post-spawn verification. A planning spawn that exits 0 is NOT
+# proof a plan happened: the 2026-11-06 field run's CEO ended 0 after
+# executing ZERO actions (its one command sat in a fence the old parser
+# dropped) and the sprint ran directionless — every VP planned blind. So
+# after each planning spawn the runner reads the harness's FINAL result
+# event from the spawn log (the "type":"result" line the harness prints
+# last) and checks num_actions > 0 (plus the CEO's direction file); on
+# an unverified plan it warns and retries ONCE, and never logs
+# "completed successfully" for a plan with no observable effect.
+#
+# spawn_num_actions_since <spawn_log> <lines_before>
+#   Prints the num_actions of the LAST result event recorded AFTER line
+#   <lines_before> of the log (the log is append-mode, shared by
+#   repeated spawns, so a stale result line from an earlier spawn must
+#   not count). Empty when this spawn wrote no result event (killed, or
+#   died before the harness could report).
+spawn_num_actions_since() {
+  local spawn_log="$1" start_line="$2" line
+  [ -f "$spawn_log" ] || return 0
+  line=$(tail -n +"$((start_line + 1))" "$spawn_log" 2>/dev/null \
+         | grep -F '"type": "result"' | tail -1)
+  [ -z "$line" ] && return 0
+  printf '%s' "$line" | jq -r '.num_actions // empty' 2>/dev/null
+}
+
 run_ceo_plan() {
   log "CEO planning stage"
   ss_set_stage "${1:-ceo-plan}"
@@ -416,17 +442,47 @@ runs next automatically."
   local LOG_TO="$COMPANY_DIR/logs/ceo.log"
   mkdir -p "$(dirname "$LOG_TO")"
 
-  HIVE_AGENT="ceo" HIVE_DEPT="executive" HIVE_ROLE="CEO" HIVE_TICKET="" \
-  bash "$SKILL_DIR/lib/core/agent-spawn.sh" -- "$PROMPT" \
-    9<&- >> "$LOG_TO" 2>&1
-  local EC=$?
-  if [ $EC -eq 0 ]; then
-    log "CEO plan completed successfully"
-    llm_outage_reset
+  # Item 4: verify the plan actually happened. Verified = a result event
+  # with num_actions > 0 AND the direction file the CEO was told to
+  # write (sprint-direction-write.sh records its path in the sprint
+  # state). Neither holding means the CEO did nothing observable —
+  # warn + retry ONCE; a second unverified plan is logged loudly and
+  # the sprint proceeds without direction (the VPs plan on prior
+  # context) instead of claiming success.
+  local CEO_VERIFIED=0 attempt EC NA DIRECTION_FILE LINES_BEFORE
+  for attempt in 1 2; do
+    LINES_BEFORE=$([ -f "$LOG_TO" ] && wc -l < "$LOG_TO" || echo 0)
+    HIVE_AGENT="ceo" HIVE_DEPT="executive" HIVE_ROLE="CEO" HIVE_TICKET="" \
+    bash "$SKILL_DIR/lib/core/agent-spawn.sh" -- "$PROMPT" \
+      9<&- >> "$LOG_TO" 2>&1
+    EC=$?
+    if [ $EC -ne 0 ]; then
+      log "CEO plan failed (exit=$EC), continuing without direction"
+      llm_outage_note_failure "$LOG_TO" "${1:-ceo-plan}" "$EC"
+      return 0
+    fi
+    NA=$(spawn_num_actions_since "$LOG_TO" "$LINES_BEFORE")
+    DIRECTION_FILE=$(ss_get_field .ceo_direction_path)
+    if [ "${NA:-0}" -gt 0 ] 2>/dev/null \
+       && [ -n "$DIRECTION_FILE" ] && [ "$DIRECTION_FILE" != "null" ] \
+       && [ -f "$DIRECTION_FILE" ]; then
+      CEO_VERIFIED=1
+      break
+    fi
+    log "CEO plan UNVERIFIED (num_actions=${NA:-0}, direction file: ${DIRECTION_FILE:-missing}) — exit 0 but the plan has no observable effect"
+    if [ "$attempt" = "1" ]; then
+      log "CEO plan: retrying once"
+    fi
+  done
+  if [ "$CEO_VERIFIED" = "1" ]; then
+    log "CEO plan completed and verified (num_actions=${NA}, direction=${DIRECTION_FILE})"
   else
-    log "CEO plan failed (exit=$EC), continuing without direction"
-    llm_outage_note_failure "$LOG_TO" "${1:-ceo-plan}" "$EC"
+    log "WARNING: CEO plan not verified after retry — proceeding without a direction document; VPs will plan on prior context"
   fi
+  # The endpoint answered in both branches (a down LLM fails the spawn
+  # with llm-unavailable before any result event), so clear the outage
+  # counter either way.
+  llm_outage_reset
 }
 
 # ── VP planning ─────────────────────────────────────────────────────
@@ -486,10 +542,28 @@ After filing/refining, EXIT. Sprint-fill and ticket processing run next."
     local LOG_TO="$COMPANY_DIR/logs/vp-${dept}.log"
     mkdir -p "$(dirname "$LOG_TO")"
 
-    HIVE_AGENT="$agent" HIVE_DEPT="$dept" HIVE_ROLE="VP" HIVE_TICKET="" \
-    bash "$SKILL_DIR/lib/core/agent-spawn.sh" -- "$PROMPT" \
-      9<&- >> "$LOG_TO" 2>&1
-    local VPEC=$?
+    local VP_ATTEMPT VPNA VPLINES_BEFORE
+    for VP_ATTEMPT in 1 2; do
+      VPLINES_BEFORE=$([ -f "$LOG_TO" ] && wc -l < "$LOG_TO" || echo 0)
+      HIVE_AGENT="$agent" HIVE_DEPT="$dept" HIVE_ROLE="VP" HIVE_TICKET="" \
+      bash "$SKILL_DIR/lib/core/agent-spawn.sh" -- "$PROMPT" \
+        9<&- >> "$LOG_TO" 2>&1
+      VPEC=$?
+      if [ "$VPEC" -ne 0 ]; then
+        break
+      fi
+      # Item 4: an exit-0 VP that executed zero actions planned nothing
+      # (the field run's 4/6 VPs ended exactly that way) — warn + retry
+      # ONCE before accepting the round.
+      VPNA=$(spawn_num_actions_since "$LOG_TO" "$VPLINES_BEFORE")
+      if [ "${VPNA:-0}" -gt 0 ] 2>/dev/null; then
+        break
+      fi
+      log "  VP $dept plan UNVERIFIED (num_actions=${VPNA:-0}) — exit 0 but zero actions"
+      if [ "$VP_ATTEMPT" = "1" ]; then
+        log "  VP $dept plan: retrying once"
+      fi
+    done
     if [ "$VPEC" -ne 0 ]; then
       log "  VP $dept planning failed (exit=$VPEC)"
       llm_outage_note_failure "$LOG_TO" "${1:-vp-plan}" "$VPEC"

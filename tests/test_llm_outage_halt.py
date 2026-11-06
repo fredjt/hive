@@ -318,11 +318,13 @@ class TestLLMOutageHalt:
             assert _wait_until(
                 lambda: any(not r.get("dead") for r in _runners(company)), 60
             ), f"runner not alive after recovery start: {_runners(company)}"
-            assert _wait_until(
-                lambda: "CEO plan completed successfully" in
-                (company / "logs" / "sprint-lifecycle.log").read_text(
-                    errors="replace"), 60
-            ), "planning did not succeed after recovery"
+            def _planned():
+                log = (company / "logs" / "sprint-lifecycle.log").read_text(
+                    errors="replace")
+                return ("CEO plan completed and verified" in log) or \
+                       ("CEO plan not verified after retry" in log)
+            assert _wait_until(_planned, 60), \
+                "planning did not run after recovery"
         finally:
             _stop_company(proj, env)
             mcp_stop()

@@ -130,6 +130,23 @@ case "${STUB_MODE:-noop}" in
     esac
     ;;
 esac
+
+# Item 4: emit the harness-shaped final result event (num_actions is
+# what the lifecycle validates after planning spawns), and for the CEO
+# produce the direction file — the observable effects a real planning
+# spawn has. STUB_MODES ceo-noop / vp-noop make the CEO / VPs execute
+# ZERO actions (the field-run failure shape) so the verification path
+# can be tested.
+STUB_NA=1
+case "${STUB_MODE:-noop}" in
+  ceo-noop) [ "$HIVE_AGENT" = "ceo" ] && STUB_NA=0 ;;
+  vp-noop)  case "$HIVE_AGENT" in vp-*) STUB_NA=0 ;; esac ;;
+esac
+if [ "$HIVE_AGENT" = "ceo" ] && [ "${STUB_MODE:-noop}" != "ceo-noop" ]; then
+  printf '%s' '{"rationale":"stub direction","departments":{"backend":{"direction":"stub focus","seed_tickets":[]}}}' \
+    | bash "$SKILL_DIR/lib/tools/sprint-direction-write.sh" >> "$AGENT_SPAWN_LOG" 2>&1 || true
+fi
+echo "{\"type\": \"result\", \"is_error\": false, \"subtype\": \"final\", \"num_turns\": 1, \"num_actions\": $STUB_NA, \"result\": \"stub\"}"
 exit 0
 '''
 
@@ -1083,3 +1100,81 @@ def test_full_happy_path_forward_flow(tmp_path):
     assert "bounced by verifier" not in r.stderr, (
         "the happy path bounced - it should have gone straight through"
     )
+
+
+# ── Item 4: post-spawn verification of planning spawns ─────────────────
+# A planning spawn that exits 0 but executed zero actions (and, for the
+# CEO, wrote no direction file) is NOT a completed plan — the 2026-11-06
+# field run's CEO ended exactly that way and the sprint ran directionless.
+# The lifecycle must retry once, warn, and never log "completed
+# successfully" for an unverified plan.
+
+def _lifecycle_log(h):
+    p = h.project / ".company" / "logs" / "sprint-lifecycle.log"
+    text = p.read_text(errors="replace") if p.exists() else ""
+    # Item 6: log() writes to stdout only (the file redirect is owned by
+    # the caller); the test run captures that stdout.
+    if getattr(h, "result", None) is not None:
+        text += (h.result.stdout or "")
+    return text
+
+
+def test_ceo_noop_plan_is_retried_and_warned(tmp_path):
+    """CEO spawn exits 0, zero actions, no direction file: the lifecycle
+    retries ONCE, logs the unverified plan loudly, and proceeds without
+    direction (the VPs still plan) instead of claiming success."""
+    h = LifecycleHarness(tmp_path, mode="ceo-noop")
+    _seed_ticket(h)  # A1: a zero-work sprint idles; the run needs work to end
+    h.run(timeout=240)
+    log = _lifecycle_log(h)
+    ceo_spawns = [b for b in h.spawn_blocks() if b[0] == "ceo"]
+    assert len(ceo_spawns) == 2, \
+        f"expected an initial plan + exactly one retry, got {len(ceo_spawns)} ceo spawns"
+    assert "CEO plan UNVERIFIED" in log, log[-3000:]
+    assert "CEO plan: retrying once" in log, log[-3000:]
+    assert "CEO plan not verified after retry" in log, log[-3000:]
+    assert "completed successfully" not in log
+    # The sprint still continues: the VPs plan after the unverified round.
+    assert any(b[0].startswith("vp-") for b in h.spawn_blocks()), \
+        "VPs did not plan after the unverified CEO round"
+
+
+def test_vp_noop_plans_are_retried_and_warned(tmp_path):
+    """Every VP that exits 0 with zero actions is retried exactly once
+    (the field run's 4/6 VPs ended that way) and the round is accepted
+    with a warning, not silently."""
+    h = LifecycleHarness(tmp_path, mode="vp-noop")
+    _seed_ticket(h)  # A1: a zero-work sprint idles; the run needs work to end
+    h.run(timeout=240)
+    log = _lifecycle_log(h)
+    counts = {}
+    for agent, stage, _ in h.spawn_blocks():
+        if agent.startswith("vp-") and stage == "vp-plan":
+            counts[agent] = counts.get(agent, 0) + 1
+    assert counts, "no VP spawns recorded"
+    assert all(c == 2 for c in counts.values()), \
+        f"each unverified VP should be retried exactly once: {counts}"
+    assert "plan UNVERIFIED" in log, log[-3000:]
+    assert "retrying once" in log, log[-3000:]
+
+
+def test_verified_plans_are_not_retried(tmp_path):
+    """A verified planning round (num_actions > 0 + direction file for
+    the CEO) is accepted on the first attempt — no retry, and the
+    'verified' log line names the observable effect."""
+    h = LifecycleHarness(tmp_path, mode="noop")
+    _seed_ticket(h)  # A1: a zero-work sprint idles; the run needs work to end
+    h.run(timeout=240)
+    log = _lifecycle_log(h)
+    ceo_spawns = [b for b in h.spawn_blocks() if b[0] == "ceo"]
+    assert len(ceo_spawns) == 1, "a verified CEO plan must not be retried"
+    assert "CEO plan completed and verified" in log, log[-3000:]
+    assert "UNVERIFIED" not in log
+    # After the run the sprint is ARCHIVED (the lifecycle starts a fresh
+    # shell in ceo-plan) — assert on the archived sprint.
+    arch = h.sprint_archive
+    assert arch.exists(), "sprint was not archived"
+    state = json.loads(arch.read_text())
+    direction = state.get("ceo_direction_path")
+    assert direction and direction != "null", state
+    assert Path(direction).exists(), f"direction file missing: {direction}"
