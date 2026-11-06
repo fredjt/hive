@@ -26,10 +26,14 @@ MANIFEST="$COMPANY_DIR/manifest.json"
 
 [ -d "$COMPANY_DIR" ] || { echo "No .company at $COMPANY_DIR" >&2; exit 0; }
 
-# Get project name from manifest if available
-PROJECT_NAME="Untitled Project"
+# Get project name from manifest if available.
+# E2: the manifest WINS over the existing org-chart stamp — an init-time
+# "Untitled Project" (stamped when the org chart was rebuilt before the
+# manifest existed) must not survive forever. Without a manifest we keep
+# the existing name rather than clobbering it with the placeholder.
+PROJECT_NAME=""
 if [ -f "$MANIFEST" ]; then
-  PROJECT_NAME=$(jq -r '.project_name // "Untitled Project"' "$MANIFEST" 2>/dev/null || echo "Untitled Project")
+  PROJECT_NAME=$(jq -r '.project_name // empty' "$MANIFEST" 2>/dev/null)
 fi
 
 # Discover departments from filesystem (everything under .company/departments/).
@@ -112,9 +116,10 @@ jq -n \
   --argjson depts "$DEPTS_JSON" \
   '
   ($existing // {}) as $e |
+  ($pname | if . == "" then null else . end) as $mname |
   {
-    company_name:  ($e.company_name // ($pname + " Co.")),
-    project_name:  ($e.project_name // $pname),
+    company_name:  ($e.company_name // ((($mname // "Untitled Project")) + " Co.")),
+    project_name:  ($mname // $e.project_name // "Untitled Project"),
     departments:   $depts,
     waves:         ($e.waves // null),
     total_components:      ($e.total_components // ($depts | [.[].components // []] | add | length)),

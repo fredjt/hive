@@ -100,8 +100,11 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 COMPANY_DIR="$COMPANY_DIR" bash "$SCRIPT_DIR/roster-rebuild.sh" --quiet 2>/dev/null || \
   echo '{"agents": [], "source": "roster-rebuild.sh", "note": "DERIVED FILE. Do not edit."}' > "$COMPANY_DIR/roster.json"
 
-# Org chart is also derived - so the dashboard's Org tab has data immediately
-COMPANY_DIR="$COMPANY_DIR" bash "$SCRIPT_DIR/org-chart-rebuild.sh" --quiet 2>/dev/null || true
+# Org chart is derived too — but E2: it must be rebuilt AFTER the manifest
+# exists, or the compose stamps "Untitled Project" (and a manifest-less
+# rebuild must not clobber a real name). init.sh rebuilds it right after
+# init-manifest.sh; a stand-alone init-workspace run leaves any existing
+# org-chart.json in place (the lifecycle/dashboard rebuild it on demand).
 
 echo "Workspace created successfully at $COMPANY_DIR" >&2
 exit 0

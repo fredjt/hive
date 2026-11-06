@@ -64,6 +64,12 @@ bash "$TOOLS/init-workspace.sh" "$PROJECT_ROOT"
 # 2. Manifest
 bash "$TOOLS/init-manifest.sh" "$NAME" "$AUTO" --mode build >/dev/null
 
+# 2b. Org chart — derived from the filesystem + the manifest. Runs AFTER
+# the manifest (E2): the manifest's project_name wins, and rebuilding
+# before the manifest existed is what stamped "Untitled Project" onto
+# every company for the lifetime of the run.
+bash "$TOOLS/org-chart-rebuild.sh" --quiet 2>/dev/null || true
+
 # 3. Brief
 if [ -n "$BRIEF" ]; then
   bash "$TOOLS/init-brief.sh" "$BRIEF"
