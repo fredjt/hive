@@ -1235,3 +1235,26 @@ def test_engineer_without_commit_bounces_not_in_review(tmp_path):
         "ticket must not reach in-review without a commit")
     assert h.ticket_at("backlog") is not None, (
         "the bounce cap must defer the ticket to backlog")
+
+
+def test_round_files_are_emitted(tmp_path):
+    """Item 13: the dashboard round panel reads rounds/current-round.json
+    and rounds/history/; nothing wrote those files since the round-runner
+    was retired, so the panel showed all zeros for a live company. The
+    lifecycle must emit round data: an entry per agent spawn, and the
+    round archived with the sprint."""
+    h = LifecycleHarness(tmp_path, mode="noop")
+    _seed_ticket(h)
+    r = h.run(timeout=240)
+    assert r.returncode == 0, r.stderr
+    hist = h.project / ".company" / "rounds" / "history"
+    files = list(hist.glob("*.json"))
+    assert files, "no archived round file in rounds/history/"
+    d = json.loads(files[-1].read_text())
+    assert d["source"] == "sprint-lifecycle"
+    assert d.get("started_at") and d.get("ended_at")
+    kinds = {e["kind"] for e in d["entries"]}
+    assert "plan-ceo" in kinds, sorted(kinds)
+    assert "tdd-green" in kinds, sorted(kinds)
+    running = [e for e in d["entries"] if e["status"] == "running"]
+    assert not running, [e["id"] for e in running]

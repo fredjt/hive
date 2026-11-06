@@ -99,6 +99,38 @@ runner_heartbeat() {
 }
 runner_heartbeat
 
+ROUND_FILE="$COMPANY_DIR/rounds/current-round.json"
+# Item 13: the dashboard's round panel reads rounds/current-round.json +
+# history/; nothing wrote those since the round-runner was retired. The
+# lifecycle now emits one entry per agent spawn and archives the round
+# with the sprint.
+round_ensure(){
+  mkdir -p "$(dirname "$ROUND_FILE")"
+  [ -f "$ROUND_FILE" ] || jq -n --arg id "round-$(jq -r '.sprint_id // "unknown"' "$COMPANY_DIR/sprints/current.json" 2>/dev/null)" --arg now "$(ts)" \
+    '{round_id:$id, source:"sprint-lifecycle", started_at:$now, ended_at:null, cursor:0, entries:[]}' > "$ROUND_FILE" 2>/dev/null || true
+}
+round_entry(){ # kind agent dept role ticket status
+  round_ensure
+  [ -f "$ROUND_FILE" ] || return 0
+  jq --arg k "$1" --arg a "$2" --arg d "$3" --arg r "$4" --arg t "$5" --arg st "$6" --arg now "$(ts)" '
+    if $st == "running" then
+      .entries += [{id:($k + "-" + (if $t != "" then $t else $a end) + "-" + ((.entries|length)+1 | tostring)),
+        agent:$a, dept:$d, role:$r, kind:$k,
+        ticket:(if $t != "" then $t else null end), log_to:"", queued_by:"sprint-lifecycle",
+        queued_at:$now, status:"running", started_at:$now, ended_at:null,
+        spawn_id:null, exit_code:null, duration_s:null, skip_reason:null}]
+    else
+      ([.entries|to_entries[]|select(.value.kind==$k and ((.value.ticket//"")==$t) and (.value.status=="running"))]|last|(if . then .key else -1 end)) as $i
+      | if $i < 0 then . else .entries[$i] |= (.status=$st | .ended_at=$now) end
+    end' "$ROUND_FILE" > "${ROUND_FILE}.tmp.$$" 2>/dev/null \
+    && mv "${ROUND_FILE}.tmp.$$" "$ROUND_FILE" || true
+}
+round_archive(){
+  [ -f "$ROUND_FILE" ] || return 0
+  jq '.ended_at = "'"$(ts)"'"' "$ROUND_FILE" > "${ROUND_FILE}.tmp.$$" 2>/dev/null && mv "${ROUND_FILE}.tmp.$$" "$ROUND_FILE" || true
+  mkdir -p "$COMPANY_DIR/rounds/history"
+  mv "$ROUND_FILE" "$COMPANY_DIR/rounds/history/$(basename "$ROUND_FILE")" 2>/dev/null || true
+}
 # ── Helpers ─────────────────────────────────────────────────────────
 
 # Pick the first ticket from sprint-current, or the first bouncing ticket
@@ -481,10 +513,12 @@ runs next automatically."
   local CEO_VERIFIED=0 attempt EC NA DIRECTION_FILE LINES_BEFORE
   for attempt in 1 2; do
     LINES_BEFORE=$([ -f "$LOG_TO" ] && wc -l < "$LOG_TO" || echo 0)
+    round_entry "plan-ceo" "ceo" "executive" "CEO" "" "running" 2>/dev/null || true
     HIVE_AGENT="ceo" HIVE_DEPT="executive" HIVE_ROLE="CEO" HIVE_TICKET="" \
     bash "$SKILL_DIR/lib/core/agent-spawn.sh" -- "$PROMPT" \
       9<&- >> "$LOG_TO" 2>&1
     EC=$?
+    round_entry "plan-ceo" "ceo" "executive" "CEO" "" "$([ "EC" -eq 0 ] && echo done || echo failed)" 2>/dev/null || true
     if [ $EC -ne 0 ]; then
       log "CEO plan failed (exit=$EC), continuing without direction"
       llm_outage_note_failure "$LOG_TO" "${1:-ceo-plan}" "$EC"
@@ -574,10 +608,12 @@ After filing/refining, EXIT. Sprint-fill and ticket processing run next."
     local VP_ATTEMPT VPNA VPLINES_BEFORE
     for VP_ATTEMPT in 1 2; do
       VPLINES_BEFORE=$([ -f "$LOG_TO" ] && wc -l < "$LOG_TO" || echo 0)
+      round_entry "plan-vp" "$agent" "$dept" "VP" "" "running" 2>/dev/null || true
       HIVE_AGENT="$agent" HIVE_DEPT="$dept" HIVE_ROLE="VP" HIVE_TICKET="" \
       bash "$SKILL_DIR/lib/core/agent-spawn.sh" -- "$PROMPT" \
         9<&- >> "$LOG_TO" 2>&1
       VPEC=$?
+      round_entry "plan-vp" "$agent" "$dept" "VP" "" "$([ "VPEC" -eq 0 ] && echo done || echo failed)" 2>/dev/null || true
       if [ "$VPEC" -ne 0 ]; then
         break
       fi
@@ -732,10 +768,12 @@ After committing the failing test, EXIT. The engineer will run next.$FRESH_HINT"
     LOG_TO="$COMPANY_DIR/logs/ic-${ticket}.log"
     mkdir -p "$(dirname "$LOG_TO")"
 
+    round_entry "tdd-red" "ic-tester" "$dept" "IC-Tester" "$ticket" "running" 2>/dev/null || true
     HIVE_AGENT="ic-tester" HIVE_DEPT="$dept" HIVE_ROLE="IC-Tester" HIVE_TICKET="$ticket" \
     bash "$SKILL_DIR/lib/core/agent-spawn.sh" -- "$PROMPT" \
       9<&- >> "$LOG_TO" 2>&1
     EC=$?
+    round_entry "tdd-red" "ic-tester" "$dept" "IC-Tester" "$ticket" "$([ "EC" -eq 0 ] && echo done || echo failed)" 2>/dev/null || true
 
     if [ $EC -ne 0 ]; then
       TESTER_ITER=$((TESTER_ITER + 1))
@@ -887,10 +925,12 @@ After exit 0, this script will:
   LOG_TO="$COMPANY_DIR/logs/ic-${ticket}.log"
   mkdir -p "$(dirname "$LOG_TO")"
 
+  round_entry "tdd-green" "$AGENT" "$dept" "IC" "$ticket" "running" 2>/dev/null || true
   HIVE_AGENT="$AGENT" HIVE_DEPT="$dept" HIVE_ROLE="IC" HIVE_TICKET="$ticket" \
   bash "$SKILL_DIR/lib/core/agent-spawn.sh" -- "$PROMPT" \
     9<&- >> "$LOG_TO" 2>&1
   EC=$?
+  round_entry "tdd-green" "$AGENT" "$dept" "IC" "$ticket" "$([ "EC" -eq 0 ] && echo done || echo failed)" 2>/dev/null || true
 
   if [ $EC -ne 0 ]; then
     log "$log_prefix: engineer failed (exit=$EC), bouncing to in-progress"
@@ -1047,10 +1087,12 @@ After approve or bounce, EXIT. This script handles the status move."
   LOG_TO="$COMPANY_DIR/logs/verification-${dept}.log"
   mkdir -p "$(dirname "$LOG_TO")"
 
+  round_entry "verify" "$VERIF_AGENT" "$dept" "Verification-IC" "$ticket" "running" 2>/dev/null || true
   HIVE_AGENT="$VERIF_AGENT" HIVE_DEPT="$dept" HIVE_ROLE="Verification-IC" HIVE_TICKET="$ticket" \
   bash "$SKILL_DIR/lib/core/agent-spawn.sh" -- "$PROMPT" \
     9<&- >> "$LOG_TO" 2>&1
   EC=$?
+  round_entry "verify" "$VERIF_AGENT" "$dept" "Verification-IC" "$ticket" "$([ "EC" -eq 0 ] && echo done || echo failed)" 2>/dev/null || true
 
   if [ $EC -ne 0 ]; then
     log "$log_prefix: verifier failed (exit=$EC), bouncing to in-progress"
@@ -1120,6 +1162,7 @@ else
   log "stage=$START_STAGE — sprint already planned; resuming at the ticket loop (no re-planning)"
 fi
 
+round_ensure
 log "entering ticket processing loop"
 
 # A1: the only exit for "there is no work". No-op whenever a ticket is
@@ -1304,10 +1347,12 @@ run_release_verify() {
   ss_set_release_field verify_log "$VERIFY_LOG_PATH"
   mkdir -p "$(dirname "$VERIFY_LOG_PATH")"
 
+  round_entry "release-verify" "release-ic" "executive" "Release-IC" "" "running" 2>/dev/null || true
   HIVE_AGENT="release-ic" HIVE_DEPT="executive" HIVE_ROLE="Release-IC" HIVE_TICKET="" \
   bash "$SKILL_DIR/lib/core/agent-spawn.sh" -- "$PROMPT" \
     9<&- >> "$VERIFY_LOG_PATH" 2>&1
   local RIC_EC=$?
+  round_entry "release-verify" "release-ic" "executive" "Release-IC" "" "$([ "RIC_EC" -eq 0 ] && echo done || echo failed)" 2>/dev/null || true
   llm_outage_note_failure "$VERIFY_LOG_PATH" "release-verify" "$RIC_EC"
 
   VERDICT=$(grep -m1 -E '^VERDICT:' "$VERIFY_LOG_PATH" 2>/dev/null | awk -F: '{gsub(/^[ ]+/,"",$2); print $2}')
@@ -1440,6 +1485,7 @@ done
 log "vp-review complete"
 
 # ── Archive and start new sprint ──
+round_archive
 log "sprint complete; archiving and starting new sprint"
 ss_archive_and_start_new
 
