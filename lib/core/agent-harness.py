@@ -532,7 +532,13 @@ in your prompt.
 ## Capabilities
 
 ### Shell Commands
-You can execute shell commands by wrapping them in ``bash: ... `` blocks:
+You can execute shell commands by wrapping them in bash blocks. Two forms
+are accepted — use the first:
+
+```bash: cat /path/to/file.txt```
+
+or a bare fence with bash: on the next line:
+
 ```
 bash: cat /path/to/file.txt
 ```
@@ -543,16 +549,26 @@ Safety rules:
 - Some dangerous commands are blocked (rm -rf, chmod 777, sudo, etc.)
 
 ### MCP Tools
-You can call hive MCP tools by wrapping them in ``mcp: tool_name(args)`` blocks:
+You can call hive MCP tools by wrapping them in mcp blocks. Two forms are
+accepted — use the first:
+
+```mcp: ticket_create(dept="backend", type="feature", priority="high", title="Add API endpoint", description="...")```
+
+or a bare fence with mcp: on the next line:
+
 ```
-mcp: ticket_create(dept="backend", type="feature", priority="high", title="Add API endpoint", description="..."  )
+mcp: ticket_create(dept="backend", type="feature", priority="high", title="Add API endpoint", description="...")
 ```
 
 Available tools depend on what's configured. Check the MCP tool list if unsure.
 
 ### File Operations
-For file reads, use `bash: cat /path/to/file`.
-For file writes outside .company/, use `bash: cat > /path/to/file << 'HEREDOC'\ncontent\nHEREDOC`.
+For file reads, use: ```bash: cat /path/to/file```
+For file writes outside .company/, use:
+
+```bash: cat > /path/to/file << 'HEREDOC'
+content
+HEREDOC```
 
 ## Rules
 - Be concise and focused on your assignment.
@@ -724,44 +740,63 @@ def parse_actions(text: str, no_mcp: bool = False,
     Returns a list of action dicts:
       [{"type": "bash", "command": "..."}, ...]
       [{"type": "mcp", "name": "...", "args": {...}}, ...]
+
+    C1: two block forms are accepted for bash: and mcp: (and SYSTEM_PROMPT
+    documents exactly these two — the prompt's own example used to parse
+    to zero actions):
+      fence-line form: ```bash:<cmd>```          (the keyword glued to the fence)
+      bare-fence form: ```\nbash: <cmd>\n```     (a lone fence, then a
+                                   line starting with the keyword)
     """
     actions = []
 
-    # Parse bash: blocks
+    # Parse bash: blocks — fence-line form (the historically supported one).
     for match in re.finditer(r'```bash:\s*(.+?)\s*```', text, re.DOTALL):
         cmd = match.group(1).strip()
         if cmd:
             actions.append({"type": "bash", "command": cmd})
+    # Parse bash: blocks — bare-fence form (the one the prompt showed).
+    for match in re.finditer(r'```\n[ \t]*bash:\s*(.*?)\s*```', text, re.DOTALL):
+        cmd = match.group(1).strip()
+        if cmd:
+            actions.append({"type": "bash", "command": cmd})
 
-    # Parse mcp: blocks (only if MCP is enabled)
+    # Parse mcp: blocks (only if MCP is enabled), same two forms.
     if not no_mcp:
         for match in re.finditer(r'```mcp:\s*(.+?)\s*```', text, re.DOTALL):
-            mcp_block = match.group(1).strip()
-            # Parse tool_name(args)
-            mcp_match = re.match(r'(\w+)\((.*)\)', mcp_block)
-            if mcp_match:
-                name = mcp_match.group(1)
-                args_str = mcp_match.group(2)
-                try:
-                    args = json.loads("{" + args_str + "}")
-                except json.JSONDecodeError:
-                    # Try to parse as key=value pairs
-                    args = {}
-                    for pair in args_str.split(","):
-                        pair = pair.strip()
-                        if "=" in pair:
-                            k, v = pair.split("=", 1)
-                            k = k.strip().strip('"').strip("'")
-                            v = v.strip().strip('"').strip("'")
-                            # Try to parse value as JSON
-                            try:
-                                v = json.loads(v)
-                            except (json.JSONDecodeError, ValueError):
-                                pass
-                            args[k] = v
-                actions.append({"type": "mcp", "name": name, "args": args})
+            _append_mcp_action(actions, match.group(1).strip())
+        for match in re.finditer(r'```\n[ \t]*mcp:\s*(.*?)\s*```', text, re.DOTALL):
+            _append_mcp_action(actions, match.group(1).strip())
 
     return actions
+
+
+def _append_mcp_action(actions: list, mcp_block: str) -> None:
+    """Parse one tool_name(args) call from an mcp: block and append it to
+    actions (shared by both block forms — C1)."""
+    # Parse tool_name(args)
+    mcp_match = re.match(r'(\w+)\((.*)\)', mcp_block)
+    if mcp_match:
+        name = mcp_match.group(1)
+        args_str = mcp_match.group(2)
+        try:
+            args = json.loads("{" + args_str + "}")
+        except json.JSONDecodeError:
+            # Try to parse as key=value pairs
+            args = {}
+            for pair in args_str.split(","):
+                pair = pair.strip()
+                if "=" in pair:
+                    k, v = pair.split("=", 1)
+                    k = k.strip().strip('"').strip("'")
+                    v = v.strip().strip('"').strip("'")
+                    # Try to parse value as JSON
+                    try:
+                        v = json.loads(v)
+                    except (json.JSONDecodeError, ValueError):
+                        pass
+                    args[k] = v
+        actions.append({"type": "mcp", "name": name, "args": args})
 
 
 # ---------------------------------------------------------------------------
