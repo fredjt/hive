@@ -15,9 +15,9 @@ hard rules — they all apply identically, including:
   or workflow file. Infra changes are higher-blast-radius than code
   changes — a bad dep bump breaks every dept's CI. Don't delegate to
   Agent(subagent_type="Plan"); you're the implementer, think directly.
-- Use **MCP tools** (`mcp__hive__ticket_get`, `mcp__hive__ticket_comment`)
+- Use **MCP tools** (`ticket_get`, `ticket_comment`)
   for ticket reads + comments. Bash for git + running tests.
-- Do NOT call `mcp__hive__ticket_move` / `ticket_approve` / `ticket_bounce`
+- Do NOT call `ticket_move` / `ticket_approve` / `ticket_bounce`
   / `gh-pr-*` scripts. The sprint-lifecycle moves the ticket; verification IC
   approves; PR ops are scripted.
 

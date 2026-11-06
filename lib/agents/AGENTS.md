@@ -111,7 +111,7 @@ release-ic.md       →  reviews release readiness before publish
 
 ## Important conventions
 
-- **MCP over bash**: All prompts prefer MCP tools (`mcp__hive__ticket_*`, `mcp__hive__chat_send`, etc.) over raw bash scripts. MCP provides input validation, structured output, and token savings.
+- **MCP over bash**: All prompts prefer MCP tools (`ticket_*`, `chat_send`, etc.) over raw bash scripts. MCP provides input validation, structured output, and token savings.
 - **PreToolUse hooks**: Two hooks block direct writes to `.company/` and admin code writes. Prompts enforce these rules — agents that try to bypass them will get errors.
 - **Atomic operations**: Ticket approve/bounce/reject are atomic MCP calls that stamp state + move status + trigger side-effects (PR merge, issue comment). Never call `ticket_move` directly for these transitions.
 - **Exit behavior**: Agents exit 0 when done. The sprint-lifecycle reads the exit code and advances the ticket to its next step. Non-zero exit = retry on next iteration.

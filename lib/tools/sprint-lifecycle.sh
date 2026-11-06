@@ -612,7 +612,7 @@ THINK BEFORE YOU EDIT
 ═══════════════════════════════════════════════════════════════════════════
 Don't dive straight into Write. First do these in order:
 
-  1. Read the ticket: mcp__hive__ticket_get(dept=\"$dept\", ticket_id=\"$ticket\")
+  1. Read the ticket: ticket_get(dept=\"$dept\", ticket_id=\"$ticket\")
      Note every acceptance criterion.
   2. Read existing tests in the project to learn naming + layout conventions.
   3. Think through the test before writing it.
@@ -759,7 +759,7 @@ THINK BEFORE YOU EDIT
 ═══════════════════════════════════════════════════════════════════════════
 Don't dive straight into Edit. First do these in order:
 
-  1. Read the ticket: mcp__hive__ticket_get(dept=\"$dept\", ticket_id=\"$ticket\")
+  1. Read the ticket: ticket_get(dept=\"$dept\", ticket_id=\"$ticket\")
   2. Find and read the failing test:
        cd $PROJECT_ROOT/.worktrees/$ticket
        git log main..HEAD --grep '\\[TDD-RED\\] $ticket' -1 --stat
@@ -883,14 +883,14 @@ tests-exist, tests-pass, lint-pass, security-clean). Your job is to review
 the implementation for logic, design, and correctness.
 
 Steps:
-1. Read the ticket: mcp__hive__ticket_get(dept=\"$dept\", ticket_id=\"$ticket\")
+1. Read the ticket: ticket_get(dept=\"$dept\", ticket_id=\"$ticket\")
 2. Read the PR diff (or the branch diff):
      cd $PROJECT_ROOT/.worktrees/$ticket
      git diff main...HEAD
 3. Re-read the failing test and confirm it now passes.
 4. Check edge cases, error handling, and code quality.
-5. If satisfied: approve via mcp__hive__ticket_approve.
-6. If not satisfied: bounce via mcp__hive__ticket_bounce with a numbered
+5. If satisfied: approve via ticket_approve.
+6. If not satisfied: bounce via ticket_bounce with a numbered
    rationale (>=80 chars, file:line references where applicable).
 
 You MUST NOT:
@@ -1132,7 +1132,7 @@ run_release_verify() {
 
   Record your verdict with the release_verdict MCP tool (or the script
   equivalent, per lib/agents/release-ic.md):
-    mcp__hive__release_verdict(verdict=GO|NO-GO, rationale=one-paragraph,
+    release_verdict(verdict=GO|NO-GO, rationale=one-paragraph,
         blockers=bullets - only for NO-GO)
     bash $SKILL_DIR/lib/tools/release-verdict-write.sh GO|NO-GO \
       --rationale one-paragraph [--blockers-stdin]

@@ -16,18 +16,18 @@ quality."
 
 | What you want | MCP tool |
 |---|---|
-| Read the ticket | `mcp__hive__ticket_get(dept=$HIVE_DEPT, ticket_id=$HIVE_TICKET)` |
+| Read the ticket | `ticket_get(dept=$HIVE_DEPT, ticket_id=$HIVE_TICKET)` |
 | Read the doer's deliverable file(s) | `Read` tool (the ic-admin's last comment names the paths) |
-| Add a verification comment | `mcp__hive__ticket_comment(...)` |
-| **APPROVE** (atomic — moves to done) | `mcp__hive__ticket_approve` |
-| **BOUNCE** — needs one more loop (back to in-progress) | `mcp__hive__ticket_bounce` |
-| **REJECT** — won't-do, close as rejected | `mcp__hive__ticket_reject` |
+| Add a verification comment | `ticket_comment(...)` |
+| **APPROVE** (atomic — moves to done) | `ticket_approve` |
+| **BOUNCE** — needs one more loop (back to in-progress) | `ticket_bounce` |
+| **REJECT** — won't-do, close as rejected | `ticket_reject` |
 
 ## Hard rules (script-enforced)
 
 - Do NOT call `gh-pr-merge.sh`, `gh-pr-close.sh`, or `gh-pr-reject.sh`
   (gated; exit 4). Admin tickets don't have PRs.
-- Do NOT call `mcp__hive__company_start` / `company_stop` (removed).
+- Do NOT call `company_start` / `company_stop` (removed).
 - Do NOT spawn other agents.
 - Do NOT call `ticket_move` directly for the in-review → in-progress
   transition — use `ticket_bounce` instead.
@@ -38,13 +38,13 @@ quality."
 
 ## What to read
 
-1. **The ticket** — `mcp__hive__ticket_get(dept=$HIVE_DEPT, ticket_id=$HIVE_TICKET)`.
+1. **The ticket** — `ticket_get(dept=$HIVE_DEPT, ticket_id=$HIVE_TICKET)`.
    Note every acceptance criterion and the doer's summary comment.
 2. **The deliverable files** — the doer's last comment lists paths
    (typically under `.company/<dept>/reports/`, `.company/meetings/`,
    `.company/chat/`, etc.). Read each one with the `Read` tool.
 3. **Any follow-up tickets** the doer filed — look for "Follow-up
-   tickets filed:" in their summary comment. `mcp__hive__ticket_get`
+   tickets filed:" in their summary comment. `ticket_get`
    each one to confirm the engineering work needed is captured with
    concrete acceptance criteria, not just "have engineering look."
 
@@ -94,7 +94,7 @@ moves the ticket to done. (Admin tickets have no PR, so no merge happens —
 just the move.)
 
 ```
-mcp__hive__ticket_approve(
+ticket_approve(
   dept=$HIVE_DEPT,
   ticket_id=$HIVE_TICKET,
   verifier="Verification-IC",
@@ -117,7 +117,7 @@ Do NOT call `ticket_move` separately.
 ## To BOUNCE
 
 ```
-mcp__hive__ticket_bounce(
+ticket_bounce(
   dept=$HIVE_DEPT,
   ticket_id=$HIVE_TICKET,
   verifier="Verification-IC",
@@ -140,7 +140,7 @@ Pass it as False or omit it.
 ## To REJECT (close won't-do, no more loops)
 
 ```
-mcp__hive__ticket_reject(
+ticket_reject(
   dept=$HIVE_DEPT,
   ticket_id=$HIVE_TICKET,
   verifier="Verification-IC",

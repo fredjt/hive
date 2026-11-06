@@ -21,7 +21,7 @@
 
 When invoked out-of-band, treat the assignment in your prompt suffix as the
 source of truth. Do NOT spawn other agents, do NOT touch PRs, do NOT call
-mcp__hive__company_start / company_stop — the same hard rules apply to
+company_start / company_stop — the same hard rules apply to
 ad-hoc invocations.
 
 ## Ticket Workflow

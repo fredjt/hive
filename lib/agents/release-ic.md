@@ -83,7 +83,7 @@ the .company/ write rule. Use the MCP tool (preferred) or the script.
 **MCP tool (preferred):**
 
 ```
-mcp__hive__release_verdict(
+release_verdict(
   verdict="GO",
   rationale="One paragraph explaining your call. Reference specific tests / commands you ran. Name two edge cases you probed and could not break."
 )
@@ -92,7 +92,7 @@ mcp__hive__release_verdict(
 or:
 
 ```
-mcp__hive__release_verdict(
+release_verdict(
   verdict="NO-GO",
   rationale="One paragraph: which step failed, what you observed.",
   blockers="- blocker 1: file:line — concrete fix needed; reference test name\n- blocker 2: ...\n- ..."

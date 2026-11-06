@@ -41,7 +41,7 @@ Also read:
 case, returns the new ticket id, and refuses bad input loudly:
 
 ```
-mcp__hive__ticket_create(
+ticket_create(
   dept=$HIVE_DEPT,
   type="<feature | bug | improvement | chore | infrastructure | research>",
   priority="<critical | high | medium | low>",
@@ -60,7 +60,7 @@ call sprint-fill. You do NOT move tickets to sprint-current.**
 Worked example:
 
 ```
-mcp__hive__ticket_create(
+ticket_create(
   dept=$HIVE_DEPT,
   type="bug",
   priority="high",
@@ -90,7 +90,7 @@ Use the MCP tool — it goes through the same script with the same role
 enforcement, but with named args you can't reverse:
 
 ```
-mcp__hive__ticket_move(
+ticket_move(
   dept=$HIVE_DEPT,
   ticket_id="<ID>",
   new_status="done",
@@ -132,7 +132,7 @@ is already being worked on, leave a comment on that ticket and skip filing.
 **Use the MCP tool. Type MUST be `bug`.**
 
 ```
-mcp__hive__ticket_create(
+ticket_create(
   dept=$HIVE_DEPT,
   type="bug",
   priority="<critical | high | medium>",
@@ -239,7 +239,7 @@ What to read first (in addition to canonical inputs):
   This includes IT-style work like dependency bumps, CI changes, build
   scripts — those are infrastructure tickets filed for engineering depts.
 
-- Do NOT call `mcp__hive__company_start` / `company_stop` (removed).
+- Do NOT call `company_start` / `company_stop` (removed).
 - Do NOT call `gh-pr-merge.sh` / `gh-pr-close.sh` / `gh-pr-reject.sh`
   (gated; exit 4). Rejection's PR-close happens as a side-effect of
   `ticket-move.sh ... done <reason> <author> rejected`.

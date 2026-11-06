@@ -35,12 +35,12 @@ if [ "$NEW_STATUS" = "done" ]; then
     echo "" >&2
     echo "  If you are a verification IC approving this ticket, do NOT call ticket_move." >&2
     echo "  Use the atomic approval tool instead:" >&2
-    echo "    mcp__hive__ticket_approve(dept=\"$DEPT\", ticket_id=\"$TICKET_ID\"," >&2
+    echo "    ticket_approve(dept=\"$DEPT\", ticket_id=\"$TICKET_ID\"," >&2
     echo "                              verifier=\"Verification-IC\"," >&2
     echo "                              rationale=\"<≥30 chars: which AC verified, edge cases probed>\")" >&2
     echo "" >&2
     echo "  If you are a VP rejecting (won't-do) during a VP stage, pass reason=\"rejected\":" >&2
-    echo "    mcp__hive__ticket_move(dept=\"$DEPT\", ticket_id=\"$TICKET_ID\"," >&2
+    echo "    ticket_move(dept=\"$DEPT\", ticket_id=\"$TICKET_ID\"," >&2
     echo "                           new_status=\"done\", reason=\"rejected\", ...)" >&2
     exit 1
   fi
@@ -85,10 +85,10 @@ deny_role() {
     echo "" >&2
     echo "  Verification ICs DO NOT use ticket_move directly. Use ONE of:" >&2
     echo "    To APPROVE (atomic — moves ticket to done + merges PR):" >&2
-    echo "      mcp__hive__ticket_approve(dept=\"$DEPT\", ticket_id=\"$TICKET_ID\"," >&2
+    echo "      ticket_approve(dept=\"$DEPT\", ticket_id=\"$TICKET_ID\"," >&2
     echo "                                verifier=\"Verification-IC\", rationale=\"<≥30 chars>\")" >&2
     echo "    To REJECT (atomic — bounces ticket to in-progress with rationale):" >&2
-    echo "      mcp__hive__ticket_bounce(dept=\"$DEPT\", ticket_id=\"$TICKET_ID\"," >&2
+    echo "      ticket_bounce(dept=\"$DEPT\", ticket_id=\"$TICKET_ID\"," >&2
     echo "                               verifier=\"Verification-IC\", rationale=\"<≥80 chars>\")" >&2
     echo "    Both are ONE call. Do NOT also call ticket_move afterwards." >&2
   fi
@@ -197,14 +197,14 @@ if [ "$NEW_STATUS" = "done" ] && [ "$REASON" != "rejected" ] && [ "$HIVE_SCRIPTE
     echo "  has reviewed an in-review ticket. Wait for it, OR if you're a" >&2
     echo "  verification IC and want to ship NOW, just call ticket_approve" >&2
     echo "  (which is atomic — runs gates, stamps verification, moves to done):" >&2
-    echo "    mcp__hive__ticket_approve(dept=\"$DEPT\", ticket_id=\"$TICKET_ID\"," >&2
+    echo "    ticket_approve(dept=\"$DEPT\", ticket_id=\"$TICKET_ID\"," >&2
     echo "                              verifier=\"Verification-IC\", rationale=\"<≥30 chars>\")" >&2
     exit 1
   fi
   if [ -z "$VERIFIED_BY" ] || [ -z "$VERIFIED_AT" ]; then
     echo "ERROR: ticket $TICKET_ID passed gates but has not been approved by a verification IC." >&2
     echo "  Verification ICs: do NOT call ticket_move directly. Use:" >&2
-    echo "    mcp__hive__ticket_approve(dept=\"$DEPT\", ticket_id=\"$TICKET_ID\"," >&2
+    echo "    ticket_approve(dept=\"$DEPT\", ticket_id=\"$TICKET_ID\"," >&2
     echo "                              verifier=\"Verification-IC\", rationale=\"<≥30 chars>\")" >&2
     echo "  That call atomically stamps the verification fields, moves the" >&2
     echo "  ticket to done, and triggers the PR merge. ONE call, no follow-up." >&2
@@ -231,7 +231,7 @@ if [ "$NEW_STATUS" = "in-progress" ] \
   echo "ERROR: $TICKET_ID — agents cannot move tickets directly to in-progress." >&2
   echo "" >&2
   echo "  If you are a verification IC bouncing a rejected ticket, use:" >&2
-  echo "    mcp__hive__ticket_bounce(dept=\"$DEPT\", ticket_id=\"$TICKET_ID\"," >&2
+  echo "    ticket_bounce(dept=\"$DEPT\", ticket_id=\"$TICKET_ID\"," >&2
   echo "                             verifier=\"Verification-IC\"," >&2
   echo "                             rationale=\"<≥80 chars: numbered list of issues + file:line refs>\")" >&2
   echo "  That call is atomic (writes rationale + moves to in-progress + comments the GH issue)." >&2
@@ -292,7 +292,7 @@ PYEOF
     echo "" >&2
     echo "  (Side note: this ticket also has no assignee field set, which would" >&2
     echo "  block the move regardless. If you really need a manual transition," >&2
-    echo "  use mcp__hive__ticket_claim first.)" >&2
+    echo "  use ticket_claim first.)" >&2
     exit 1
   fi
 fi

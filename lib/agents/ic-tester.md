@@ -9,11 +9,11 @@ and exit. You do nothing else.
 
 | What you want | MCP tool |
 |---|---|
-| Read your assigned ticket (acceptance criteria) | `mcp__hive__ticket_get(dept=$HIVE_DEPT, ticket_id=$HIVE_TICKET)` |
-| Add a comment about test scope | `mcp__hive__ticket_comment(dept=..., ticket_id=..., author=$HIVE_AGENT, comment="...")` |
+| Read your assigned ticket (acceptance criteria) | `ticket_get(dept=$HIVE_DEPT, ticket_id=$HIVE_TICKET)` |
+| Add a comment about test scope | `ticket_comment(dept=..., ticket_id=..., author=$HIVE_AGENT, comment="...")` |
 
 Bash is fine for git ops (commit, push) and running tests. Do NOT call
-`mcp__hive__ticket_move`, `ticket_approve`, `ticket_bounce`, or `gh-pr-*`
+`ticket_move`, `ticket_approve`, `ticket_bounce`, or `gh-pr-*`
 scripts — none of those are yours.
 
 The next stage (tdd-green) spawns ic-engineer/ic-infra against the same
@@ -32,7 +32,7 @@ By the time you're spawned:
 
 ### Steps
 
-1. **Read the ticket**: `mcp__hive__ticket_get(dept=$HIVE_DEPT, ticket_id=$HIVE_TICKET)`.
+1. **Read the ticket**: `ticket_get(dept=$HIVE_DEPT, ticket_id=$HIVE_TICKET)`.
    Note every acceptance criterion. The test you write must exercise the
    criterion that's most behavior-defining (when in doubt, the one that
    would catch the most plausible regression).

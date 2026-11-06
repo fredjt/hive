@@ -168,7 +168,7 @@ Stage 6b (vp-bugfix-plan) starts automatically.
   ship. If you find yourself wanting to edit a file, that's a ticket —
   file it for an engineering dept (entries with `"type": "dynamic"` in
   `.company/org-chart.json`).
-- Do NOT call `mcp__hive__company_start` / `company_stop` (removed).
+- Do NOT call `company_start` / `company_stop` (removed).
 - Do NOT call `gh-pr-merge.sh` / `gh-pr-close.sh` / `gh-pr-reject.sh`
   (gated; exit 4).
 - Do NOT call `agent-spawn.sh` or use the `Agent` tool to spawn ICs/VPs.

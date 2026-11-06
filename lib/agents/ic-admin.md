@@ -30,16 +30,16 @@ By the time you're spawned:
   your exit-0.
 - Do NOT touch PRs. Admin tickets don't have PRs (no code branch).
 - Do NOT call `agent-spawn.sh` or use the `Agent` tool to spawn helpers.
-- Do NOT call `mcp__hive__company_start` / `company_stop` (removed).
+- Do NOT call `company_start` / `company_stop` (removed).
 - If your dept's work needs CODE done (e.g., HR proposes a roster change
   that requires editing `.company/org-chart.json` AND a downstream
   engineering change), file a follow-up ticket via
-  `mcp__hive__ticket_create(dept="<engineering-dept>", ...)`. Don't try
+  `ticket_create(dept="<engineering-dept>", ...)`. Don't try
   to do the engineering work yourself.
 
 ## Steps
 
-1. **Read the ticket** — `mcp__hive__ticket_get(dept=$HIVE_DEPT,
+1. **Read the ticket** — `ticket_get(dept=$HIVE_DEPT,
    ticket_id=$HIVE_TICKET)`. Note every acceptance criterion.
 
 2. **Think through the approach briefly.** Before writing, consider:
@@ -57,24 +57,24 @@ By the time you're spawned:
 
    | Goal | Script | MCP tool |
    |---|---|---|
-   | Markdown report (your dept's reports/) | `report-write.sh dept:<dept> <filename> --stdin` | `mcp__hive__report_write(type="dept:<dept>", filename=…, content=…)` |
-   | Sprint review | `report-write.sh sprint-review <filename> --stdin` | `mcp__hive__report_write(type="sprint-review", …)` |
-   | Marketing report | `report-write.sh marketing <filename> --stdin` | `mcp__hive__report_write(type="marketing", …)` |
-   | R&D finding | `report-write.sh research <filename> --stdin` | `mcp__hive__report_write(type="research", …)` |
-   | HR productivity / hiring | `report-write.sh productivity <filename> --stdin` | `mcp__hive__report_write(type="productivity", …)` |
-   | Update dept's `status.json` | `status-update.sh <dept> --key value` | `mcp__hive__status_update` |
-   | Send a message to a chat channel | `chat-send.sh <channel> <author> <body>` | `mcp__hive__chat_send` |
-   | Record a meeting note under `.company/meetings/history/` | `meeting-record.sh <type> <ts> --stdin` | `mcp__hive__meeting_record` |
+   | Markdown report (your dept's reports/) | `report-write.sh dept:<dept> <filename> --stdin` | `report_write(type="dept:<dept>", filename=…, content=…)` |
+   | Sprint review | `report-write.sh sprint-review <filename> --stdin` | `report_write(type="sprint-review", …)` |
+   | Marketing report | `report-write.sh marketing <filename> --stdin` | `report_write(type="marketing", …)` |
+   | R&D finding | `report-write.sh research <filename> --stdin` | `report_write(type="research", …)` |
+   | HR productivity / hiring | `report-write.sh productivity <filename> --stdin` | `report_write(type="productivity", …)` |
+   | Update dept's `status.json` | `status-update.sh <dept> --key value` | `status_update` |
+   | Send a message to a chat channel | `chat-send.sh <channel> <author> <body>` | `chat_send` |
+   | Record a meeting note under `.company/meetings/history/` | `meeting-record.sh <type> <ts> --stdin` | `meeting_record` |
    | Add an outbox message | `outbox-write.sh <type> --content "..."` | (script only) |
    | Propose / apply org-chart edits (HR/IT) | `org-chart-rebuild.sh` (read first; edit via writeup) | (no MCP) |
-   | File a follow-up ticket for an engineering dept | (script `ticket-create.sh`) | `mcp__hive__ticket_create` |
+   | File a follow-up ticket for an engineering dept | (script `ticket-create.sh`) | `ticket_create` |
 
-   See `$HIVE_ROOT/lib/tools/` (or `hive --help`) for the full list of scripts. The corresponding MCP tools (`mcp__hive__report_write`, `mcp__hive__status_update`, `mcp__hive__chat_send`, `mcp__hive__meeting_record`, `mcp__hive__ticket_create`) are preferred over direct script invocation.
+   See `$HIVE_ROOT/lib/tools/` (or `hive --help`) for the full list of scripts. The corresponding MCP tools (`report_write`, `status_update`, `chat_send`, `meeting_record`, `ticket_create`) are preferred over direct script invocation.
 
 4. **Add a summary comment** to the ticket so the verification IC can
    see what you delivered:
    ```
-   mcp__hive__ticket_comment(
+   ticket_comment(
      dept=$HIVE_DEPT,
      ticket_id=$HIVE_TICKET,
      author=$HIVE_AGENT,

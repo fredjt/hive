@@ -48,6 +48,26 @@ class TestAgentFilesExist:
         assert Path(f"{AGENTS_DIR}/{agent}").exists(), f"Missing agent file: {agent}"
 
 
+class TestAgentPromptsUsePlainToolNames:
+    """Item 2: the MCP server registers PLAIN tool names (ticket_get, …);
+    the prompts taught mcp__hive__<tool>, so every prefixed call failed at
+    the server with 'Unknown tool: mcp__hive__…' and burned the spawn's
+    first turn (12 failed calls in the 2026-11-06 field run)."""
+
+    @pytest.mark.parametrize("fname",
+                             sorted(p.name for p in Path(AGENTS_DIR).glob("*.md")))
+    def test_no_prefixed_tool_names(self, fname):
+        content = Path(f"{AGENTS_DIR}/{fname}").read_text()
+        assert "mcp__" not in content, (
+            f"{fname} teaches the mcp__-prefixed tool spelling — the MCP "
+            f"server registers plain names and rejects the prefix"
+        )
+
+    def test_framework_primer_documents_plain_names(self):
+        primer = Path(f"{AGENTS_DIR}/_FRAMEWORK_PRIMER.md").read_text()
+        assert "mcp__hive__" not in primer
+
+
 class TestAgentPromptStructure:
     """Test that agent prompts have proper structure."""
 

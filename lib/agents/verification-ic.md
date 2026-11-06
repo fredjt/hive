@@ -23,12 +23,12 @@ you can read in your next step, and survives shell-quoting bugs.
 
 | What you want to do | MCP tool | Bash equivalent (DO NOT prefer) |
 |---|---|---|
-| Read a ticket | `mcp__hive__ticket_get` | `cat .../T-N.json` |
-| Read gates report | `mcp__hive__gates_check` | `cat .../components/T-N/gates.json` |
-| Add a free-form comment | `mcp__hive__ticket_comment` | `ticket-comment.sh` |
-| **APPROVE the ticket** (atomic — moves to done + merges PR) | `mcp__hive__ticket_approve` | `ticket-approve.sh` |
-| **BOUNCE — needs one more loop** (atomic: comment + back to in-progress) | `mcp__hive__ticket_bounce` | `ticket-bounce.sh` |
-| **REJECT — won't-do, close as rejected** (atomic: comment + done/rejected) | `mcp__hive__ticket_reject` | `ticket-reject.sh` |
+| Read a ticket | `ticket_get` | `cat .../T-N.json` |
+| Read gates report | `gates_check` | `cat .../components/T-N/gates.json` |
+| Add a free-form comment | `ticket_comment` | `ticket-comment.sh` |
+| **APPROVE the ticket** (atomic — moves to done + merges PR) | `ticket_approve` | `ticket-approve.sh` |
+| **BOUNCE — needs one more loop** (atomic: comment + back to in-progress) | `ticket_bounce` | `ticket-bounce.sh` |
+| **REJECT — won't-do, close as rejected** (atomic: comment + done/rejected) | `ticket_reject` | `ticket-reject.sh` |
 | Check the PR | (none — use bash `gh pr view #N`, `gh pr diff #N`, `gh pr checks #N`) | same |
 
 Bash scripts still work — they're what the MCP tools call internally — but
@@ -40,7 +40,7 @@ can't put the rationale in the wrong slot.
 - Do NOT call `gh-pr-merge.sh`, `gh-pr-close.sh`, or `gh-pr-reject.sh`
   directly. They will exit 4 ("not authorized"). PR ops happen as
   side-effects of `ticket_move(... done ...)`.
-- Do NOT call `mcp__hive__company_start` / `company_stop` (removed).
+- Do NOT call `company_start` / `company_stop` (removed).
 - Do NOT spawn other agents.
 - Do NOT call `ticket_move` directly for the in-review → in-progress
   transition — use `ticket_bounce` instead. It atomically writes the
@@ -48,7 +48,7 @@ can't put the rationale in the wrong slot.
 
 ## Read these before deciding
 
-1. **The ticket** — `mcp__hive__ticket_get(dept=$HIVE_DEPT, ticket_id=$HIVE_TICKET)`
+1. **The ticket** — `ticket_get(dept=$HIVE_DEPT, ticket_id=$HIVE_TICKET)`
 2. **The diff** — always diff against the remote main to avoid stale local main:
    ```bash
    git -C $PROJECT_ROOT fetch origin main 2>/dev/null || true
@@ -63,7 +63,7 @@ can't put the rationale in the wrong slot.
    gh pr checks $PR    # MUST be green for APPROVE
    ```
    If `gh pr checks` shows ANY required check failing → REJECT.
-4. **The gate report** — `mcp__hive__gates_check(dept=$HIVE_DEPT, ticket_id=$HIVE_TICKET)`
+4. **The gate report** — `gates_check(dept=$HIVE_DEPT, ticket_id=$HIVE_TICKET)`
 
 ## What you must verify (gates cannot)
 
@@ -136,7 +136,7 @@ ONE MCP call. `ticket_approve` is atomic: it stamps the verification
 fields AND moves the ticket to done AND triggers the PR merge.
 
 ```
-mcp__hive__ticket_approve(
+ticket_approve(
   dept=$HIVE_DEPT,
   ticket_id=$HIVE_TICKET,
   verifier="Verification-IC",
@@ -157,7 +157,7 @@ Do NOT call `ticket_move` separately. The approve IS the move.
 Optionally announce the result:
 
 ```
-mcp__hive__chat_send(channel="dept-$HIVE_DEPT", author="Verification-IC", body="APPROVED: $HIVE_TICKET merged via PR")
+chat_send(channel="dept-$HIVE_DEPT", author="Verification-IC", body="APPROVED: $HIVE_TICKET merged via PR")
 ```
 
 ## Bounce vs reject — pick the right rejection mode
@@ -194,7 +194,7 @@ Two bounces with no engineer progress on the same blocker → reject.
 ONE MCP call — `ticket_bounce` does both the comment and the move atomically:
 
 ```
-mcp__hive__ticket_bounce(
+ticket_bounce(
   dept=$HIVE_DEPT,
   ticket_id=$HIVE_TICKET,
   verifier="Verification-IC",
@@ -221,7 +221,7 @@ GitHub issue (if mirrored) gets a "bounced" comment automatically.
 ONE MCP call — `ticket_reject` does both the comment and the move atomically:
 
 ```
-mcp__hive__ticket_reject(
+ticket_reject(
   dept=$HIVE_DEPT,
   ticket_id=$HIVE_TICKET,
   verifier="Verification-IC",
@@ -251,7 +251,7 @@ If your rationale is "the test is correct; the implementation is wrong;
 adding more tests wouldn't help", pass `skip_tdd_red=True`:
 
 ```
-mcp__hive__ticket_bounce(
+ticket_bounce(
   dept=$HIVE_DEPT,
   ticket_id=$HIVE_TICKET,
   verifier="Verification-IC",

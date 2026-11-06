@@ -129,6 +129,33 @@ def test_standard_python_fence_is_not_an_action():
     assert HARNESS.parse_actions(text) == []
 
 
+def test_prefixed_tool_names_are_normalized():
+    """Item 2: the prompts historically taught mcp__hive__<tool> and
+    models still emit it — the parser resolves the prefixed name to the
+    plain registered name instead of handing the server an unknown tool.
+    (Prompts are de-prefixed in the same change; this is the defense in
+    depth for whatever slips through.)"""
+    acts = HARNESS.parse_actions(
+        '```mcp\nmcp__hive__ticket_get(dept="hr", ticket_id="HR-0001")\n```')
+    assert len(acts) == 1, f"{acts}"
+    assert acts[0]["type"] == "mcp"
+    assert acts[0]["name"] == "ticket_get", f"{acts[0]['name']}"
+    assert acts[0]["args"] == {"dept": "hr", "ticket_id": "HR-0001"}
+
+    # Any mcp__<server>__ prefix is stripped, not just the hive one.
+    acts = HARNESS.parse_actions('```mcp: mcp__other_server__ping()```')
+    assert acts[0]["name"] == "ping", f"{acts[0]['name']}"
+
+    # Plain names pass through unchanged.
+    acts = HARNESS.parse_actions("```mcp\nping()\n```")
+    assert acts[0]["name"] == "ping"
+
+    # A plain name that merely STARTS with mcp__ (no server__ suffix)
+    # is a registered name, not a prefix — leave it alone.
+    acts = HARNESS.parse_actions("```mcp\nmcp__x()\n```")
+    assert acts[0]["name"] == "mcp__x"
+
+
 
 @pytest.mark.parametrize("text, expected", PARSER_CASES,
                          ids=[f"case-{i}" for i in range(len(PARSER_CASES))])

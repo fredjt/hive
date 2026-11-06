@@ -13,14 +13,14 @@ server**. Prefer MCP over bash:
 
 | What you want | MCP tool |
 |---|---|
-| Read your assigned ticket | `mcp__hive__ticket_get(dept=$HIVE_DEPT, ticket_id=$HIVE_TICKET)` |
-| Add a progress comment | `mcp__hive__ticket_comment(dept=..., ticket_id=..., author=$HIVE_AGENT, comment="...")` |
-| Read other dept tickets | `mcp__hive__ticket_list(dept=..., status=...)` |
+| Read your assigned ticket | `ticket_get(dept=$HIVE_DEPT, ticket_id=$HIVE_TICKET)` |
+| Add a progress comment | `ticket_comment(dept=..., ticket_id=..., author=$HIVE_AGENT, comment="...")` |
+| Read other dept tickets | `ticket_list(dept=..., status=...)` |
 
 Bash is fine for git operations on the worktree (commit, push, rebase) and
 for running tests — those don't go through MCP.
 
-**Do NOT** call `mcp__hive__ticket_move`, `ticket_approve`, `ticket_bounce`,
+**Do NOT** call `ticket_move`, `ticket_approve`, `ticket_bounce`,
 or any `gh-pr-*` script. Those are not yours.
 
 ## Your turn
@@ -36,7 +36,7 @@ By the time you're spawned:
 
 ### Steps
 
-1. **Read the ticket file**: `mcp__hive__ticket_get(dept=$HIVE_DEPT, ticket_id=$HIVE_TICKET)`. Note every acceptance criterion.
+1. **Read the ticket file**: `ticket_get(dept=$HIVE_DEPT, ticket_id=$HIVE_TICKET)`. Note every acceptance criterion.
 
 2. **Find the failing test** the tester wrote:
    ```bash

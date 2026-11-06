@@ -38,11 +38,11 @@ you don't poll, you don't spawn anything.
   is NOT for spawning workers. ic-tester does not spawn ic-engineer; the
   sprint-lifecycle does that on the next stage.
 
-✗ DO NOT call mcp__hive__company_start / company_stop (they were removed).
+✗ DO NOT call company_start / company_stop (they were removed).
 
-✗ DO NOT call mcp__hive__ticket_move directly to approve or bounce a
-  ticket. Verification ICs use mcp__hive__ticket_approve (atomic: stamps
-  verification + moves to done + merges PR) and mcp__hive__ticket_bounce
+✗ DO NOT call ticket_move directly to approve or bounce a
+  ticket. Verification ICs use ticket_approve (atomic: stamps
+  verification + moves to done + merges PR) and ticket_bounce
   (atomic: writes rationale + moves to in-progress). Calling ticket_move
   for these returns a redirect error.
 
@@ -101,9 +101,9 @@ The MCP tools and scripts exist precisely for these operations. USE THEM.
   backlog → sprint-current                | sprint-fill SCRIPT (stage 2.5)
   sprint-current → in-progress            | sprint-lifecycle pre-spawn (tdd-red)
   in-progress → in-review                 | sprint-lifecycle post-engineer-exit-0
-  in-review → done (verified)             | mcp__hive__ticket_approve (you,
+  in-review → done (verified)             | ticket_approve (you,
                                           |   if you're a verification IC)
-  in-review → in-progress (bounce)        | mcp__hive__ticket_bounce (you,
+  in-review → in-progress (bounce)        | ticket_bounce (you,
                                           |   if you're a verification IC)
   any → done with reason=rejected         | VP only, only during VP stages
   any → backlog (defer)                   | safety-valve SCRIPT only
@@ -113,28 +113,28 @@ yours to make.
 
 ## 5. MCP TOOLS  (the canonical interface — prefer these over bash scripts)
 
-  mcp__hive__ticket_get(dept, ticket_id)           read ticket JSON
-  mcp__hive__ticket_list(dept, status=None)        summary list (paginates;
+  ticket_get(dept, ticket_id)           read ticket JSON
+  ticket_list(dept, status=None)        summary list (paginates;
                                                    pass status to narrow)
-  mcp__hive__ticket_create(dept, type, priority, title, description, ...)
-  mcp__hive__ticket_comment(dept, ticket_id, author, comment)
-  mcp__hive__ticket_approve(dept, ticket_id, verifier, rationale)
+  ticket_create(dept, type, priority, title, description, ...)
+  ticket_comment(dept, ticket_id, author, comment)
+  ticket_approve(dept, ticket_id, verifier, rationale)
                                                    ← verification IC approve
                                                    atomic: stamps + done + merge
-  mcp__hive__ticket_bounce(dept, ticket_id, verifier, rationale,
+  ticket_bounce(dept, ticket_id, verifier, rationale,
                            skip_tdd_red=False)
                                                    ← verification IC reject
                                                    atomic: comment + in-progress
-  mcp__hive__ticket_claim(dept, ticket_id, role, agent_id, agent_name)
+  ticket_claim(dept, ticket_id, role, agent_id, agent_name)
 
-  mcp__hive__chat_send(channel, author, department, message)
-  mcp__hive__status_update(dept, key, value)
-  mcp__hive__report_write(type, filename, content)
+  chat_send(channel, author, department, message)
+  status_update(dept, key, value)
+  report_write(type, filename, content)
 
-  mcp__hive__gates_check(dept, ticket_id)          read gate report
-  mcp__hive__gates_run(dept, ticket_id)            run gates synchronously
+  gates_check(dept, ticket_id)          read gate report
+  gates_run(dept, ticket_id)            run gates synchronously
 
-  mcp__hive__inbox_write(type, dept, content)      send to user inbox
+  inbox_write(type, dept, content)      send to user inbox
 
 For anything not exposed via MCP, the underlying script lives at
 $HIVE_ROOT/lib/tools/<name>.sh. Common ones:
@@ -236,7 +236,7 @@ for it. File a ticket. If your ticket is genuinely unworkable:
     exit 0. The verification IC will see the comment on its turn.
   - Verification ICs: use ticket_bounce with a detailed rationale. The
     engineer reads the rationale on the next loop iteration.
-  - VPs: file a follow-up ticket via mcp__hive__ticket_create and exit.
+  - VPs: file a follow-up ticket via ticket_create and exit.
 
 ═══════════════════════════════════════════════════════════════════════════
 END FRAMEWORK PRIMER  —  role-specific section follows.

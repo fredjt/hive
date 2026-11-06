@@ -832,13 +832,27 @@ def parse_actions(text: str, no_mcp: bool = False,
     return actions
 
 
+def _normalize_tool_name(name: str) -> str:
+    """Item 2: strip a client-side mcp__<server>__ prefix.
+
+    The MCP server registers PLAIN tool names (ticket_get, ticket_create,
+    ...), but the agent prompts historically taught the mcp__hive__-prefixed
+    spelling and models still emit it — each prefixed call failed at the
+    server with 'Unknown tool: mcp__hive__...' and burned the spawn's first
+    turn. Prompts are de-prefixed (same change); this normalizes whatever
+    slips through as defense in depth."""
+    return re.sub(r'^mcp__[A-Za-z0-9_-]+__', '', name)
+
+
 def _append_mcp_action(actions: list, mcp_block: str) -> None:
     """Parse one tool_name(args) call from an mcp: block and append it to
-    actions (shared by both block forms — C1)."""
+    actions (shared by all three block forms — C1 / item 1). A prefixed
+    name (mcp__hive__tool) is normalized to the plain registered name
+    (item 2)."""
     # Parse tool_name(args)
     mcp_match = re.match(r'(\w+)\((.*)\)', mcp_block)
     if mcp_match:
-        name = mcp_match.group(1)
+        name = _normalize_tool_name(mcp_match.group(1))
         args_str = mcp_match.group(2)
         try:
             args = json.loads("{" + args_str + "}")
