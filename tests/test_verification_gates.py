@@ -338,3 +338,39 @@ class TestSkipTddRedFlag:
         ticket = json.loads(ticket_path.read_text())
         assert ticket.get("gates_passed") is True
         assert len(ticket.get("comments", [])) == comments_after_first
+
+class TestAdminDeptGates:
+    """Item 7: an admin department is NOT a blanket gate waiver. The
+    field run's HR-0002 branch carried only a failing [TDD-RED] test and
+    still passed "strict gates" via the is_admin_dept auto-pass. Admin
+    tickets WITH code (a worktree or feature branch) must run the real
+    gates; only code-less tickets auto-skip."""
+
+    def test_admin_dept_with_failing_code_fails_gates(self, space_free_proj):
+        project = space_free_proj
+        make_code_project(project, "T7", passing_tests=False)
+        make_company(project, "T7", dept="hr")
+
+        result = run_gates(project, "hr")
+        assert result.returncode == 2
+        gates_file = (
+            project / ".company" / "departments" / "hr" / "components" / "T7" / "gates.json"
+        )
+        gates = json.loads(gates_file.read_text())
+        assert gates["gates"]["tests-pass"]["status"] == "fail"
+        assert "admin-dept-ticket" not in gates.get("gates", {}), (
+            "admin auto-pass skipped the code gates"
+        )
+
+    def test_admin_dept_without_code_still_auto_passes(self, space_free_proj):
+        """The legitimate skip: no worktree and no feature branch."""
+        project = space_free_proj
+        make_company(project, "T8", dept="hr")
+
+        result = run_gates(project, "hr")
+        assert result.returncode == 0
+        gates_file = (
+            project / ".company" / "departments" / "hr" / "components" / "T8" / "gates.json"
+        )
+        gates = json.loads(gates_file.read_text())
+        assert gates["gates"]["admin-dept-ticket"]["status"] == "pass"

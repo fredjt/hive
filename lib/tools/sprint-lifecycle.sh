@@ -898,6 +898,47 @@ After exit 0, this script will:
     return 1
   fi
 
+  # Item 7: a clean exit is not proof of code. The field run moved a ticket
+  # to in-review 21 s after an engineer that executed zero actions (bare
+  # fences the old parser dropped) - a branch with only a RED commit then
+  # sailed through the gates. Require a NEW commit on the feature branch
+  # (since the TDD-RED commit, or any commit when RED was skipped) before
+  # the in-review move; admin/non-code tickets (no worktree, no branch)
+  # are exempt, as are tickets whose RED commit is all that exists.
+  local _I7_WT="$PROJECT_ROOT/.worktrees/$ticket"
+  local _I7_BR="feature/$ticket"
+  local _I7_GIT=""
+  if [ -d "$_I7_WT" ]; then
+    _I7_GIT="$_I7_WT"
+  elif git -C "$PROJECT_ROOT" rev-parse --verify "$_I7_BR" >/dev/null 2>&1; then
+    _I7_GIT="$PROJECT_ROOT"
+  fi
+  if [ -n "$_I7_GIT" ]; then
+    local _I7_RED _I7_NEW _I7_BASE
+    _I7_RED=$(git -C "$_I7_GIT" log --grep="\[TDD-RED\] ${ticket}" "$_I7_BR" --format=%H -1 2>/dev/null)
+    if [ -n "$_I7_RED" ]; then
+      _I7_NEW=$(git -C "$_I7_GIT" log "${_I7_RED}..${_I7_BR}" --oneline 2>/dev/null | wc -l)
+    else
+      _I7_BASE=$(git -C "$_I7_GIT" symbolic-ref --short HEAD 2>/dev/null || echo main)
+      _I7_NEW=$(git -C "$_I7_GIT" log "${_I7_BASE}..${_I7_BR}" --oneline 2>/dev/null | wc -l)
+    fi
+    if [ "${_I7_NEW:-0}" -eq 0 ]; then
+      log "$log_prefix: engineer exited 0 but added no commit on $_I7_BR - bouncing to in-progress"
+      scripted_move "$dept" "$ticket" in-progress "Engineer committed nothing (no new commit on $_I7_BR)"
+      bash "$SKILL_DIR/lib/tools/ticket-comment.sh" "$dept" "$ticket" "sprint-lifecycle" \
+        "Engineer exited cleanly but committed nothing on $_I7_BR (no new commit) - bounced to in-progress" \
+        >> "$LOG" 2>&1 || true
+      jq '.bounce_count = ((.bounce_count // 0) + 1)' "$TFILE" > "${TFILE}.tmp.$$" && mv "${TFILE}.tmp.$$" "$TFILE"
+      local _I7_BC
+      _I7_BC=$(jq -r '.bounce_count // 0' "$TFILE" 2>/dev/null)
+      if [ "${_I7_BC:-0}" -ge "$MAX_VERIFICATION_BOUNCES" ]; then
+        log "$log_prefix: bounce limit exceeded ($_I7_BC >= $MAX_VERIFICATION_BOUNCES, engineer-no-commit) -> backlog"
+        defer_on_bounce_cap "$dept" "$ticket" "$_I7_BC" "engineer-no-commit"
+      fi
+      return 1
+    fi
+  fi
+
   # ── Phase 3: Move to in-review + run gates ──
   log "$log_prefix: moving to in-review, running gates"
 

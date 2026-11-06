@@ -131,6 +131,27 @@ case "${STUB_MODE:-noop}" in
     ;;
 esac
 
+# Item 7: a real engineer commits its implementation. Every code-flow
+# mode commits a GREEN file so the ticket can reach in-review (the
+# lifecycle now requires a new commit before that move). happy has its
+# own GREEN commit inside its case branch.
+case "${STUB_MODE:-noop}" in
+  # only the modes whose tests drive a code flow to in-review need the
+  # stub engineer to commit (happy commits inside its own branch;
+  # noop / ceo-noop / vp-noop stay zero-action by design)
+  fail-verify|bounce|go)
+    if [ "$HIVE_AGENT" = "ic-engineer" ] && [ -n "${HIVE_TICKET:-}" ] \
+       && [ -d "$PROJECT_ROOT/.worktrees/$HIVE_TICKET" ]; then
+      printf 'def impl():\n    return True\n' > "$PROJECT_ROOT/.worktrees/$HIVE_TICKET/impl_stub.py" \
+        2>> "$AGENT_SPAWN_LOG"
+      git -C "$PROJECT_ROOT/.worktrees/$HIVE_TICKET" add impl_stub.py \
+        2>> "$AGENT_SPAWN_LOG"
+      git -C "$PROJECT_ROOT/.worktrees/$HIVE_TICKET" commit \
+        -m "[TDD-GREEN] $HIVE_TICKET: stub implementation" >> "$AGENT_SPAWN_LOG" 2>&1
+    fi
+    ;;
+esac
+
 # Item 4: emit the harness-shaped final result event (num_actions is
 # what the lifecycle validates after planning spawns), and for the CEO
 # produce the direction file — the observable effects a real planning
@@ -401,11 +422,15 @@ def test_tester_loop_is_bounded_when_no_tdd_red_commit(tmp_path):
     assert "Skipping the tester from now on" in bodies, (
         "no 3-strike tester-exhausted comment on the ticket"
     )
-    assert "gate failure" in bodies.lower(), (
-        "no gate-failure comments on the ticket"
+    # Item 7: the no-commit ticket now bounces BEFORE the gates with the
+    # no-commit reason (previously it reached in-review and the gates
+    # failed there); either reason proves the bounce was recorded.
+    assert ("gate failure" in bodies.lower()) or \
+           ("committed nothing" in bodies.lower()), (
+        "no bounce reason on the ticket"
     )
-    assert "no commits" in bodies.lower(), (
-        "the gate bounce did not cite the missing commits - it bounced on "
+    assert "no commits" in bodies.lower() or "committed nothing" in bodies.lower(), (
+        "the bounce did not cite the missing commits - it bounced on "
         "the skip_tdd_red zombie gate instead of evaluating the branch"
     )
     assert "safety valve" in r.stderr.lower(), (
@@ -514,7 +539,9 @@ def test_gate_failure_bounce_hits_per_ticket_cap(tmp_path):
     ticket could burn up to 100 loop iterations and starve the rest of
     the sprint. The gate-failure branch now applies the same per-ticket
     bounce cap (MAX_VERIFICATION_BOUNCES) as the verifier-bounce path."""
-    h = LifecycleHarness(tmp_path, mode="noop", with_code_branch=True,
+    # happy mode: the engineer commits a GREEN implementation, so the
+    # ticket reaches the gates (failing_tests keeps them failing).
+    h = LifecycleHarness(tmp_path, mode="happy", with_code_branch=True,
                          failing_tests=True)
     ticket_file = (h.project / ".company" / "departments" / DEPT / "tickets"
                    / "sprint-current" / f"{TICKET}.json")
@@ -1183,3 +1210,28 @@ def test_verified_plans_are_not_retried(tmp_path):
     direction = state.get("ceo_direction_path")
     assert direction and direction != "null", state
     assert Path(direction).exists(), f"direction file missing: {direction}"
+
+
+def test_engineer_without_commit_bounces_not_in_review(tmp_path):
+    """Item 7: an engineer that exits 0 without a new commit must not
+    reach in-review. The field run moved HR-0002 to in-review 21 s
+    after a zero-action engineer, and the RED-only branch then passed
+    the gates. The ticket bounces with the no-commit reason and the
+    per-ticket bounce cap defers it to backlog."""
+    h = LifecycleHarness(tmp_path, mode="noop", with_code_branch=True,
+                         failing_tests=False)
+    ticket_file = (h.project / ".company" / "departments" / DEPT / "tickets"
+                   / "sprint-current" / f"{TICKET}.json")
+    ticket_file.write_text(_ticket_json("sprint-current"))
+
+    r = h.run(extra_env={"HIVE_MAX_VERIFICATION_BOUNCES": "2"})
+    assert r.returncode == 0, r.stderr
+    assert "engineer exited 0 but added no commit" in r.stderr, r.stderr
+    assert r.stderr.count("engineer exited 0 but added no commit") == 2, (
+        f"expected 2 no-commit bounces before the cap: {r.stderr[-2000:]}")
+    assert "bounce limit exceeded" in r.stderr, r.stderr
+    assert "safety valve" not in r.stderr.lower(), r.stderr[-2000:]
+    assert h.ticket_at("in-review") is None, (
+        "ticket must not reach in-review without a commit")
+    assert h.ticket_at("backlog") is not None, (
+        "the bounce cap must defer the ticket to backlog")

@@ -258,19 +258,12 @@ BRANCH="feature/$TID"
 GATE_FAIL=""
 
 # ── Pre-gate: classify code vs. non-code ticket ─────────────────────
-# Admin departments NEVER produce code; their tickets are documents/configs.
-# Auto-pass: the verification IC will review the deliverable content.
-if [ -f "$SCRIPT_DIR/dept-helpers.sh" ]; then
-  # shellcheck disable=SC1091
-  . "$SCRIPT_DIR/dept-helpers.sh"
-  if is_admin_dept "$DEPT"; then
-    record_gate "$TID" "admin-dept-ticket" "pass" "admin dept ($DEPT) — no scripted gates apply"
-    mark_gates_passed "$TID"
-    exit 0
-  fi
-fi
-
-# Engineering ticket without worktree/branch is also non-code
+# Item 7: an admin department is NOT a blanket gate waiver. The field
+# run's HR-0002 branch carried only a failing [TDD-RED] test and still
+# passed "strict gates" via the is_admin_dept auto-pass. The only
+# legitimate skip is "no code to gate": no worktree AND no feature
+# branch. Admin tickets with a worktree/branch run the real gates; the
+# verification IC reviews the deliverable content either way.
 IS_CODE=false
 if [ -d "$WORKTREE" ]; then
   IS_CODE=true
@@ -279,7 +272,15 @@ elif git -C "$PROJECT_ROOT" rev-parse --verify "$BRANCH" >/dev/null 2>&1; then
 fi
 
 if [ "$IS_CODE" = false ]; then
-  record_gate "$TID" "non-code-ticket" "pass" "no worktree or feature branch — code gates skipped"
+  if [ -f "$SCRIPT_DIR/dept-helpers.sh" ]; then
+    # shellcheck disable=SC1091
+    . "$SCRIPT_DIR/dept-helpers.sh"
+  fi
+  if is_admin_dept "$DEPT" 2>/dev/null; then
+    record_gate "$TID" "admin-dept-ticket" "pass" "admin dept ($DEPT), no worktree or feature branch - code gates skipped"
+  else
+    record_gate "$TID" "non-code-ticket" "pass" "no worktree or feature branch - code gates skipped"
+  fi
   mark_gates_passed "$TID"
   exit 0
 fi
