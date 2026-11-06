@@ -39,6 +39,11 @@ def _save_llm_test(rc: int) -> int:
     the last run's outcome + timestamp. Best-effort: never changes rc."""
     rec = dict(_TEST_RECORD)
     rec["ok"] = (rc == 0)
+    # Item 12: reply: "" with ok: true was a silent yellow light. Keep
+    # ok (the endpoint answered) but record the warning so the
+    # dashboard's Config panel can show it.
+    if rc == 0 and not (rec.get("reply") or "").strip():
+        rec["warning"] = "empty reply - endpoint answered but returned no content"
     try:
         from datetime import datetime, timezone
         rec["ts"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -165,6 +170,11 @@ def _llm_test() -> int:
         return 1
     first_line = (parsed.get("content") or "").strip().splitlines() or [""]
     print(f"  reply:    {first_line[0][:200]}")
+    if not first_line[0].strip():
+        # Item 12: an empty reply is not a clean PASS - the endpoint
+        # answered but gave nothing back. Keep rc 0 (the endpoint works)
+        # but say so, and flag the persisted record below.
+        print("  WARNING:  empty reply - endpoint answered with no content")
     print("RESULT: PASS")
     _TEST_RECORD.clear()
     _TEST_RECORD.update(provider=resolved.provider or "", model=resolved.model or "",

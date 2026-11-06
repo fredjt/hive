@@ -878,6 +878,37 @@ class TestCheckCompanyDirScript:
         assert "Usage" in result.stderr or "usage" in result.stderr.lower()
 
 
+class TestStartupBanners:
+    """Items 10/11: the start-time warnings and ports tell the truth."""
+
+    def test_rounds_absence_does_not_warn(self, tmp_path):
+        """Item 10: rounds/ is created at RUNTIME by the runner, after the
+        check - a freshly init'd company (no rounds yet) must not warn
+        'missing expected subdirs: rounds' on every start."""
+        proj = tmp_path / "proj"
+        company = proj / ".company"
+        for sub in ("departments", "sprints", "logs"):
+            (company / sub).mkdir(parents=True)
+        result = subprocess.run(
+            ["bash", f"{SCRIPTS_DIR}/check-company-dir.sh", str(proj)],
+            capture_output=True, text=True, timeout=10,
+        )
+        assert result.returncode == 0, result.stderr
+        assert "missing expected subdirs" not in result.stderr, (
+            f"fresh company warned about runtime dirs: {result.stderr}"
+        )
+
+    def test_banner_uses_dashboard_port_not_8080(self):
+        """Item 11: nothing listens on 8080; the board is on
+        $DASHBOARD_PORT (default 3456). The banner must not print a
+        port that has no listener."""
+        src = (Path(SCRIPTS_DIR) / "company-start.sh").read_text()
+        assert "localhost:8080" not in src, (
+            "start banner still hardcodes port 8080"
+        )
+        assert 'Management Dashboard: http://localhost:$DASHBOARD_PORT' in src
+
+
 class TestSprintStateScript:
     """Test sprint-state.sh — sourcing and functions."""
 

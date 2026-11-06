@@ -144,6 +144,26 @@ class McpHttpClient:
             "method": "tools/call",
             "params": {"name": tool_name, "arguments": arguments},
         })
+        # Item 8: a tool result can carry isError: true (the server's
+        # "Unknown tool: ..." error arrives this way). The old code
+        # returned ok: True with the error text as the "response", so the
+        # model and the logs saw a success. Check the flag explicitly.
+        if isinstance(result, dict) and result.get("error") is not None:
+            return {
+                "ok": False,
+                "tool": tool_name,
+                "arguments": arguments,
+                "error": str(result["error"]),
+            }
+        tool_result = (result.get("result") if isinstance(result, dict)
+                       and "result" in result else result)
+        if isinstance(tool_result, dict) and tool_result.get("isError"):
+            return {
+                "ok": False,
+                "tool": tool_name,
+                "arguments": arguments,
+                "error": self.extract_text(result) or "MCP tool returned isError",
+            }
         return {
             "ok": True,
             "tool": tool_name,

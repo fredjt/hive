@@ -34,7 +34,10 @@ done
 if [ -f "$COMPANY_DIR/org-chart.json" ]; then
   while read -r d; do
     [ -n "$d" ] && DEPT_SET[$d]=1
-  done < <(jq -r '.departments[]?.name // empty' "$COMPANY_DIR/org-chart.json" 2>/dev/null || true)
+  # Item 9: org-chart.json's .departments is a KEYED object (name ->
+  # metadata); '.departments[]?.name' yielded nothing, so org-chart
+  # departments never reached the roster (vp-finance / vp-legal missing).
+  done < <(jq -r 'if (.departments | type) == "object" then (.departments | keys[]) elif (.departments | type) == "array" then (.departments[]?.name // empty) else empty end' "$COMPANY_DIR/org-chart.json" 2>/dev/null || true)
 fi
 if [ -d "$COMPANY_DIR/departments" ]; then
   for dept_dir in "$COMPANY_DIR/departments"/*/; do

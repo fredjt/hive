@@ -1555,3 +1555,56 @@ class TestDoctorHarnessProbe:
         assert "SELFTEST: OK" in out, out[-800:]
         assert "[selftest] ok interpreter" in out, out[-800:]
         assert "FAIL" not in out.replace("spawn path probe failed", "")
+
+class TestLlmTestEmptyReply:
+    """Item 12: an empty reply with ok: true is a yellow light, not a
+    green one - the persisted llm-test.json must carry a warning."""
+
+    def test_empty_reply_records_warning(self, tmp_path):
+        import json
+        import sys
+        sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
+        from hive_cli.commands import llm
+
+        company = tmp_path / ".company"
+        company.mkdir()
+        old = dict(os.environ)
+        os.environ["COMPANY_DIR"] = str(company)
+        try:
+            llm._TEST_RECORD.clear()
+            llm._TEST_RECORD.update(provider="openai", model="m", base_url="u",
+                                    key_source="none", latency_ms=1,
+                                    reply="", error="")
+            rc = llm._save_llm_test(0)
+            assert rc == 0  # best-effort: never changes rc
+            rec = json.loads((company / "state" / "llm-test.json").read_text())
+            assert rec["ok"] is True
+            assert rec.get("warning"), (
+                f"empty reply persisted without a warning: {rec}"
+            )
+        finally:
+            os.environ.clear()
+            os.environ.update(old)
+
+    def test_nonempty_reply_has_no_warning(self, tmp_path):
+        import json
+        import sys
+        sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
+        from hive_cli.commands import llm
+
+        company = tmp_path / ".company"
+        company.mkdir()
+        old = dict(os.environ)
+        os.environ["COMPANY_DIR"] = str(company)
+        try:
+            llm._TEST_RECORD.clear()
+            llm._TEST_RECORD.update(provider="openai", model="m", base_url="u",
+                                    key_source="none", latency_ms=1,
+                                    reply="pong", error="")
+            llm._save_llm_test(0)
+            rec = json.loads((company / "state" / "llm-test.json").read_text())
+            assert rec["ok"] is True
+            assert "warning" not in rec
+        finally:
+            os.environ.clear()
+            os.environ.update(old)

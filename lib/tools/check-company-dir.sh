@@ -97,7 +97,10 @@ fi
 # Sanity check: expected children. If they're missing the dir is hollow
 # (newly init'd or partially restored). Warn but allow.
 MISSING=()
-for sub in departments rounds sprints logs ; do
+# Item 10: rounds/ is created at RUNTIME by the sprint-lifecycle runner
+# (runner.pid / heartbeat), which starts after this check - listing it
+# here warned "missing expected subdirs: rounds" on every start.
+for sub in departments sprints logs ; do
   [ -d "$CDIR/$sub" ] || MISSING+=("$sub")
 done
 if [ "${#MISSING[@]}" -gt 0 ]; then

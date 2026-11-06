@@ -168,10 +168,15 @@ class RoundResponder:
 
     def _tdd_red(self, tid: str, text: str) -> str:
         wt = self._worktree(text)
+        # The root conftest.py makes the worktree root importable from
+        # tests/ (pytest puts the conftest's directory on sys.path); the
+        # real gates now run for admin depts too (item 7), so the test
+        # must genuinely pass, not just be skipped.
         cmd = (
+            f"touch {self._q(wt + '/conftest.py')}\n"
             f"mkdir -p {self._q(wt + '/tests')}\n"
             f"cat > {self._q(wt + '/tests/test_add.py')} <<'EOF'\n{FEATURE_TEST}EOF\n"
-            f"git -C {self._q(wt)} add tests/test_add.py\n"
+            f"git -C {self._q(wt)} add conftest.py tests/test_add.py\n"
             f'git -C {self._q(wt)} -c user.name=hive-agent -c user.email=agent@hive.local '
             f'commit -q -m "[TDD-RED] {tid}: failing test for add()"'
         )
