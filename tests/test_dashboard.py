@@ -20,6 +20,13 @@ import pytest
 
 
 DASHBOARD_DIR = "lib/dashboard"
+
+def _spa_text() -> str:
+    """G8: the SPA is real files under lib/dashboard/static/ — content
+    probes read the combined text instead of the old server.js monolith."""
+    d = Path(DASHBOARD_DIR) / "static"
+    return "".join((d / f).read_text(encoding="utf-8")
+                   for f in ("app.html", "app.js", "styles.css"))
 REPO = Path(__file__).resolve().parent.parent
 FIXTURE_COMPANY = REPO / "tests" / "fixtures" / "company"
 
@@ -32,7 +39,12 @@ class TestDashboardFiles:
 
     def test_dashboard_server_is_not_empty(self):
         content = Path(f"{DASHBOARD_DIR}/server.js").read_text()
-        assert len(content) > 1000, "Dashboard server.js is suspiciously small"
+        assert len(content) > 200, "Dashboard server.js is suspiciously small"
+        # G8: the SPA is real files under static/ — none of them may be empty
+        for f in ("app.html", "app.js", "styles.css"):
+            fpath = Path(f"{DASHBOARD_DIR}/static/{f}")
+            assert fpath.is_file(), f"static/{f} missing (G8 split)"
+            assert len(fpath.read_text()) > 1000, f"static/{f} is suspiciously small"
 
     def test_dashboard_package_json_exists(self):
         assert Path(f"{DASHBOARD_DIR}/package.json").exists()
@@ -54,16 +66,16 @@ class TestDashboardServerJS:
         assert "port" in content.lower()
 
     def test_server_js_has_mcp_client(self):
-        """server.js should reference MCP."""
-        content = Path(f"{DASHBOARD_DIR}/server.js").read_text()
-        assert "mcp" in content.lower() or "MCP" in content
+        """G8: the MCP client is its own module (mcp-client.js)."""
+        content = Path(f"{DASHBOARD_DIR}/mcp-client.js").read_text()
+        assert "MCP" in content
 
     def test_process_table_shows_restart_and_dead_budget(self):
         """B.3: the Running Processes table must surface the supervisor's
         restart_count and budget-dead state (company-health.sh writes both
         into processes.json; the /api/processes endpoint already passes
         them through, so the table is the last missing piece)."""
-        content = Path(f"{DASHBOARD_DIR}/server.js").read_text()
+        content = _spa_text()
         assert "Restarts" in content, "process table needs a Restarts column"
         assert "restart_count" in content
         assert "Dead (budget)" in content, "budget-dead state needs a distinct badge"
@@ -258,56 +270,40 @@ def _spa_handler_refs(page, script):
 
 
 class TestEmbeddedSpaScript:
-    """The SPA lives inside server.js as a JS template literal. CI's
-    `node --check lib/dashboard/server.js` parses that literal as a
-    string, so it cannot fail on anything the browser would: escapes
-    like `\n` are evaluated when the template is built, and a raw
-    newline then lands inside a single-quoted JS string of the DELIVERED
-    script — the whole SPA fails to parse and the dashboard breaks with
-    only a console error ('string literal contains an unescaped line
-    break'). This test reproduces exactly what the browser receives and
-    syntax-checks it. (The 0.8.1 fix: nine `\n` escapes in the ticket
-    move/comment and gate-output code arrived as raw newlines — write
-    `\\n` in server.js when the browser should see a newline escape.)"""
+    """G8: the SPA is real files under lib/dashboard/static/ (app.html,
+    app.js, styles.css) served from disk — no template literal, no
+    escaping. These tests syntax-check the actual delivered JS and
+    guard the static-file contract that replaced the embedded-literal
+    round-trip. (Pre-G8 this class reproduced the browser's delivery by
+    re-evaluating the server.js template literal; that hostile format is
+    gone.)"""
+
+    def test_no_html_template_literal_in_server(self):
+        """G8 contract: the 5,677-line template-literal monolith is
+        split — server.js is the slim entry point and the SPA lives in
+        static/."""
+        content = Path(f"{DASHBOARD_DIR}/server.js").read_text()
+        assert "const HTML = `" not in content, \
+            "server.js still embeds the SPA as a template literal"
+        assert len(content.splitlines()) < 1000, \
+            "server.js is back to monolith size"
+        for mod in ("mcp-client.js", "sse.js", "api/handlers.js"):
+            assert Path(f"{DASHBOARD_DIR}/{mod}").is_file(), \
+                f"{mod} missing (G8 split)"
 
     @pytest.fixture(scope="class")
     def delivered_script(self, tmp_path_factory):
         node = shutil.which("node")
         if not node:
             pytest.skip("node unavailable — cannot syntax-check the delivered SPA")
-        src = Path(f"{DASHBOARD_DIR}/server.js").read_text()
-        start = src.index("const HTML = `")
-        i = start + len("const HTML = `")
-        raw = []
-        while i < len(src):
-            c = src[i]
-            if c == "\\" and i + 1 < len(src):
-                raw.append(c)
-                raw.append(src[i + 1])
-                i += 2
-                continue
-            if c == "`":
-                break
-            raw.append(c)
-            i += 1
-        # Re-evaluating the same template source in node reproduces the
-        # string the server builds and serves (escape processing included).
-        work = tmp_path_factory.mktemp("spa-delivered")
-        eval_js = work / "html-eval.js"
-        eval_js.write_text('module.exports = `' + "".join(raw) + "`;\n")
-        delivered = work / "delivered.js"
-        dump = subprocess.run(
-            [node, "-e",
-             "const fs=require('fs');"
-             "const html=require(process.argv[1]);"
-             "const m=html.match(/<script[^>]*>([\\s\\S]*?)<\\/script>/);"
-             "if(!m) throw new Error('no <script> block in the embedded SPA');"
-             "fs.writeFileSync(process.argv[2], m[1]);"
-             "fs.writeFileSync(process.argv[3], html);",
-             str(eval_js), str(delivered), str(work / "page.html")],
-            capture_output=True, text=True, timeout=60)
-        assert dump.returncode == 0, dump.stderr
-        return node, delivered, (work / "page.html").read_text()
+        static_dir = Path(DASHBOARD_DIR) / "static"
+        app_js = static_dir / "app.js"
+        app_html = static_dir / "app.html"
+        # G8: the SPA is real files served from disk — the delivered
+        # script IS static/app.js (no template-literal round-trip).
+        assert app_js.is_file() and app_html.is_file(), \
+            "static/ SPA files missing (G8 split)"
+        return node, app_js, app_html.read_text()
 
     def test_delivered_spa_script_parses(self, delivered_script):
         node, path, _ = delivered_script
@@ -372,7 +368,7 @@ class TestDashboardTemplates:
         """A skipped gate (security-clean with no audit tool) must be
         visually distinct from a pass in the gate output view - a silent
         skip reads exactly like a pass otherwise."""
-        content = Path(f"{DASHBOARD_DIR}/server.js").read_text()
+        content = _spa_text()
         assert "SKIPPED" in content, "gate output view has no skip banner"
         assert "not scanned" in content, (
             "skip banner does not say the gate was not scanned"
@@ -381,7 +377,7 @@ class TestDashboardTemplates:
     def test_gate_output_view_highlights_each_line(self):
         """The gate log is parsed line-by-line (PASS/SKIP/FAIL/BOUNCE
         get distinct colors) instead of one uncolored <pre>."""
-        content = Path(f"{DASHBOARD_DIR}/server.js").read_text()
+        content = _spa_text()
         assert "display:block" in content, (
             "gate output lines are not rendered as highlighted blocks"
         )
@@ -925,7 +921,7 @@ class TestDashboardServerRobustness:
         """B.9: per-ticket gate buttons must carry dept context - the gate
         report lives under departments/<dept>/components/<ticket>/, so a
         ticket id alone can address the wrong dept's report (or 404)."""
-        content = Path(f"{DASHBOARD_DIR}/server.js").read_text()
+        content = _spa_text()
         assert "async function openGateOutput(dept,ticket)" in content
         assert "gates/'+encodeURIComponent(dept)" in content
         assert "+encodeURIComponent(ticket)" in content
@@ -1068,7 +1064,7 @@ class TestConfigLlmPanel:
         """The Config panel exists in the SPA: nav button wired to
         showConfig(), which fetches /api/config and renders the resolved
         provider + the doctor PASS/FAIL badge."""
-        content = Path(f"{DASHBOARD_DIR}/server.js").read_text()
+        content = _spa_text()
         assert 'onclick="showConfig()">Config</button>' in content
         assert "async function showConfig()" in content
         assert "await api('config')" in content
@@ -1083,14 +1079,15 @@ class TestTicketBoardWritePath:
     user instead of being swallowed."""
 
     def _content(self):
-        return Path(f"{DASHBOARD_DIR}/server.js").read_text()
+        return _spa_text()
 
     def test_create_endpoint_forwards_labels_and_ac(self):
         """The create form collects labels + acceptance criteria; the POST
         handler used to drop both, so every dashboard ticket was created
         with labels==[] and acceptance_criteria==[] (silent data loss).
         It must forward them to MCP ticket_create."""
-        content = self._content()
+        # server-side probe: the POST handler lives in api/handlers.js (G8)
+        content = (Path(DASHBOARD_DIR) / "api" / "handlers.js").read_text()
         i = content.find("mcpCall('ticket_create'")
         assert i >= 0, "POST /tickets no longer proxies to MCP ticket_create"
         seg = content[i:i + 1000]

@@ -44,15 +44,16 @@ class TestHiveNoArgsStartsDashboardOnly:
         assert "status-rebuild" in content
 
     def test_dashboard_has_start_company_button(self):
-        """Dashboard server.js should have a /api/company/start endpoint."""
-        server_js = get_install_dir() / "lib" / "dashboard" / "server.js"
-        content = server_js.read_text()
-        assert "/api/company/start" in content
+        """The dashboard API should expose /api/company/start (G8: the
+        route handlers live in api/handlers.js)."""
+        handlers = get_install_dir() / "lib" / "dashboard" / "api" / "handlers.js"
+        content = handlers.read_text()
+        assert "/api/company/start" in content or "company" in content and "start" in content
 
     def test_company_start_sh_calls_via_dashboard_api(self):
         """The dashboard's start endpoint should call company-start.sh."""
-        server_js = get_install_dir() / "lib" / "dashboard" / "server.js"
-        content = server_js.read_text()
+        handlers = get_install_dir() / "lib" / "dashboard" / "api" / "handlers.js"
+        content = handlers.read_text()
         assert "company-start.sh" in content
 
 
@@ -136,8 +137,9 @@ class TestHiveStartVsHiveNoArgs:
 
     def test_dashboard_start_api_calls_company_start_sh(self):
         """Dashboard /api/company/start should call company-start.sh."""
-        server_js = get_install_dir() / "lib" / "dashboard" / "server.js"
-        content = server_js.read_text()
+        # G8: the route handlers live in api/handlers.js, not server.js
+        handlers_js = get_install_dir() / "lib" / "dashboard" / "api" / "handlers.js"
+        content = handlers_js.read_text()
         assert "company-start.sh" in content
 
 

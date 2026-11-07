@@ -38,7 +38,7 @@ When working on documentation that references specific code areas, the following
 - `lib/tools/AGENTS.md` — 101 bash scripts organized by category (lifecycle, tickets, chat, gates, etc.)
 - `lib/hive_mcp/tools/AGENTS.md` — MCP tool modules, their domains, and the Python→bash bridge pattern
 - `lib/agents/AGENTS.md` — agent prompt architecture, role hierarchy, and prompt conventions
-- `lib/dashboard/AGENTS.md` — single-file Node.js SPA architecture
+- `lib/dashboard/AGENTS.md` — modular Node.js SPA architecture (G8 split)
 - `lib/hive_cli/AGENTS.md` and `lib/hive_cli/commands/AGENTS.md` — CLI dispatcher and handler patterns
 - `packaging/AGENTS.md` — installer behavior, hook registration, idempotency guarantees
 

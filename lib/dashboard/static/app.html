@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Company Board</title>
+<link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+<div class="header">
+  <h1>🐝 Hive Dashboard</h1>
+  <div class="company-control" id="company-control" style="display:none; margin-left: 16px;">
+    <button id="btn-start-company" onclick="startCompany()" style="background:#1f6f3a;color:#fff;border:none;padding:6px 14px;border-radius:6px;cursor:pointer;margin-right:6px;">▶ Start Company</button>
+    <button id="btn-stop-company" onclick="stopCompany()" style="background:#8a1f1f;color:#fff;border:none;padding:6px 14px;border-radius:6px;cursor:pointer;">■ Stop Company</button>
+    <span id="company-status-pill" style="margin-left:10px;font-size:12px;color:#8b949e;">status: unknown</span>
+  </div>
+  <div class="nav" id="nav" style="display:none">
+    <button class="active" onclick="showDashboard()">Tickets</button>
+    <button onclick="showChats()">Chat</button>
+    <button onclick="showSprint()">Sprint</button>
+    <button onclick="showOrgChart()">Org</button>
+    <button onclick="showRoster()">Agents</button>
+    <button onclick="showReports()">Reports</button>
+    <button onclick="showLogs()">Logs</button>
+    <button onclick="showVerification()">Verification</button>
+    <button onclick="showActivity()">Activity</button>
+    <button onclick="showRounds()">Rounds</button>
+    <button onclick="showGitHub()">GitHub</button>
+    <button onclick="showReleases()">Releases</button>
+    <button onclick="showConfig()">Config</button>
+    <div class="dropdown-wrap">
+      <button onclick="toggleMore(event)">More &#9662;</button>
+      <div class="dropdown" id="more-dropdown">
+        <button onclick="showGit();closeMore()">Git</button>
+        <button onclick="showBrief();closeMore()">Brief</button>
+        <button onclick="showProcesses();closeMore()">Processes</button>
+      </div>
+    </div>
+  </div>
+  <span id="live-indicator" style="font-size:11px;color:#3fb950;margin-left:auto;white-space:nowrap"></span>
+  <span class="company-path" id="company-path" onclick="showConnect()" title="Click to change project" style="margin-left:12px"></span>
+</div>
+<div class="container" id="content"></div>
+<div class="modal-overlay" id="modal-overlay" onclick="if(event.target===this)closeModal()">
+  <div class="modal" id="modal"></div>
+</div>
+<script src="/app.js"></script>
+</body>
+</html>

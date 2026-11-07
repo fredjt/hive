@@ -25,7 +25,7 @@ lib/                                  Runtime core (see lib/AGENTS.md for detail
   core/                               Foundational bash scripts (agent-spawn, init)
   tools/                              ~80 bash scripts (~11.2k lines)
   agents/                             Agent prompt files
-  dashboard/                          Node.js web dashboard (single-file SPA)
+  dashboard/                          Node.js web dashboard (modular SPA, static/ frontend)
   templates/                          GitHub PR template, CI/release workflows
 packaging/                            Install scripts, build, metadata
 tests/                                pytest test suite
@@ -191,7 +191,7 @@ lib/                                  Runtime core
   core/                               Foundational bash scripts (agent-spawn, init)
   tools/                              ~80 bash scripts (~11.2k lines)
   agents/                             Agent prompt files
-  dashboard/                          Node.js web dashboard (single-file SPA)
+  dashboard/                          Node.js web dashboard (modular SPA, static/ frontend)
   templates/                          GitHub PR template, CI/release workflows
 packaging/                            Install scripts, build, metadata
 tests/                                pytest test suite

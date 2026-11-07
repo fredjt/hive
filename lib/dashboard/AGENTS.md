@@ -12,19 +12,15 @@ A self-contained Node.js web UI for viewing and managing the Hive company orches
 
 ## Architecture
 
-### Single-file server (`server.js`, ~5800 lines)
+### Module layout (G8: the 5,677-line monolith is split)
 
-Everything lives in one file. Key sections:
-
-| Lines | Section |
-|-------|---------|
-| 12–108 | MCP client — all write operations proxy to the Hive MCP server at `http://127.0.0.1:7891/mcp` (configurable via `HIVE_MCP_URL` env var). Session management via `mcp-session-id` header. |
-| 110–246 | SSE event engine — file watchers on `.company/` subdirectories emit debounced SSE events (`ticket-change`, `chat-change`, `log-change`, `spawn-stream-change`, etc.) with fingerprint dedup. |
-| 248–374 | Request parsing & routing helpers |
-| 376–2089 | API endpoint handlers (~35 endpoints). All reads are file-based; writes go through the MCP client. |
-| 2091–5773 | Embedded frontend — GitHub-dark themed SPA with vanilla JS, ~17 view panels, no external libraries. |
-| 5775–5795 | HTTP server bootstrap |
-
+| File | Section |
+|------|---------|
+| `server.js` (~75 lines) | HTTP entry point — arg parsing, static file serving, `/api/*` dispatch, bootstrap |
+| `api/handlers.js` | API endpoint handlers (~35 endpoints) + runtime `companyDir`/`port` state. All reads are file-based; writes go through the MCP client |
+| `mcp-client.js` | MCP client — all write operations proxy to the Hive MCP server at `http://127.0.0.1:7891/mcp` (configurable via `HIVE_MCP_URL`). Session management via `mcp-session-id` header |
+| `sse.js` | SSE event engine — file watchers on `.company/` subdirectories emit debounced SSE events (`ticket-change`, `chat-change`, `log-change`, `spawn-stream-change`, etc.) with fingerprint dedup |
+| `static/app.html`, `static/app.js`, `static/styles.css` | The frontend — GitHub-dark themed SPA with vanilla JS, ~17 view panels, no external libraries. Real files served from disk: **no template literal, no escaping** |
 ### Data flow
 
 The dashboard is **read-only from the `.company/` directory**. All mutations proxy through the MCP server (`lib/hive_mcp/server.py`), which shims to bash scripts in `lib/tools/`.
@@ -40,18 +36,11 @@ Vanilla JS SPA with client-side routing. Panels: Dashboard, Board (Kanban), Chat
 ## Key conventions
 
 - **No external dependencies** — adding one requires updating `package.json` and justifying the need.
-- **No build step** — the file is edited and served directly.
-- **The SPA is a template literal: escape backslashes twice.** The embedded
-  HTML/JS is built by evaluating a JS template literal, so every `\n` you
-  type in the script section arrives at the browser as a RAW NEWLINE —
-  inside a string literal that is a SyntaxError that kills the entire SPA
-  (the server itself parses fine, so `node --check server.js` cannot see
-  it; `tests/test_dashboard.py::TestEmbeddedSpaScript` syntax-checks the
-  DELIVERED script and catches it). When the browser should see a newline
-  escape, write `\\n` (two backslashes + n in the file, one backslash + n
-  in the browser). The existing `\\'` spellings in onclick builders are the
-  same convention: two backslashes + quote in the file, one + quote in the
-  browser.
+- **No build step** — static files are edited and served directly.
+- **The SPA is real files under `static/`** — edit `app.js` /
+  `styles.css` / `app.html` directly; `node --check static/app.js`
+  validates exactly what the browser receives (no template-literal
+  round-trip to reason about).
 - **All API responses are JSON** (GET/POST) except `/api/events` (SSE) and the root route (HTML).
 - **Ticket statuses/types/priorities**: see root `AGENTS.md` for the full list.
 - **MCP write methods:** `ticket_create`, `ticket_move`, `ticket_comment`, `ticket_approve`, `inbox_write`, `gates_run`, `gates_check`
@@ -64,18 +53,16 @@ node server.js --dir .company --port 3456
 ```
 
 ### Add an API endpoint
-1. Add a handler in the `handleApi()` dispatch block (~line 376–2089)
-2. Add a corresponding frontend panel or update an existing one in the embedded HTML section (~line 2091+)
-
+1. Add a handler in `handleApi()` in `api/handlers.js`
+2. Add a corresponding frontend panel or update an existing one in `static/app.js`
 ### Add an SSE event type
-1. Extend the file watcher in the SSE engine section (~line 110–246)
+1. Extend the file watcher in `sse.js`
 2. Add a client-side event listener in the SPA's `connectEvents()` function
-
 ### Modify the frontend
-- CSS is in a `<style>` block near line 2091
-- JS SPA logic is mixed in `<script>` tags throughout the embedded HTML
+- CSS is `static/styles.css`
+- JS SPA logic is `static/app.js`
+- Markup is `static/app.html`
 - Templates are string interpolation in JS functions
-
 ## See also
 
 - Parent `AGENTS.md` — Framework-level architecture, common commands

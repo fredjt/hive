@@ -21,7 +21,7 @@ lib/
   tools/                 80 bash scripts (~11.2k lines) — the operational engine
   core/                  5 foundational scripts — agent-spawn, orchestrator, init, hooks
   agents/                24 agent prompt files — role definitions for each IC/VP
-  dashboard/             Single-file Node.js SPA (~5800 lines) — web UI, zero dependencies
+  dashboard/             Node.js SPA (server.js entry + api/ + static/ frontend) — web UI, zero dependencies
   templates/             GitHub PR template, CI/release workflows, release publishers
 ```
 

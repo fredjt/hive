@@ -5,8 +5,8 @@
 //
 // C1: dependency-free node test — a minimal fake DOM (elements record
 // innerHTML; a fetch that returns canned fixtures) imports the delivered
-// SPA script (the exact <script> block the browser receives, extracted
-// from server.js) and invokes every top-level view renderer against
+// SPA script (the exact script the browser receives: static/app.js, a
+// real file since the G8 split) and invokes every top-level view renderer against
 // fixture company data, asserting no exception, non-empty HTML, and no
 // literal 'undefined'/'NaN' in the rendered output. node --check catches
 // syntax errors (0.8.1); call-resolution catches unresolved names (0.8.2);
@@ -61,23 +61,12 @@ if (!SERVER_JS || !MODE || (MODE === 'record' && (!TREE || !BASE || !OUT)) ||
 // and serves (escape processing included) — the same trick the 0.8.1
 // regression test uses.
 function extractDeliveredScript(serverJsPath) {
-  const src = fs.readFileSync(serverJsPath, 'utf8');
-  const marker = 'const HTML = `';
-  const start = src.indexOf(marker);
-  if (start < 0) throw new Error('embedded SPA template not found in ' + serverJsPath);
-  let i = start + marker.length;
-  let raw = '';
-  while (i < src.length) {
-    const c = src[i];
-    if (c === '\\') { raw += src.slice(i, i + 2); i += 2; continue; }
-    if (c === '`') break;
-    raw += c; i += 1;
-  }
-  if (i >= src.length) throw new Error('unterminated SPA template literal');
-  const html = eval('`' + raw + '`');
-  const m = html.match(/<script[^>]*>([\s\S]*?)<\/script>/);
-  if (!m) throw new Error('no <script> block in the delivered SPA page');
-  return m[1];
+  // G8: the SPA is real files served from disk — no template literal
+  // to un-eval. The delivered script IS static/app.js.
+  const dir = path.dirname(serverJsPath);
+  const p = path.join(dir, 'static', 'app.js');
+  if (!fs.existsSync(p)) throw new Error('static/app.js not found (G8 split) in ' + dir);
+  return fs.readFileSync(p, 'utf8');
 }
 
 // ── fake DOM: explicit surface, unknown properties -> undefined (exactly
