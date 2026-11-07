@@ -1578,6 +1578,21 @@ class TestDocTreeCounts:
         assert "55 tools" not in content, \
             f"{doc} still claims ~55 tools"
 
+    @pytest.mark.parametrize("doc", DOCS)
+    def test_retired_speedup_phrasing_is_gone(self, doc):
+        """R1: the "~65s -> ~15s" / "~4x faster" speedup claim did not
+        reproduce on the 0.11 reference box (the full suite ran ≈155s
+        serial and ≈155s with -n 8 there) — it is retired. Suite
+        timings may appear in prose only as approximate, explicitly
+        host-measured values; the exact speedup phrasing is rot."""
+        content = Path(doc).read_text()
+        assert not re.search(r"~?65\s?s\s*(->|→)", content), \
+            f"{doc} resurrects the retired '~65s ->' speedup claim"
+        assert "4x faster" not in content, \
+            f"{doc} resurrects the retired '4x faster' claim"
+        assert not re.search(r"\b15s\b", content), \
+            f"{doc} resurrects the retired '~15s' speedup target"
+
     def test_docs_mention_state_layer(self):
         for doc in ("AGENTS.md", "lib/AGENTS.md"):
             content = Path(doc).read_text()

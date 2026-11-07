@@ -3,10 +3,14 @@
 #   pip install -r packaging/requirements-dev.txt
 #
 # - pytest        the test runner (suite: python -m pytest tests/)
-# - pytest-xdist  parallel execution (sweet spot -n 8: ~65s -> ~15s). The
-#                 suite is xdist-safe: ephemeral ports, per-test temp dirs,
-#                 in-process MCP servers. Beyond ~8-12 workers, the
-#                 subprocess-heavy lifecycle tests stop gaining speed.
+# - pytest-xdist  parallel execution (-n 8 is the sweet spot; the
+#                 speedup is host-dependent — the subprocess-heavy
+#                 lifecycle tests dominate on some boxes. See the root
+#                 AGENTS.md, "xdist worker contract"). The suite is
+#                 xdist-safe by construction: ephemeral ports, per-test
+#                 temp dirs, in-process MCP servers. Beyond ~8-12
+#                 workers, the subprocess-heavy lifecycle tests stop
+#                 gaining speed.
 # - pytest-cov    coverage (python -m pytest tests/ --cov=lib/hive_cli ...)
 # - pytest-watch  watch loop: ptw --watch lib/ -- tests/  (re-runs on change)
 # - ruff          CI's lint selection, runnable locally (the ruff-clean

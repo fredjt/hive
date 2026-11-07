@@ -163,7 +163,8 @@ cd hive
 # Run the full test suite (serial)
 python -m pytest tests/ -v
 
-# Run the full test suite in parallel (~4x faster; needs pytest-xdist)
+# Run the full test suite in parallel (needs pytest-xdist; the speedup
+# is host-dependent — see the "xdist worker contract" section below)
 python -m pytest tests/ -n 8
 
 # Run a subset
@@ -287,10 +288,15 @@ def test_agent_prompt_has_required_sections():
 # Run all tests (fast feedback loop)
 python -m pytest tests/ -v
 
-# Run in parallel — the fast feedback loop (~65s -> ~15s on a modern box).
-# The suite is xdist-safe: ephemeral ports, per-test temp dirs, in-process
-# MCP servers. -n 8 is the sweet spot; more workers don't help because the
-# subprocess-heavy lifecycle tests dominate.
+# Run in parallel (needs pytest-xdist). The speedup is HOST-DEPENDENT:
+# on the 0.11 reference box the full suite is ≈155s serial and ≈155s
+# with -n 8 (the subprocess-heavy lifecycle tests dominate, so xdist
+# buys nothing there), while a many-core box goes ≈760s -> ≈160s.
+# -n 8 is the sweet spot; more workers don't help.
+# The suite is xdist-safe by construction (see the "xdist worker
+# contract" in Test Suite Architecture): ephemeral ports, per-test
+# temp dirs, in-process MCP servers, no in-process reload of lib
+# modules.
 python -m pytest tests/ -n 8
 
 # Single test file while developing
@@ -364,6 +370,30 @@ Shared fixtures provide isolated test environments:
 - **`tmp_project_dir`** — Creates a temporary project directory and points `HIVE_INSTALL_DIR` at the install (no per-project scaffold — the runtime always resolves from the install)
 - **`tmp_company_dir`** — Creates a minimal `.company/` workspace inside the test project
 - **`get_install_dir()`** — Returns the repo root (where `lib/`, `bin/`, etc. live)
+
+### xdist worker contract
+
+The suite is xdist worker-safe *by construction* — not by rerunning
+until the unlucky draw stops. The 0.10.0 matrix lost three flakes in
+one week (in-process `importlib.reload()` replacing `ShellResult` with
+a new class object; a wall-clock second boundary crossed between two
+move paths; a stage flag observable before the manifest it commits to).
+Each rule below is pinned by a static guard in `tests/test_xdist_contract.py`:
+
+- **No in-process `importlib.reload()` of `lib/` modules in the test
+  process.** A reload re-executes the module and replaces shared
+  objects with NEW class objects while other test modules hold the old
+  bindings — on the worker that ran both, `isinstance()` fails.
+  Subprocess isolation is the pattern (see
+  `tests/test_hive_paths.py`): fresh interpreter, same env contract.
+- **Wall-clock comparisons go through `conftest.normalize_clock()`.**
+  Two invocations a few ms apart cross a second boundary on ~5% of
+  runs — the contract is identical STATE, not identical INSTANT. No
+  hand-rolled normalizers in test modules.
+- **State observed across processes has a single commit point.** Write
+  the manifest/flag BEFORE the stage flip, so an observer that sees the
+  flip is guaranteed to see the flag (the idle transition writes the
+  manifest first, stage second; `stage` is the commit point).
 
 ### Test Categories
 
