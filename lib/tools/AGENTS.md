@@ -12,11 +12,8 @@ These scripts are the **runtime core** of Hive. They are called by the MCP serve
 | Script | Role |
 |---|---|
 | `sprint-lifecycle.sh` | **The single driver.** Picks tickets from sprint-current one at a time, runs their full lifecycle (tester → engineer → gates → verifier), then picks the next. Handles CEO/VP planning, sprint-fill, release pipeline, and archive. Replaces the old round-runner + stage-advance split. |
-| `sprint-state.sh` | Sourced library for reading/writing `sprints/current.json`. Manages stage transitions, loop iteration counters, release retry counts, ticket lists. All writes are flock-protected atomic jq operations. |
-| `round-promote.sh` | Archives current round, promotes next-plan. Called by sprint-lifecycle at sprint boundaries. |
-| `round-enqueue.sh` | Enqueues entries into `current-round.json`. |
-| `round-status.sh` | Reports current round state. |
-| `round-promote.sh` | Archives current round, called by sprint-lifecycle on sprint boundary. |
+| `sprint-state.sh` | Sourced library for reading/writing `sprints/current.json`. Manages stage transitions, loop iteration counters, release retry counts, ticket lists. All writes go through the state layer (`lib/hive_state`) — flock + atomic tmp+replace + schema validation. |
+| `hive-state.sh` | Sourced helper exposing `hs <op>` — the bash entry point to the `lib/hive_state` state layer (the only code permitted to read/write `.company/` JSON). |
 
 ### Ticket management
 | Script | Role |

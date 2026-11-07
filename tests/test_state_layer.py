@@ -314,22 +314,12 @@ WRITE_IDIOMS = [
     ("append into a history (jsonl) file", re.compile(r">>\s*\"\$[A-Za-z_]*[Hh]istory")),
 ]
 
-# G1 scope note: these are the round-runner's queue scripts. G1's own
-# direction is "existing bash scripts become thin callers of the module
-# (or retire — see G3)". G3 retires this dead architecture (and its
-# rounds/next-plan.json + cursor state) in the next commit of 0.10, so
-# they are the only remaining direct writers and are exempted HERE, not
-# converted-and-deleted. G3 removes these names from the exemption list
-# by deleting the scripts; the layering test then covers the whole tree.
-G3_RETIREMENT_EXEMPT = {
-    "lib/tools/round-enqueue.sh",
-    "lib/tools/round-promote.sh",
-    "lib/tools/round-status.sh",
-}
+
+
 
 # Project-local scaffolding (NOT .company/ state): init-finance-scaffold
-# writes $PROJECT_ROOT/finance/*.json — finance department data that lives
-# with the project, outside the company workspace. Out of G1's scope.
+# writes $PROJECT_ROOT/finance/*.json — finance department data that
+# lives with the project, outside the company workspace. Out of G1's scope.
 PROJECT_LOCAL_EXEMPT = {
     "lib/tools/init-finance-scaffold.sh",
 }
@@ -345,7 +335,7 @@ class TestCompanyWriteLayering:
         hits = []
         for f in self._sh_files():
             rel = f.relative_to(REPO_ROOT).as_posix()
-            if rel in G3_RETIREMENT_EXEMPT or rel in PROJECT_LOCAL_EXEMPT:
+            if rel in PROJECT_LOCAL_EXEMPT:
                 continue
             for lineno, line in enumerate(f.read_text(errors="replace").splitlines(), 1):
                 if line.lstrip().startswith("#"):

@@ -141,18 +141,11 @@ class TestBuildParser:
         args = p.parse_args(["killall", "--dry-run"])
         assert args.cmd == "killall"
 
-    def test_parser_has_round(self):
+    def test_parser_has_no_round(self):
+        """G3: the hive round subtree is retired."""
         p = _make_parser()
-        for action in ["status", "next", "history", "get", "enqueue", "advance", "promote"]:
-            if action == "history":
-                args = p.parse_args(["round", action])
-            elif action == "get":
-                args = p.parse_args(["round", action, "round-123"])
-            elif action == "enqueue":
-                args = p.parse_args(["round", action, "--agent", "ic-engineer", "--dept", "it", "--role", "IC", "--kind", "test"])
-            else:
-                args = p.parse_args(["round", action])
-            assert args.action == action
+        with pytest.raises(SystemExit):
+            p.parse_args(["round", "status"])
 
     def test_parser_has_gh(self):
         p = _make_parser()

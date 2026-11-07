@@ -1,6 +1,6 @@
 # Hive MCP Tools
 
-**55 tools registered.** Most wrap bash scripts in `lib/tools/`; a few read `.company/` state directly.
+**48 tools registered.** Most wrap bash scripts in `lib/tools/`; a few read `.company/` state directly.
 
 ### `agent_run_ic`
 
@@ -223,67 +223,6 @@ Args:
 ### `roster_rebuild`
 
 Force a rebuild of roster.json from authoritative sources.
-
-Args:
-  - `company_dir`: string
-
-### `round_advance`
-
-Force-skip the currently-running entry. Admin/debug use only.
-
-Args:
-  - `company_dir`: string
-
-### `round_enqueue`
-
-Append a turn entry to the queue.
-
-Args:
-  - `agent`: string (required)
-  - `dept`: string (required)
-  - `role`: string (required)
-  - `kind`: string (required)
-  - `ticket`: string
-  - `prompt_extra`: string
-  - `prompt_inline`: string
-  - `log_to`: string
-  - `target`: string
-  - `queued_by`: string
-  - `company_dir`: string
-
-### `round_get`
-
-Read a specific historical round JSON by id.
-
-Args:
-  - `round_id`: string (required)
-  - `company_dir`: string
-
-### `round_get_current`
-
-Read .company/rounds/current-round.json.
-
-Args:
-  - `company_dir`: string
-
-### `round_get_next`
-
-Read .company/rounds/next-plan.json (the CEO's pending plan).
-
-Args:
-  - `company_dir`: string
-
-### `round_history`
-
-List the last N completed rounds with summary stats per round.
-
-Args:
-  - `limit`: integer
-  - `company_dir`: string
-
-### `round_promote_next`
-
-Manually trigger round-promote: archive current round, run discovery, promote next-plan.json (or fall back to failsafe).
 
 Args:
   - `company_dir`: string

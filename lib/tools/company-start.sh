@@ -421,10 +421,9 @@ if [ -f "$DASHBOARD_GENERATOR" ]; then
 fi
 
 # --- Sprint-lifecycle: the only main-LLM consumer ---
-# Singleton-locked. Drains current-round.json one entry at a time, fires
-# standup at end-of-round, runs round-promote.sh between rounds (which
-# invokes ic-spawner / verification-runner / sprint-lifecycle in
-# --enqueue-only mode to discover new IC + verification + sprint work).
+# Singleton-locked. Walks the sprint's ticket pipeline stage by stage
+# (ceo-plan -> vp-plan -> tdd -> verify -> release), appending an entry
+# per agent spawn to rounds/current-round.json (the activity log).
 (HIVE_ROOT="$SKILL_DIR" bash "$SCRIPT_DIR/sprint-lifecycle.sh" "$PROJECT_ROOT" \
   >> "$COMPANY_DIR/logs/sprint-lifecycle.log" 2>&1) &
 add_proc $! "sprint-lifecycle" "infrastructure" "fifo-serial"
@@ -479,9 +478,9 @@ add_proc $! "org-chart-rebuild" "infrastructure" "120s"
 done) &
 add_proc $! "worktree-merger" "infrastructure" "60s"
 
-# IC discovery is no longer a 60s ticker — round-promote.sh runs ic-spawner
-# in --enqueue-only mode exactly once between rounds, so newly-arrived
-# tickets land in the next round (not the current one mid-flight).
+# Ticket pickup happens inside the lifecycle's tdd stage: sprint-fill
+# promotes backlog tickets into the sprint and the lifecycle picks the
+# next ticket, so newly-arrived tickets land in the current round.
 
 
 # Verification gates (every 90s per dept - runs deterministic gates BEFORE

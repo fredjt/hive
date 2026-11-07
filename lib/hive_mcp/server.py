@@ -37,7 +37,6 @@ TOOL_MODULES = [
     "agents",
     "company",
     "sprint",
-    "rounds",
     "reports",
     "llm_usage",
     "github",

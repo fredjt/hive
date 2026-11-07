@@ -26,7 +26,7 @@ class TestCommandModulesExist:
     EXPECTED_COMMANDS = [
         "agent", "backlog", "chat", "company", "config", "dashboard",
         "doctor", "gates", "gh", "init", "killall", "llm",
-        "release", "restart", "round", "ticket", "tool",
+        "release", "restart", "ticket", "tool",
     ]
 
     @pytest.mark.parametrize("cmd", EXPECTED_COMMANDS)
@@ -210,14 +210,6 @@ class TestLLMCommand:
 
     def test_llm_handle_exists(self):
         from hive_cli.commands.llm import handle
-        assert callable(handle)
-
-
-class TestRoundCommand:
-    """Test the round command handler."""
-
-    def test_round_handle_exists(self):
-        from hive_cli.commands.round import handle
         assert callable(handle)
 
 
@@ -1154,20 +1146,6 @@ class TestCliCompanyDirEnv:
                  "COMPANY_DIR": company_dir})
         assert r.returncode == 0, f"{argv} rc={r.returncode}\n{r.stdout}\n{r.stderr}"
         return json.loads(r.stdout[r.stdout.find("{"):])
-
-    def test_round_status_honors_company_dir_env(self, tmp_path):
-        # CWD has its own .company with a different current round.
-        cwd_comp = tmp_path / ".company"
-        (cwd_comp / "rounds").mkdir(parents=True)
-        (cwd_comp / "rounds" / "current-round.json").write_text(
-            json.dumps({"round_id": "cwd-round", "entries": [],
-                        "cursor": 0}))
-        out = self._cli(tmp_path, str(self._fixture_company()),
-                        "round", "status")
-        data = out.get("data") or {}
-        assert data.get("round_id") == "round-010", (
-            "round status read the CWD company, not $COMPANY_DIR: "
-            f"{out}")
 
     def test_release_status_honors_company_dir_env(self, tmp_path):
         (tmp_path / ".company").mkdir(parents=True)

@@ -79,7 +79,6 @@ class TestToolRegistration:
                 "agent_spawn_ceo", "agent_run_vp",
                 "gates_run", "gates_check",
                 "status_get",
-                "round_get_current", "round_enqueue", "round_advance",
             ]
             for tool in expected_tools:
                 assert tool in tools, f"Expected tool '{tool}' not found. Available: {tools}"
@@ -253,9 +252,9 @@ class TestRoundToolModule:
             from hive_mcp.server import build_server
             server = build_server()
             tools = list(server._tool_manager._tools.keys())
-            # Check for round-related tools
+            # G3: the round queue tools are retired; none may remain.
             round_tools = [t for t in tools if "round" in t.lower()]
-            assert len(round_tools) >= 2, f"Expected at least 2 round tools, got: {round_tools}"
+            assert not round_tools, f"retired round tools still present: {round_tools}"
         finally:
             if old_path:
                 os.environ["PYTHONPATH"] = old_path
@@ -818,6 +817,7 @@ class TestMCPToolScriptContract:
                                     f"but {c['script']}.sh never mentions it")
         assert not problems, "unaccepted flags:\n" + "\n".join(problems)
 
+
     def test_required_positionals_covered(self, tools_dir, install_dir):
         problems = []
         for c in _mcp_run_calls(tools_dir):
@@ -832,53 +832,6 @@ class TestMCPToolScriptContract:
                                 f"requires {req} positionals, wrapper supplies "
                                 f"at most {c['pos'] + c['conds']}")
         assert not problems, "missing required args:\n" + "\n".join(problems)
-
-    def test_round_promote_next_passes_project_root(self, install_dir, tmp_path, monkeypatch):
-        """C.9: round_promote_next called round-promote.sh with no args; the
-        script defaults PROJECT_ROOT to CWD and re-derives COMPANY_DIR from
-        it (overriding the env), so the company_dir parameter was silently
-        ignored and the promote would hit the MCP server's CWD project
-        instead of the target. The wrapper must pass the project root."""
-        proj = tmp_path / "proj"
-        rounds = proj / ".company" / "rounds"
-        (rounds / "history").mkdir(parents=True)
-        (rounds / "current-round.json").write_text(json.dumps({
-            "round_id": "round-old-1", "sprint_id": None, "started_at": "t",
-            "ended_at": None, "source": "pending", "cursor": 0, "entries": [],
-        }))
-        # CWD must NOT be the project root, or the buggy no-arg path works.
-        elsewhere = tmp_path / "elsewhere"
-        elsewhere.mkdir()
-        monkeypatch.chdir(elsewhere)
-
-        sys_path = str(install_dir / "lib")
-        old_path = os.environ.get("PYTHONPATH", "")
-        if sys_path not in old_path:
-            os.environ["PYTHONPATH"] = sys_path + (":" + old_path if old_path else "")
-        try:
-            from hive_mcp.server import build_server
-            server = build_server()
-            fn = server._tool_manager._tools["round_promote_next"].fn
-            result = fn(company_dir=str(proj / ".company"))
-            assert result.get("ok") is True, result
-            # The old round was archived in the TARGET project ...
-            assert (rounds / "history" / "round-old-1.json").exists(), (
-                "round was not promoted in the target project "
-                f"(stderr: {result.get('stderr', '')[:200]})"
-            )
-            # ... and a fresh shell round replaced it there.
-            cur = json.loads((rounds / "current-round.json").read_text())
-            assert cur["round_id"] != "round-old-1"
-        finally:
-            if old_path:
-                os.environ["PYTHONPATH"] = old_path
-            else:
-                os.environ.pop("PYTHONPATH", None)
-
-
-# ---------------------------------------------------------------------------
-# C.5: streamable-http wire path (server.py --transport http + mcp_client)
-# ---------------------------------------------------------------------------
 
 def _free_local_port() -> int:
     """Ask the kernel for a currently-free loopback port (xdist-safe: each
@@ -953,6 +906,8 @@ def _mcp_client_on_port(port: int, monkeypatch):
 
 
 @pytest.mark.skipif(not _HAS_FASTMCP, reason="mcp server/client not available")
+
+
 class TestHttpTransportWire:
     """C.5: the streamable-http path every operator actually uses. The CLI and
     the dashboard both reach the MCP server over `--transport http` (default

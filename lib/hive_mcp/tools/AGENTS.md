@@ -21,7 +21,6 @@ lib/hive_mcp/tools/
   company.py           Company process control — read-only status (start/stop intentionally excluded)
   inbox.py             Inbox/outbox — file requests, process inbox, write/archive outbox
   sprint.py            Sprint management — fill, progress, prioritize backlog
-  rounds.py            Round-runner queue — get current/next, history, enqueue, advance, promote
   reports.py           Report writing — research findings, test results, meeting records
   llm_usage.py         Local classification helpers — classify-ticket, triage-test-failure, narrate, summarize (keyword heuristics, no model)
   github.py            GitHub integration — status, issue mirror, PR open/merge/reject
@@ -56,7 +55,7 @@ Most tools delegate to bash scripts via `run()`. However, some tools read `.comp
 
 | Pattern | Example modules |
 |---------|----------------|
-| `run("script", *args)` → bash script | `tickets`, `chat`, `sprint`, `rounds`, `reports`, `llm_usage`, `github`, `release` |
+| `run("script", *args)` → bash script | `tickets`, `chat`, `sprint`, `reports`, `llm_usage`, `github`, `release` |
 | Direct file read (`Path.read_text()`) | `company` (processes.json), `status` (status.json, roster.json), `verification` (gates.json), `github` (gh_issues reads mirror JSON) |
 | Hybrid (both) | `release` — reads JSON directly for status/history, uses `run()` for verdict write |
 

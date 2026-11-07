@@ -85,7 +85,6 @@ PATTERNS=(
   "sprint-fill.*$COMPANY_DIR"
   "sprint-progress.*$COMPANY_DIR"
   "sprint-lifecycle.*$PROJECT_ROOT"
-  "verification-runner.sh.*$PROJECT_ROOT"
   "verification-gates.sh.*$PROJECT_ROOT"
   "worktree-merger.sh.*$PROJECT_ROOT"
   "roster-rebuild.sh.*$COMPANY_DIR"

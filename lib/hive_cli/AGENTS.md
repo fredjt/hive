@@ -29,7 +29,6 @@ lib/hive_cli/
     llm.py           LLM usage stats / tail + endpoint test (B1)
     gh.py            gh status / issues / mirror / pr open/merge/reject
     release.py       start / status / list / publish / abort
-    round.py         status / next / history / get / enqueue / advance / promote
     tool.py          invoke a single MCP tool / list all tools
 ```
 

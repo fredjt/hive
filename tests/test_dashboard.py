@@ -1560,20 +1560,3 @@ class TestRoundsCostApi:
             assert r["cost_usd"] == 0
         assert j["totals"] == {"calls": 0, "tokens": 0, "cost_usd": 0}
 
-    def test_rounds_api_matches_bash_side_on_same_fixture(self, tmp_path):
-        """The dashboard API and round-status.sh --history must price
-        the same fixture identically — they are the same feature over
-        two surfaces; drift here is the 0.8.x 'two shapes' class."""
-        bash = subprocess.run(
-            ["bash", str(REPO / "lib" / "tools" / "round-status.sh"), "--history"],
-            capture_output=True, text=True, timeout=30,
-            env={**os.environ, "COMPANY_DIR": str(FIXTURE_COMPANY)},
-            cwd=str(REPO))
-        assert bash.returncode == 0, bash.stderr
-        b = json.loads(bash.stdout)
-        j = self._history(FIXTURE_COMPANY)
-        bm = {r["round_id"]: r for r in b["rounds"]}
-        jm = {r["round_id"]: r for r in j["rounds"]}
-        for rid in ("round-008", "round-009"):
-            for key in ("calls", "tokens", "cost_usd"):
-                assert bm[rid][key] == pytest.approx(jm[rid][key]), (rid, key)

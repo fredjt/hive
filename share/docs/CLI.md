@@ -163,14 +163,12 @@ hive release abort               # mark a release failed and file an IT ticket
 ```
 hive restart [<project-dir>]      # stop daemons, then start them again
 hive killall                       # SIGKILL every process the hive start tree owns
-hive round status                  # current round + cursor position
-hive round next                    # the CEO's pending next-plan.json
-hive round history                 # last N completed rounds (with cost/tokens)
-hive round get <round-id>          # one historical round by id
-hive round enqueue                # append an entry to the round queue
-hive round advance                # force-skip the running entry (admin/debug)
-hive round promote                # archive current round, promote next
 ```
+
+The `hive round` subtree (round queue: status/next/history/get/enqueue/
+advance/promote) was retired in 0.10 — the round queue it served is gone.
+`rounds/current-round.json` is now an append-only activity log written by
+the sprint lifecycle, and the dashboard Rounds panel reads it directly.
 
 ## Diagnostics
 

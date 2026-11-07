@@ -2,7 +2,7 @@
 
 Subcommands:
   init, start, stop, status, dashboard, restart, ticket, chat, agent, gates,
-  backlog, config, doctor, selftest, killall, llm, round, gh, release,
+  backlog, config, doctor, selftest, killall, llm, gh, release,
   tool, tools, version
 
 Bare `hive` (no args) launches the dashboard for the project in CWD.
@@ -22,7 +22,7 @@ if str(_LIB) not in sys.path:
 
 from hive_cli.commands import (  # noqa: E402
     company, dashboard, init, ticket, chat, agent, gates, backlog,
-    config, doctor, tool, killall, llm, round as round_cmd, selftest,
+    config, doctor, tool, killall, llm, selftest,
     gh as gh_cmd, release as release_cmd,
     restart,
 )
@@ -261,28 +261,6 @@ def _add_release(sub) -> None:
     p.set_defaults(_handler=release_cmd.handle)
 
 
-def _add_round(sub) -> None:
-    p = sub.add_parser("round", help="Inspect / control the round queue")
-    sp = p.add_subparsers(dest="action", required=True)
-    sp.add_parser("status",   help="Print current round + cursor position")
-    sp.add_parser("next",     help="Print the CEO's pending next-plan.json (if any)")
-    ph = sp.add_parser("history", help="List the last N completed rounds")
-    ph.add_argument("--limit", type=int, default=20)
-    pg = sp.add_parser("get",     help="Print a specific historical round by id")
-    pg.add_argument("round_id")
-    pe = sp.add_parser("enqueue", help="Append an entry to the queue")
-    pe.add_argument("--agent", required=True)
-    pe.add_argument("--dept",  required=True)
-    pe.add_argument("--role",  required=True)
-    pe.add_argument("--kind",  required=True)
-    pe.add_argument("--ticket")
-    pe.add_argument("--prompt-extra", dest="prompt_extra")
-    pe.add_argument("--target", choices=["current","next"], default="current")
-    sp.add_parser("advance", help="Force-skip the running entry (admin/debug)")
-    sp.add_parser("promote", help="Force a round-promote (archive current, promote next)")
-    p.set_defaults(_handler=round_cmd.handle)
-
-
 def _add_tool(sub) -> None:
     p = sub.add_parser("tool", help="Invoke a single MCP tool by name")
     p.add_argument("name", help="Tool name (e.g. ticket_create)")
@@ -333,7 +311,6 @@ def build_parser() -> argparse.ArgumentParser:
     _add_selftest(sub)
     _add_killall(sub)
     _add_llm(sub)
-    _add_round(sub)
     _add_gh(sub)
     _add_release(sub)
     _add_restart(sub)

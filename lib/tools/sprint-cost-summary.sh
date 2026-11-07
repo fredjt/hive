@@ -6,8 +6,8 @@ set -uo pipefail
 # Called from sprint-archive-done.sh when a sprint archives. Prices
 # every round in rounds/history/ from the LLM usage log — entries whose
 # timestamps fall inside the round's started_at/ended_at window, the
-# same windowing B3's round-status.sh --history and /api/rounds/history
-# use — and writes ONE markdown report to .company/reports/sprint-reviews/
+# same windowing /api/rounds/history uses — and writes ONE markdown
+# report to .company/reports/sprint-reviews/
 # via report-write.sh:
 #
 #   | round | entries | duration_s | tokens | cost_usd |
@@ -43,8 +43,8 @@ def _parse_ts(s):
     except Exception:
         return None
 
-# Same log discovery + tolerance as round-status.sh: llm-usage.log,
-# legacy llm-tiny.log honored for one release; bad lines skipped.
+# Log discovery: llm-usage.log (legacy llm-tiny.log honored for one
+# release); bad lines skipped.
 usage = []
 for name in ("llm-usage.log", "llm-tiny.log"):
     uf = os.path.join(cdir, "logs", name)
