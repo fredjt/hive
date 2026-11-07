@@ -45,20 +45,14 @@ def _http_endpoint() -> str:
 
 
 def _load_sdk_free_client():
-    """The shared SDK-free Streamable HTTP client (lib/core/mcp_http.py).
-    Loaded path-based: this module lives in lib/hive_cli/, the client in
-    lib/core/ (which is not a package)."""
-    import importlib.util
+    """The shared SDK-free Streamable HTTP client (lib/core/mcp_http.py) —
+    a normal package import (G6 retired the path-based load)."""
     import sys
-    core_dir = Path(__file__).resolve().parent.parent / "core"
-    mod_path = core_dir / "mcp_http.py"
-    if "mcp_http" in sys.modules:
-        return sys.modules["mcp_http"]
-    spec = importlib.util.spec_from_file_location("mcp_http", mod_path)
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    sys.modules["mcp_http"] = mod
-    return mod
+    lib_dir = str(Path(__file__).resolve().parent.parent)
+    if lib_dir not in sys.path:
+        sys.path.insert(0, lib_dir)
+    from core import mcp_http
+    return mcp_http
 
 
 def _is_http_server_up() -> bool:

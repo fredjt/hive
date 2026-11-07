@@ -552,3 +552,41 @@ class TestCompanyWriteLayering:
         assert data["source"] == "sprint-lifecycle"
         e = data["entries"][-1]
         assert e["kind"] == "plan-ceo" and e["status"] == "running"
+
+class TestProviderDedup:
+    """G6: one provider registry, no by-file import hacks, loud failures."""
+
+    REPO = Path(__file__).resolve().parent.parent
+
+    def test_no_file_based_import_hacks_in_lib(self):
+        hits = []
+        for f in (self.REPO / "lib").rglob("*.py"):
+            if "__pycache__" in str(f):
+                continue
+            if "spec_from_file_location" in f.read_text(errors="replace"):
+                hits.append(str(f.relative_to(self.REPO)))
+        assert not hits, "by-file import hacks remain: " + ", ".join(hits)
+
+    def test_exactly_one_providers_registry(self):
+        n = 0
+        for f in (self.REPO / "lib").rglob("*.py"):
+            if "__pycache__" in str(f):
+                continue
+            n += f.read_text(errors="replace").count("PROVIDERS = {")
+        assert n == 1, f"expected exactly one PROVIDERS registry, found {n}"
+
+    def test_harness_names_missing_module_not_silent_degrade(self, tmp_path):
+        import shutil as _sh
+        import subprocess as _sp
+        fake = tmp_path / "fakelib"
+        (fake / "core").mkdir(parents=True)
+        (fake / "core" / "__init__.py").write_text("")
+        src = self.REPO / "lib" / "core" / "agent-harness.py"
+        dst = fake / "core" / "agent-harness.py"
+        _sh.copy(src, dst)
+        r = _sp.run([sys.executable, str(dst), "--help"],
+                    capture_output=True, text=True, timeout=30)
+        assert r.returncode != 0, "harness must fail loudly, not degrade"
+        assert ("llm_providers" in (r.stderr + r.stdout)
+                or "mcp_http" in (r.stderr + r.stdout)), \
+            f"error must name the missing module: {r.stderr[:300]}"

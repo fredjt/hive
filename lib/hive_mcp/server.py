@@ -8,7 +8,7 @@ Two transports are supported:
             (the built-in harness calls tools over localhost HTTP). Started
             by `hive start` or `hive dashboard`.
 
-Tools are registered in lib/mcp/tools/<group>.py modules. Each module exposes
+Tools are registered in lib/hive_mcp/tools/<group>.py modules. Each module exposes
 a `register(server)` function that adds tools via @server.tool().
 """
 
@@ -61,9 +61,12 @@ def build_server() -> Server:
         try:
             mod = importlib.import_module(f"hive_mcp.tools.{mod_name}")
         except ImportError:
-            # Direct file-based import (when not installed as a package)
+            # Not on sys.path (direct `python -m hive_mcp.server` without a
+            # PYTHONPATH) — add lib/ once and retry; a second failure is a
+            # real missing module and fails loudly (G6: the dead mcp.tools
+            # fallback is gone).
             sys.path.insert(0, str(HIVE_ROOT / "lib"))
-            mod = importlib.import_module(f"mcp.tools.{mod_name}")
+            mod = importlib.import_module(f"hive_mcp.tools.{mod_name}")
         if hasattr(mod, "register"):
             mod.register(server)
 

@@ -207,92 +207,33 @@ except ImportError:
     _httpx = None  # type: ignore
 
 
-# Wire dialects and the provider registry live in llm_providers.py
-# (B.2): openai-style /chat/completions, anthropic-style /v1/messages,
-# gemini-style :generateContent. Import it by name when possible (the
-# harness runs as a script with its own dir on sys.path) and fall back
-# to a path-based load so the module also works when this file is
-# imported directly (e.g. by the test suite).
+# Wire dialects and the provider registry live in core/llm_providers.py
+# (B.2), and the MCP-over-HTTP client in core/mcp_http.py. G6: lib/core
+# is a package, so these are NORMAL imports — the
+# by-file import hacks are gone, and there is NO inline
+# wire fallback in this file. A missing module fails loudly at spawn time
+# (naming the module) instead of silently degrading to the openai-only
+# wire; `hive doctor` / the A2 --selftest probe run this exact import
+# path, so a dead import surfaces in doctor, not in a field run.
+_LIB_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _LIB_DIR not in sys.path:
+    sys.path.insert(0, _LIB_DIR)
 try:
-    import llm_providers  # type: ignore
-except ImportError:  # pragma: no cover - import path depends on caller
-    import importlib.util as _ilu
-    import os as _os
-    try:
-        _spec = _ilu.spec_from_file_location(
-            "llm_providers",
-            _os.path.join(_os.path.dirname(_os.path.abspath(__file__)),
-                          "llm_providers.py"))
-        llm_providers = _ilu.module_from_spec(_spec)  # type: ignore
-        # Register BEFORE exec: llm_providers uses @dataclass, and
-        # dataclasses resolves cls.__module__ through sys.modules. Without
-        # this entry the exec raises AttributeError, the handler below
-        # swallows it, and the harness silently degrades to the openai-only
-        # wire fallback.
-        sys.modules["llm_providers"] = llm_providers
-        _spec.loader.exec_module(llm_providers)
-    except Exception:  # pragma: no cover
-        sys.modules.pop("llm_providers", None)
-        llm_providers = None  # type: ignore
-
-
-try:
-    import mcp_http  # type: ignore
-except ImportError:  # pragma: no cover - import path depends on caller
-    import importlib.util as _ilm
-    import os as _osm
-    try:
-        _specm = _ilm.spec_from_file_location(
-            "mcp_http",
-            _osm.path.join(_osm.path.dirname(_osm.path.abspath(__file__)),
-                           "mcp_http.py"))
-        mcp_http = _ilm.module_from_spec(_specm)  # type: ignore
-        # Same sys.modules-before-exec requirement as llm_providers above.
-        sys.modules["mcp_http"] = mcp_http
-        _specm.loader.exec_module(mcp_http)
-    except Exception:  # pragma: no cover
-        sys.modules.pop("mcp_http", None)
-        mcp_http = None  # type: ignore
+    from core import llm_providers  # noqa: F401
+    from core import mcp_http  # noqa: F401
+except ImportError as _imp_err:  # pragma: no cover - exercised by G6 test
+    raise ImportError(
+        f"agent-harness: required wiring module unavailable: {_imp_err}. "
+        f"lib/core must be importable as a package (lib/ on sys.path); "
+        f"refusing to start with a degraded wire."
+    ) from _imp_err
 
 
 def detect_provider(api_base: str) -> str:
-    """Detect the provider from the API base URL.
-
-    Fallback only (B.2): explicit provider selection (HIVE_PROVIDER /
-    [llm].provider) is the primary path; this exists so direct callers
-    and legacy env-only setups keep working.
-
-    Returns a provider key that can be used to look up configuration.
-    """
-    if not api_base:
-        return "custom"
-
-    lower = api_base.lower()
-    if llm_providers is not None:
-        # The registry (B.2) is the canonical source: match the provider
-        # name or its default base URL against the given base. Entries
-        # without a default base (unsloth) still match by name.
-        for name, config in llm_providers.PROVIDERS.items():
-            if name in lower:
-                return name
-            default_base = (config.get("base_url") or "").lower()
-            if default_base and default_base in lower:
-                return name
-
-    # Check for common patterns (also the only path when the
-    # llm_providers sibling module is unavailable)
-    if "openai" in lower:
-        return "openai"
-    if "anthropic" in lower:
-        return "anthropic"
-    if "ollama" in lower or "11434" in lower:
-        return "ollama"
-    if "openrouter" in lower:
-        return "openrouter"
-    if "groq" in lower:
-        return "groq"
-
-    return "custom"
+    """Detect the provider from the API base URL (G6: the registry is the
+    ONLY implementation — the inline pattern list that drifted from it,
+    google entry and all, is gone)."""
+    return llm_providers.detect_provider(api_base)
 
 
 def wire_style(api_style: str | None, api_base: str | None) -> str:
@@ -301,9 +242,7 @@ def wire_style(api_style: str | None, api_base: str | None) -> str:
     if api_style:
         return api_style
     provider = detect_provider(api_base or "")
-    if llm_providers is not None:
-        return llm_providers.style_for_provider(provider)
-    return "anthropic" if provider == "anthropic" else "openai"
+    return llm_providers.style_for_provider(provider)
 
 
 def build_request_payload(
@@ -320,10 +259,7 @@ def build_request_payload(
     base URL. Shape building itself lives in llm_providers.build_payload.
     """
     style = wire_style(api_style, api_base if api_base is not None else os.environ.get("HIVE_API_BASE", ""))
-    if llm_providers is not None:
-        return llm_providers.build_payload(style, messages, model, temperature, max_tokens)
-    return {"model": model, "messages": messages,
-            "temperature": temperature, "max_tokens": max_tokens}
+    return llm_providers.build_payload(style, messages, model, temperature, max_tokens)
 
 
 def build_headers(api_base: str, api_key: str | None = None,
@@ -331,12 +267,7 @@ def build_headers(api_base: str, api_key: str | None = None,
                   provider: str = "") -> dict[str, str]:
     """Build headers for the API request (auth header per wire dialect)."""
     style = wire_style(api_style, api_base)
-    if llm_providers is not None:
-        return llm_providers.build_headers(style, api_key, provider=provider)
-    headers = {"Content-Type": "application/json"}
-    if api_key:
-        headers["Authorization"] = f"Bearer {api_key}"
-    return headers
+    return llm_providers.build_headers(style, api_key, provider=provider)
 
 
 def parse_response(resp: httpx.Response, api_style: str | None = None,
@@ -355,15 +286,7 @@ def parse_response(resp: httpx.Response, api_style: str | None = None,
         }
 
     style = wire_style(api_style, api_base if api_base is not None else os.environ.get("HIVE_API_BASE", ""))
-    if llm_providers is not None:
-        return llm_providers.parse_response_body(style, data)
-    # Fallback: openai shape only.
-    choices = data.get("choices", [])
-    if not choices:
-        return {"ok": False, "error": "No choices in response"}
-    return {"ok": True, "content": choices[0].get("message", {}).get("content", "") or "",
-            "model": data.get("model", "unknown"),
-            "usage": data.get("usage", {})}
+    return llm_providers.parse_response_body(style, data)
 
 
 def _log_llm_usage(company_dir: str | None, caller: str, mode: str,
@@ -468,10 +391,7 @@ def call_llm_api(
     headers = build_headers(base, key, api_style=style, provider=provider or "")
     payload = build_request_payload(messages, mdl, temp, max_tok, api_style=style)
 
-    if llm_providers is not None:
-        url = llm_providers.endpoint_url(base, style, mdl)
-    else:  # pragma: no cover - import path depends on caller
-        url = f"{base.rstrip('/')}/chat/completions"
+    url = llm_providers.endpoint_url(base, style, mdl)
     if not url:
         return {
             "ok": False,
@@ -1100,65 +1020,64 @@ def main() -> int:
 
     # A2: the spawn path probe short-circuits before any LLM work.
     if args.selftest:
-        resolved = llm_providers.resolve() if llm_providers is not None else None
+        resolved = llm_providers.resolve()
         return _run_selftest(resolved)
 
     # Resolve LLM provider config: CLI args > HIVE_* env > [llm] config
     # > provider defaults (lib/core/llm_providers.py). Warnings go to
     # stderr; the result JSON on stdout is untouched.
-    if llm_providers is not None:
-        resolved = llm_providers.resolve()
-        cli_explicit = bool(args.api_base)
-        for _w in resolved.warnings:
-            # CLI-provided --api-base/--model make the config explicit even
-            # when env/config are silent — don't warn about that.
-            if cli_explicit and "No LLM provider configured" in _w:
-                continue
-            print(f"[agent-harness] warning: {_w}", file=sys.stderr)
-        if not args.api_base:
-            args.api_base = resolved.base_url or None
-        if not args.model:
-            args.model = resolved.model or None
-        if not args.api_key:
-            args.api_key = resolved.api_key or None
-        if not args.provider:
-            args.provider = resolved.provider or None
-        if not args.api_style:
-            args.api_style = resolved.api_style or None
+    resolved = llm_providers.resolve()
+    cli_explicit = bool(args.api_base)
+    for _w in resolved.warnings:
+        # CLI-provided --api-base/--model make the config explicit even
+        # when env/config are silent — don't warn about that.
+        if cli_explicit and "No LLM provider configured" in _w:
+            continue
+        print(f"[agent-harness] warning: {_w}", file=sys.stderr)
+    if not args.api_base:
+        args.api_base = resolved.base_url or None
+    if not args.model:
+        args.model = resolved.model or None
+    if not args.api_key:
+        args.api_key = resolved.api_key or None
+    if not args.provider:
+        args.provider = resolved.provider or None
+    if not args.api_style:
+        args.api_style = resolved.api_style or None
 
-        # B.4: fail fast — if the effective config cannot call an LLM, exit
-        # now (before any work happens) with one actionable line naming
-        # what to set and where. CLI-provided base+model count as
-        # configured even when env/config are silent.
-        if not resolved.is_configured and not (args.api_base and args.model):
-            missing = []
-            if not (resolved.provider or args.provider):
-                missing.append("HIVE_PROVIDER (one of: "
-                               + ", ".join(sorted(llm_providers.PROVIDERS)) + ")")
-            if not (resolved.model or args.model):
-                missing.append("HIVE_MODEL")
-            if not (resolved.base_url or args.api_base):
-                missing.append("HIVE_API_BASE")
-            if resolved.needs_key and not (resolved.api_key or args.api_key):
-                missing.append("HIVE_API_KEY")
-            what = " / ".join(missing) if missing else \
-                "HIVE_PROVIDER, HIVE_MODEL, HIVE_API_BASE, HIVE_API_KEY"
-            print("[agent-harness] error: no LLM provider configured — set "
-                  + what + " (env vars) or the [llm] section of "
-                  "~/.config/hive/config.toml — see share/docs/LLM-PROVIDERS.md",
-                  file=sys.stderr)
-            # Keep the stream log's last line machine-readable (the
-            # dashboard and log consumers parse it as the result event).
-            print(json.dumps({
-                "type": "result",
-                "is_error": True,
-                "subtype": "llm-not-configured",
-                "num_turns": 0,
-                "duration_ms": 0,
-                "total_cost_usd": 0.0,
-                "result": f"No LLM provider configured — set {what}",
-            }))
-            return 2
+    # B.4: fail fast — if the effective config cannot call an LLM, exit
+    # now (before any work happens) with one actionable line naming
+    # what to set and where. CLI-provided base+model count as
+    # configured even when env/config are silent.
+    if not resolved.is_configured and not (args.api_base and args.model):
+        missing = []
+        if not (resolved.provider or args.provider):
+            missing.append("HIVE_PROVIDER (one of: "
+                           + ", ".join(sorted(llm_providers.PROVIDERS)) + ")")
+        if not (resolved.model or args.model):
+            missing.append("HIVE_MODEL")
+        if not (resolved.base_url or args.api_base):
+            missing.append("HIVE_API_BASE")
+        if resolved.needs_key and not (resolved.api_key or args.api_key):
+            missing.append("HIVE_API_KEY")
+        what = " / ".join(missing) if missing else \
+            "HIVE_PROVIDER, HIVE_MODEL, HIVE_API_BASE, HIVE_API_KEY"
+        print("[agent-harness] error: no LLM provider configured — set "
+              + what + " (env vars) or the [llm] section of "
+              "~/.config/hive/config.toml — see share/docs/LLM-PROVIDERS.md",
+              file=sys.stderr)
+        # Keep the stream log's last line machine-readable (the
+        # dashboard and log consumers parse it as the result event).
+        print(json.dumps({
+            "type": "result",
+            "is_error": True,
+            "subtype": "llm-not-configured",
+            "num_turns": 0,
+            "duration_ms": 0,
+            "total_cost_usd": 0.0,
+            "result": f"No LLM provider configured — set {what}",
+        }))
+        return 2
 
     # Read prompt from arg or stdin
     if args.prompt:
