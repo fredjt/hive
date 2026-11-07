@@ -70,3 +70,45 @@ class TestClockNormalizationContract:
             "test_state_layer must normalize via the shared helper"
         assert "_normalize_clock" not in src, \
             "test_state_layer still carries its own normalizer"
+
+
+class TestNoInProcessReload:
+    """No test module may call importlib.reload() on a lib/ module inside
+    the test process.
+
+    Reloading a lib module re-executes it: module-level state is
+    re-initialized and shared objects (e.g. hive_mcp.shell.ShellResult)
+    are replaced with NEW class objects, while every other test module
+    still holds the old bindings. On the xdist worker that also ran the
+    reloaded module's other test file, isinstance() checks then fail —
+    the 0.10.0 CI flake behind test_shell.py::TestRun (the
+    test_run_filters_none_args failure on the 3.10 job). Subprocess
+    isolation is the pattern: a fresh interpreter imports the module
+    fresh under the same env contract, with no shared-module poisoning
+    (tests/test_hive_paths.py is the working example).
+    """
+
+    def _test_modules(self):
+        # The guard file itself is out of scope (it names the offender
+        # pattern it hunts for).
+        return sorted(p for p in TESTS_DIR.glob("test_*.py")
+                      if p.name != "test_xdist_contract.py")
+
+    def test_no_test_module_calls_importlib_reload(self):
+        offenders = []
+        for p in self._test_modules():
+            src = p.read_text()
+            for i, line in enumerate(src.splitlines(), 1):
+                if "importlib.reload" in line or \
+                   re.search(r"from\s+importlib\s+import\s+[^#]*\breload\b",
+                             line):
+                    offenders.append(f"{p.name}:{i}: {line.strip()}")
+        assert not offenders, (
+            "importlib.reload() inside the test process — xdist worker "
+            "contract violation (root AGENTS.md, 'xdist worker contract'). "
+            "Reload re-executes the module and replaces shared objects "
+            "with new class objects, so isinstance() fails on the worker "
+            "that also ran the module's other test file. Run the module "
+            "in a subprocess instead (tests/test_hive_paths.py is the "
+            "pattern): " + "; ".join(offenders)
+        )
