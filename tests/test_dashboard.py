@@ -1599,6 +1599,38 @@ class TestDocTreeCounts:
             assert "hive_state" in content, \
                 f"{doc} does not mention lib/hive_state/"
 
+    # R3: a bare number directly before a tree-count noun (with at most
+    # one intervening word, e.g. "bash"/"domain") is an EXACT claim —
+    # exactly what rotted in G10 and the 0.10.0 cut. "~80" (approximate)
+    # and "11.2k" (compact) do not offend; "80 bash scripts", "(20
+    # handlers)", and "11,253 lines" do.
+    _EXACT_TREE_COUNT = re.compile(
+        r"(\S+)\s+(?:\w+\s+){0,1}"
+        r"(scripts?|tools?|lines?|modules?|handlers?|files?)\b", re.I)
+
+    def _exact_count_offenders(self, content):
+        offenders = []
+        for m in self._EXACT_TREE_COUNT.finditer(content):
+            tok = m.group(1).strip("(),;:")
+            if re.fullmatch(r"\d{1,5}(,\d{3})*", tok):
+                offenders.append(m.group(0).strip())
+        return offenders
+
+    @pytest.mark.parametrize("doc", DOCS)
+    def test_no_exact_tree_counts_without_approx(self, doc):
+        """Tree counts in prose rot (G10: "~101 scripts" was already
+        wrong by 0.10; the README version was too). Approximations
+        ("~80 scripts") or the command that computes the truth
+        ("ls lib/tools/*.sh | wc -l") are the only acceptable forms.
+        The retired "~65s -> ~15s" speedup phrasing is pinned by
+        test_retired_speedup_phrasing_is_gone (R1)."""
+        content = Path(doc).read_text()
+        offenders = self._exact_count_offenders(content)
+        assert not offenders, (
+            f"{doc} makes exact tree-count claims (rot-prone — use ~N or "
+            f"the command that computes the truth; G10/R3): {offenders}"
+        )
+
 
 class TestReleaseDocVersion:
     """The README's release claims must not rot again. 0.10.0 was cut
