@@ -53,6 +53,10 @@ stale. No new features.
 - `TestDocTreeCounts` fails on exact tree-count claims without `~` in
   the three tree docs, on top of G10's stale-count guards and the
   retired-speedup guard.
+- The doc generator (`packaging/gen-mcp-tools-doc.py`) emits the same
+  approximate header — the R3 sweep changed the checked-in
+  `MCP-TOOLS.md` without the generator following, and the 0.11.0
+  dry-run caught the drift at gate 2 (the R2 path doing its job).
 
 ## 0.10.0
 

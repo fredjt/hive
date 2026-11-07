@@ -53,8 +53,12 @@ def build(server) -> str:
     lines = [
         "# Hive MCP Tools",
         "",
-        f"**{len(tools)} tools registered.** Most wrap bash scripts in "
-        "`lib/tools/`; a few read `.company/` state directly.",
+        # R3: the count is approximate prose, not a claim — an exact
+        # number in the doc rotts the moment a tool lands and the doc is
+        # not regenerated; the tools dir is the truth.
+        f"**~{len(tools)} tools registered.** Most wrap bash scripts in "
+        "`lib/tools/`; a few read `.company/` state directly. (The count "
+        "drifts as tools are added; `lib/hive_mcp/tools/` is the truth.)",
         "",
     ]
     for name in sorted(tools):
