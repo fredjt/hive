@@ -8,6 +8,40 @@ from pathlib import Path
 
 import pytest
 
+# ---------------------------------------------------------------------------
+# Shared clock normalization (the xdist worker contract, R1/0.11)
+#
+# Any test that compares state written at different instants (two move
+# paths, two runs, a write observed across processes) MUST normalize
+# wall-clock timestamps with normalize_clock() before comparing. The
+# writes run a few ms apart and cross a second boundary on ~5% of runs;
+# the contract is identical STATE, not identical INSTANT. Do not
+# hand-roll a second normalizer in a test module — the static guard in
+# tests/test_xdist_contract.py fails on one.
+# ---------------------------------------------------------------------------
+
+#: Keys whose values are wall-clock timestamps — the instant the state was
+#: written, not part of the state's identity.
+TIMESTAMP_KEYS = ("created_at", "updated_at", "started_at",
+                  "resolved_at", "stage_started_at", "timestamp")
+
+
+def normalize_clock(value, timestamp_keys=TIMESTAMP_KEYS):
+    """Replace wall-clock timestamp strings with the constant "T".
+
+    Recurses through dicts and lists. Used before comparing two pieces of
+    state written at different instants (the two shared move paths in
+    test_state_layer), so the comparison asserts identical move paths —
+    not identical instants.
+    """
+    if isinstance(value, dict):
+        return {k: ("T" if k in timestamp_keys and isinstance(v, str)
+                    else normalize_clock(v, timestamp_keys))
+                for k, v in value.items()}
+    if isinstance(value, list):
+        return [normalize_clock(v, timestamp_keys) for v in value]
+    return value
+
 # Ensure hive lib is on PYTHONPATH for all tests.
 _hive_lib = str(Path(__file__).resolve().parent.parent / "lib")
 if _hive_lib not in sys.path:

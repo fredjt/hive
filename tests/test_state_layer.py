@@ -28,6 +28,12 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 LIB = REPO_ROOT / "lib"
 sys.path.insert(0, str(LIB))
 
+# The shared clock normalization lives in conftest (R1/0.11 xdist worker
+# contract): two move paths run a few ms apart, so state comparison goes
+# through normalize_clock — never a hand-rolled per-module copy.
+sys.path.insert(0, str(REPO_ROOT / "tests"))
+from conftest import normalize_clock  # noqa: E402
+
 
 def run_state(*args: str, company_dir: Path, env_extra: dict | None = None) -> subprocess.CompletedProcess:
     env = {**os.environ, "COMPANY_DIR": str(company_dir), "PYTHONPATH": str(LIB)}
@@ -280,32 +286,17 @@ class TestSharedMoveAccessor:
         }))
         return company, tid
 
-    _TIMESTAMP_KEYS = ("created_at", "updated_at", "started_at",
-                       "resolved_at", "stage_started_at", "timestamp")
-
-    @classmethod
-    def _normalize_clock(cls, value):
-        # Normalize wall clock: the two moves run a few ms apart and
-        # cross a second boundary on ~5% of runs (updated_at, comment
-        # timestamps, resolution.started_at all carry the move's instant)
-        # — the contract is that the MOVE PATHS write identical files,
-        # not that they ran at the same instant.
-        if isinstance(value, dict):
-            return {k: ("T" if k in cls._TIMESTAMP_KEYS
-                        and isinstance(v, str)
-                        else cls._normalize_clock(v))
-                    for k, v in value.items()}
-        if isinstance(value, list):
-            return [cls._normalize_clock(v) for v in value]
-        return value
-
     @classmethod
     def _ticket_state(cls, company, tid):
+        # Wall-clock normalization via the shared conftest helper: the two
+        # moves run a few ms apart and cross a second boundary on ~5% of
+        # runs — the contract is identical MOVE PATHS, not identical
+        # instants.
         for d in ("backlog", "sprint-current", "in-progress", "in-review",
                   "done", "archive"):
             f = company / "departments" / "backend" / "tickets" / d / f"{tid}.json"
             if f.is_file():
-                return d, cls._normalize_clock(json.loads(f.read_text()))
+                return d, normalize_clock(json.loads(f.read_text()))
         return None, None
 
     def test_both_paths_name_the_same_move_script(self):
