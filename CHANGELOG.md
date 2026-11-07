@@ -1,5 +1,59 @@
 # Changelog
 
+## 0.11.0
+
+The trust release.
+
+The 0.10.0 cut exposed the theme of this one: the two systems
+everything else depends on — the test suite and the release cut —
+each had a trust hole found only after the fact. Three xdist flakes
+bit the 0.10 matrix (mutable state shared across workers), and the
+0.10 cut left both READMEs at v0.9.0 until caught post-push. 0.11
+closes both: the suite is worker-safe by construction, and the cut
+is one documented path that cannot leave a version-bearing surface
+stale. No new features.
+
+### Suite isolation contract (R1, d265b73 / a74e885 / b4653d2)
+- `tests/conftest.py` owns the shared clock normalization
+  (`normalize_clock`): two move paths a few ms apart cross a second
+  boundary on ~5% of runs — the contract is identical STATE, not
+  identical INSTANT. `test_state_layer` normalizes through it; the
+  guard fails on a hand-rolled copy.
+- `tests/test_xdist_contract.py` is the static guard: no
+  `importlib.reload()` of `lib/` modules inside the test process —
+  that re-executes the module and replaces shared objects (the 0.10
+  `ShellResult` flake behind `test_run_filters_none_args`).
+  Subprocess isolation is the pattern. The guard went red against
+  the pre-fix `test_hive_paths` body before landing.
+- Root `AGENTS.md` gains the "xdist worker contract" section. The
+  "~65s -> ~15s" speedup claim is retired — it did not reproduce on
+  the 0.11 reference box (≈155s serial and ≈155s with `-n 8`; the
+  win is host-dependent) — and is pinned by the docs-rot guard.
+- Verified: full suite `-n 8` green 3 consecutive runs (1,270
+  passed, 7 skipped each).
+
+### Release-cut integrity (R2, 2d42fd4 / 6a3e53f)
+- Gate 0 of `packaging/cut-release.sh` covers every version-bearing
+  surface: `VERSION`, `packaging/pyproject.toml`, the newest
+  `CHANGELOG.md` section, and the "Latest release" + tarball-name
+  lines in `README.md` and `share/docs/README.md`. A mismatch fails,
+  naming each stale file — the 0.10.0 README rot was outside the
+  gate's surface, so it could not have been caught.
+- `--check-surface` runs gate 0 standalone: the cut commit (every
+  surface at the new version, one commit) is validated before the
+  cut runs.
+- `share/docs/PACKAGING.md` names the one cut path (bump commit →
+  `cut-release.sh`); hand-taged cuts are explicitly not a path.
+
+### Docs stop hard-coding volatile numbers (R3, ca8de61 / e7b881f)
+- The tree docs and `share/docs/*.md` carry approximations (`~80
+  scripts`, `~48 tools`) or the command that computes the truth —
+  the stale 0.10-era counts ("101 bash scripts", "~55 tools",
+  "140 files / ~170 KB") are out.
+- `TestDocTreeCounts` fails on exact tree-count claims without `~` in
+  the three tree docs, on top of G10's stale-count guards and the
+  retired-speedup guard.
+
 ## 0.10.0
 
 Retiring design debt.
