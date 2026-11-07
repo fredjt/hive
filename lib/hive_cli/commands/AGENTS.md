@@ -28,7 +28,14 @@ def handle(args) -> int:
     return 0 if res.get("ok") else 1
 ```
 
-**Style B — Direct script execution** (lifecycle commands): Shell out to bash scripts without going through MCP. Used for `company-start.sh`, `company-stop.sh`, `hive-killall.sh`, `init.sh` — these must bypass MCP because spawned agents were restart-looping the daemons via MCP calls.
+**Style B — Direct script execution (process management ONLY).** 0.10 (G2) retired Style B for everything that mutates `.company/` state: no handler may shell out to a `lib/tools/*.sh` script to change company state — that goes through the MCP client (Style A) over the G1 state layer. The ONLY remaining direct script calls are true process management / scaffolding, which must bypass MCP because spawned agents were restart-looping the daemons via MCP calls:
+
+- `company-start.sh`, `company-stop.sh`, `company-health.sh` (daemons)
+- `hive-killall.sh` (process tree)
+- `core/init.sh` / `core/init-workspace.sh` (scaffolding a fresh `.company/`)
+- `dashboard/server.js` and `core/agent-harness.py` (probers)
+
+`tests/test_commands.py::TestStyleBRetirement` enforces this allowlist: any new direct script call outside it fails the suite.
 
 ```python
 import subprocess

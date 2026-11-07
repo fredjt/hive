@@ -256,6 +256,84 @@ class TestTicketAccessors:
         assert bodies.count("racing comment") == 4
 
 
+
+class TestSharedMoveAccessor:
+    """G2: one mutation API. The lifecycle's scripted move and the MCP
+    tool's move must reach the SAME code path — ticket-move.sh over the
+    G1 state layer — and a move made by each path must be
+    indistinguishable in the ticket file it produces."""
+
+    def _company_with_backlog_ticket(self, tmp_path, label):
+        company = tmp_path / label
+        tdir = company / "departments" / "backend" / "tickets"
+        (tdir / "backlog").mkdir(parents=True)
+        (tdir / "in-progress").mkdir()
+        (company / "counters").mkdir()
+        (company / "counters" / "BACKEND.json").write_text('{"next_id": 2}')
+        tid = "BACKEND-0001"
+        (tdir / "backlog" / f"{tid}.json").write_text(json.dumps({
+            "id": tid, "title": "t", "type": "feature", "priority": "high",
+            "status": "backlog", "dept": "backend", "assignee": "",
+            "bounce_count": 0, "comments": [],
+            "created_at": "2026-01-01T00:00:00Z",
+            "updated_at": "2026-01-01T00:00:00Z",
+        }))
+        return company, tid
+
+    @staticmethod
+    def _ticket_state(company, tid):
+        for d in ("backlog", "sprint-current", "in-progress", "in-review",
+                  "done", "archive"):
+            f = company / "departments" / "backend" / "tickets" / d / f"{tid}.json"
+            if f.is_file():
+                data = json.loads(f.read_text())
+                data.pop("updated_at", None)
+                return d, data
+        return None, None
+
+    def test_both_paths_name_the_same_move_script(self):
+        """Static guard: the lifecycle's scripted_move and the MCP
+        ticket_move tool must both route through ticket-move.sh."""
+        life = (LIB / "tools" / "sprint-lifecycle.sh").read_text()
+        assert 'ticket-move.sh' in life, \
+            "lifecycle no longer calls ticket-move.sh (G2: one mutation API)"
+        mcp = (LIB / "hive_mcp" / "tools" / "tickets.py").read_text()
+        assert "ticket-move" in mcp, \
+            "MCP ticket tools no longer route through ticket-move.sh"
+
+    def test_lifecycle_and_mcp_moves_are_indistinguishable(self, tmp_path):
+        # Same ticket, same move, two caller identities: the MCP tool's
+        # role-based path and the lifecycle's scripted path.
+        a, tid = self._company_with_backlog_ticket(tmp_path, "a")
+        env_mcp = {**os.environ, "COMPANY_DIR": str(a),
+                   "HIVE_ROLE": "Verification-IC", "HIVE_AGENT": "verifier"}
+        r = subprocess.run(
+            [str(LIB / "tools" / "ticket-move.sh"), "backend", tid,
+             "in-progress", "shared move", "sprint-lifecycle"],
+            capture_output=True, text=True, timeout=30, env=env_mcp)
+        assert r.returncode == 0, r.stderr
+        dir_a, state_a = self._ticket_state(a, tid)
+        assert dir_a == "in-progress"
+
+        b, tid2 = self._company_with_backlog_ticket(tmp_path, "b")
+        env_lifecycle = {**os.environ, "COMPANY_DIR": str(b),
+                         "HIVE_SCRIPTED_MOVE": "1", "HIVE_ROLE": "System",
+                         "HIVE_AGENT": "sprint-lifecycle"}
+        r = subprocess.run(
+            [str(LIB / "tools" / "ticket-move.sh"), "backend", tid2,
+             "in-progress", "shared move", "sprint-lifecycle"],
+            capture_output=True, text=True, timeout=30, env=env_lifecycle)
+        assert r.returncode == 0, r.stderr
+        dir_b, state_b = self._ticket_state(b, tid2)
+        assert dir_b == "in-progress"
+
+        assert dir_a == dir_b, "paths landed the ticket in different dirs"
+        assert state_a == state_b, (
+            "shared accessor drift: the two move paths produced different "
+            f"ticket files: {state_a!r} vs {state_b!r}")
+
+
+
 # ── round activity log ─────────────────────────────────────────────
 
 class TestRoundActivityLog:

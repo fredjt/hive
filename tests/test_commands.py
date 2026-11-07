@@ -249,6 +249,55 @@ class TestDashboardCommand:
         assert callable(handle)
 
 
+
+class TestStyleBRetirement:
+    """G2: one write path. No CLI handler may shell out to a
+    lib/tools/*.sh script to mutate .company/ state. The only permitted
+    direct script calls are process management + scaffolding (start/stop/
+    health/killall/init) and the dashboard/harness probers — everything
+    that touches company state goes through the MCP client (Style A)."""
+
+    REPO = Path(__file__).resolve().parent.parent
+
+    ALLOWED_SCRIPTS = {
+        # process management (must bypass MCP — agents restart-looped daemons)
+        "company-start.sh", "company-stop.sh", "company-health.sh",
+        "hive-killall.sh",
+        # scaffolding / probers
+        "init.sh", "agent-harness.py", "server.js", "server.py",
+    }
+
+    def _script_refs(self, text):
+        refs = set()
+        # direct literals in subprocess calls
+        for m in re.finditer(r"subprocess\.(?:run|Popen|call)\(", text):
+            i, depth, j = m.end(), 1, m.end()
+            while depth and j < len(text):
+                if text[j] == "(":
+                    depth += 1
+                elif text[j] == ")":
+                    depth -= 1
+                j += 1
+            refs |= set(re.findall(r'"([a-z0-9_.-]+\.(?:sh|py|js))"', text[i:j]))
+        # Path-constructed:  ... / "lib" / "tools" / "name.sh"
+        refs |= set(re.findall(
+            r'(?:tools|core|dashboard|templates)" */ *"([a-z0-9_.-]+\.(?:sh|py|js))"',
+            text))
+        return refs
+
+    def test_no_handler_shells_out_for_state_mutation(self):
+        problems = []
+        for f in sorted((self.REPO / "lib" / "hive_cli" / "commands").glob("*.py")):
+            for name in sorted(self._script_refs(f.read_text())):
+                if name not in self.ALLOWED_SCRIPTS:
+                    problems.append(f"{f.name}: {name}")
+        assert not problems, (
+            "CLI handlers shell out to non-process-management scripts "
+            "(state mutations must go through the MCP client, Style A): "
+            + ", ".join(problems))
+
+
+
 class TestRestartCommand:
     """Test the restart command handler."""
 
