@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import os
 
+from hive_agents import FIXED_DEPTS, compose_dept_vp
+
 from hive_mcp.server_compat import Server
 
 from hive_mcp.shell import HIVE_ROOT
@@ -55,13 +57,13 @@ def register(server: Server) -> None:
         Used both during build and for ad-hoc cycles. The perpetual loop is
         managed by `company_start`.
         """
-        # Map dept name to agent prompt: hr→vp-hr, it→vp-it, rd→vp-rd,
-        # marketing→vp-marketing, anything else→vp-dept (with dept passed as arg)
-        special = {"hr": "vp-hr", "it": "vp-it", "rd": "vp-rd", "marketing": "vp-marketing"}
-        agent_name = special.get(dept, "vp-dept")
-        prompt_file = HIVE_ROOT / "lib" / "agents" / f"{agent_name}.md"
+        # G7: the fixed-six VP prompts are composed from vp-dept.md + the
+        # per-dept fragment (hive_agents is the single implementation; the
+        # sprint-lifecycle spawn path renders the same bytes). Dynamic
+        # depts get the base verbatim.
+        agent_name = f"vp-{dept}" if dept in FIXED_DEPTS else "vp-dept"
         prompt = (
-            prompt_file.read_text()
+            compose_dept_vp(dept, lib_dir=HIVE_ROOT / "lib")
             + f"\n\n--- Assignment ---\nDepartment: {dept}\nProject root: {project_root}\n"
         )
         from subprocess import run as srun

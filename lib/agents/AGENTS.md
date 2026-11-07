@@ -24,16 +24,41 @@ Role-specific prompts extend the primer with their own rules and stage-specific 
 | `manager.md` | General manager template | — |
 | `tech-lead.md` | Technical lead | — |
 
-### VPs (department heads)
+### VPs (department heads) — composed prompts (G7)
+
+The fixed-six department VPs are **fragments**, not full prompts:
+each `vp-<dept>.md` is the title line + the "<Dept>-specific scope"
+section only (< 60 lines). The spawn path composes the real prompt
+from the shared base at spawn time:
+
+```
+<fragment title line>
+<vp-dept.md body up to the seam line>
+<blank line + fragment scope section>
+<vp-dept.md remainder after the seam>
+```
+
+- **Single implementation:** `lib/hive_agents.py` (`compose_dept_vp`).
+  Callers: `lib/tools/load-agent-prompt.sh` (`load_dept_vp_prompt`,
+  used by `sprint-lifecycle.sh` at the vp-plan/vp-review stages) and
+  the `agent_run_vp` MCP tool. Never read a `vp-<dept>.md` fragment as
+  a whole prompt — always compose.
+- **`vp-dept.md` is itself a live prompt**: dynamic departments
+  (HR-created depts beyond the fixed six) spawn the base verbatim, so
+  it must stay complete — cross-cutting edits belong in the base.
+- **Golden renders:** `tests/golden/vp-<dept>-composed.md` pin the
+  composed output (test-first contract; re-capture only with an
+  intentional content change).
+
 | File | Department | Spawn stages |
 |------|-----------|-------------|
-| `vp-dept.md` | Generic VP template (base for dept-specific VPs) | Stages 2, 6b, 9 |
-| `vp-rd.md` | R&D — research, tech debt, prototypes | Stages 2, 6b, 9 |
-| `vp-it.md` | IT — scaffold, infra, CI/CD | Stages 2, 6b, 9 |
-| `vp-hr.md` | HR | Stages 2, 6b, 9 |
-| `vp-marketing.md` | Marketing | Stages 2, 6b, 9 |
-| `vp-legal.md` | Legal | Stages 2, 6b, 9 |
-| `vp-finance.md` | Finance | Stages 2, 6b, 9 |
+| `vp-dept.md` | Base — complete standalone prompt, composed into the fixed six | Stages 2, 6b, 9 (and dynamic depts, verbatim) |
+| `vp-rd.md` | R&D — research, tech debt, prototypes (fragment) | Stages 2, 6b, 9 |
+| `vp-it.md` | IT — scaffold, infra, CI/CD (fragment) | Stages 2, 6b, 9 |
+| `vp-hr.md` | HR (fragment) | Stages 2, 6b, 9 |
+| `vp-marketing.md` | Marketing (fragment) | Stages 2, 6b, 9 |
+| `vp-legal.md` | Legal (fragment) | Stages 2, 6b, 9 |
+| `vp-finance.md` | Finance (fragment) | Stages 2, 6b, 9 |
 
 ### Individual Contributors (ICs)
 | File | Role | Spawn stages |

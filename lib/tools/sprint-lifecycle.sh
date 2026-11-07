@@ -564,7 +564,7 @@ run_vp_plan() {
 
     local PROMPT
     . "$SKILL_DIR/lib/tools/load-agent-prompt.sh"
-    PROMPT="$(load_agent_prompt "$agent_file")
+    PROMPT="$(load_dept_vp_prompt "$dept")
 
 --- STAGE: vp-plan (department: $dept) ---
 Read the CEO direction at: $DIRECTION
@@ -1450,7 +1450,7 @@ for dept in "${DEPTS[@]}"; do
   [ -f "$agent_file" ] || continue
   REPORT_PATH="$REPORT_DIR/${SPRINT_ID}-${dept}.md"
 
-  PROMPT="$(load_agent_prompt "$agent_file")
+  PROMPT="$(load_dept_vp_prompt "$dept")
 
 --- STAGE: vp-review (department: $dept) ---
 Mode: vp-review.

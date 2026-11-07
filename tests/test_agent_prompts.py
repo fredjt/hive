@@ -1,18 +1,40 @@
 """Tests for hive agent prompts — validate structure and content."""
-import sys
+import os
 import re
+import subprocess
+import sys
 from pathlib import Path
 # Ensure lib/ is on the path when running from within hive/ directory
 _hive_lib = str(Path(__file__).resolve().parent.parent / "lib")
 if _hive_lib not in sys.path:
     sys.path.insert(0, _hive_lib)
 
-
+import hive_agents
 
 import pytest
 
 
 AGENTS_DIR = "lib/agents"
+
+# G7: the fixed-six VP files are fragments; their real prompt is the
+# composed render (base + fragment) from lib/hive_agents.py.
+VP_FRAGMENT_DEPTS = {
+    "hr": "vp-hr.md", "it": "vp-it.md", "rd": "vp-rd.md",
+    "marketing": "vp-marketing.md", "legal": "vp-legal.md",
+    "finance": "vp-finance.md",
+}
+
+
+def _prompt_content(fname):
+    """Content the per-file structure checks run against.
+
+    For the fixed-six VP files that is the composed render (the fragment
+    on disk is not a prompt by itself); for everything else the raw file.
+    """
+    for dept, frag_name in VP_FRAGMENT_DEPTS.items():
+        if fname == frag_name:
+            return hive_agents.compose_dept_vp(dept)
+    return Path(f"{AGENTS_DIR}/{fname}").read_text()
 
 
 class TestAgentFilesExist:
@@ -57,7 +79,7 @@ class TestAgentPromptsUsePlainToolNames:
     @pytest.mark.parametrize("fname",
                              sorted(p.name for p in Path(AGENTS_DIR).glob("*.md")))
     def test_no_prefixed_tool_names(self, fname):
-        content = Path(f"{AGENTS_DIR}/{fname}").read_text()
+        content = _prompt_content(fname)
         assert "mcp__" not in content, (
             f"{fname} teaches the mcp__-prefixed tool spelling — the MCP "
             f"server registers plain names and rejects the prefix"
@@ -75,14 +97,14 @@ class TestAgentPromptStructure:
         str(p.name) for p in Path(AGENTS_DIR).glob("*.md")
     ])
     def test_agent_file_is_not_empty(self, agent):
-        content = Path(f"{AGENTS_DIR}/{agent}").read_text()
+        content = _prompt_content(agent)
         assert len(content.strip()) > 50, f"{agent} is too short ({len(content)} chars)"
 
     @pytest.mark.parametrize("agent", [
         str(p.name) for p in Path(AGENTS_DIR).glob("*.md")
     ])
     def test_agent_file_has_title(self, agent):
-        content = Path(f"{AGENTS_DIR}/{agent}").read_text()
+        content = _prompt_content(agent)
         # Should have a markdown title (first line starting with #)
         first_line = content.strip().split("\n")[0]
         assert first_line.startswith("#"), f"{agent} missing title"
@@ -91,7 +113,7 @@ class TestAgentPromptStructure:
         str(p.name) for p in Path(AGENTS_DIR).glob("*.md")
     ])
     def test_agent_file_has_sections(self, agent):
-        content = Path(f"{AGENTS_DIR}/{agent}").read_text()
+        content = _prompt_content(agent)
         # Should have at least one section header (## or ###)
         has_section = bool(re.search(r"^#{2,}\s", content, re.MULTILINE))
         assert has_section, f"{agent} missing section headers"
@@ -177,7 +199,7 @@ class TestVPPrompts:
     def test_vp_prompts_mention_sprint_stages(self):
         """All VP prompts should know about sprint stages."""
         for f in Path(AGENTS_DIR).glob("vp-*.md"):
-            content = f.read_text()
+            content = _prompt_content(f.name)
             assert "tdd-red" in content or "verify" in content, f"{f.name} missing stage info"
 
 
@@ -188,7 +210,7 @@ class TestAgentPromptsHaveMCPHeader:
         str(p.name) for p in Path(AGENTS_DIR).glob("*.md") if not p.name.startswith("_")
     ])
     def test_agent_mentions_mcp_tools(self, agent):
-        content = Path(f"{AGENTS_DIR}/{agent}").read_text()
+        content = _prompt_content(agent)
         # Most agents should reference MCP tools
         has_mcp_ref = "mcp__" in content or "MCP" in content or "tool_" in content
         assert has_mcp_ref, f"{agent} doesn't mention MCP tools"
@@ -201,7 +223,7 @@ class TestAgentPromptsHaveTicketFlow:
         str(p.name) for p in Path(AGENTS_DIR).glob("*.md") if not p.name.startswith("_")
     ])
     def test_agent_mentions_ticket_statuses(self, agent):
-        content = Path(f"{AGENTS_DIR}/{agent}").read_text()
+        content = _prompt_content(agent)
         # Agents should know about ticket statuses
         has_status = any(s in content for s in ["in-progress", "in-review", "sprint-current", "backlog"])
         assert has_status, f"{agent} doesn't mention ticket statuses"
@@ -214,7 +236,7 @@ class TestAgentPromptsHaveConsistentFormatting:
         str(p.name) for p in Path(AGENTS_DIR).glob("*.md") if not p.name.startswith("_")
     ])
     def test_agent_uses_code_blocks(self, agent):
-        content = Path(f"{AGENTS_DIR}/{agent}").read_text()
+        content = _prompt_content(agent)
         # Should have at least some code examples
         has_code = "```" in content or "`" in content
         assert has_code, f"{agent} has no code references"
@@ -247,6 +269,67 @@ class TestAgentPromptsNoPlaceholders:
         str(p.name) for p in Path(AGENTS_DIR).glob("*.md") if not p.name.startswith("_")
     ])
     def test_agent_has_no_todos(self, agent):
-        content = Path(f"{AGENTS_DIR}/{agent}").read_text()
+        content = _prompt_content(agent)
         # Should not have TODO or FIXME markers
         assert "TODO" not in content and "FIXME" not in content, f"{agent} contains TODO/FIXME"
+
+
+class TestVPComposition:
+    """G7: the fixed-six VP prompts are composed from vp-dept.md (base) +
+    a per-dept fragment (title line + scope section) by
+    lib/hive_agents.py. The goldens in tests/golden/ were captured from
+    the pre-conversion static files: the five non-IT goldens are
+    byte-identical to those files; the IT golden is the old file plus the
+    restored 'hive friction -> IT ticket' sentence (the one deliberate
+    content change of G7)."""
+
+    @pytest.mark.parametrize("dept", sorted(VP_FRAGMENT_DEPTS))
+    def test_composed_render_matches_golden(self, dept):
+        golden = Path("tests/golden/vp-%s-composed.md" % dept).read_text()
+        composed = hive_agents.compose_dept_vp(dept)
+        assert composed == golden, (
+            f"vp-{dept} composition drifted from the golden — re-capture "
+            f"only with an intentional content change"
+        )
+
+    @pytest.mark.parametrize("dept", sorted(VP_FRAGMENT_DEPTS))
+    def test_fragment_is_a_fragment(self, dept):
+        frag = Path(f"{AGENTS_DIR}/vp-{dept}.md").read_text()
+        lines = frag.splitlines()
+        assert len(lines) < 60, f"vp-{dept}.md fragment is {len(lines)} lines (bound: 60)"
+        assert lines[0].startswith("#"), "fragment must start with the title line"
+        assert re.search(r"^## .*-specific scope$", frag, re.MULTILINE), \
+            f"vp-{dept}.md missing its scope section"
+
+    def test_dynamic_dept_gets_base_verbatim(self):
+        """Dynamic departments (HR-created depts) spawn the base as-is."""
+        base = Path(f"{AGENTS_DIR}/vp-dept.md").read_text()
+        assert hive_agents.compose_dept_vp("frontend-web") == base
+
+    def test_base_is_a_complete_standalone_prompt(self):
+        """vp-dept.md is itself a live prompt (the dynamic-dept fallback),
+        so it must keep its tail sections — not just its head."""
+        base = Path(f"{AGENTS_DIR}/vp-dept.md").read_text()
+        for needle in [
+            "## Hard rules (script-enforced)",
+            "## Allowed side actions",
+            "### Then exit",
+            "next sprint's stage 1 (ceo-plan) runs.",
+        ]:
+            assert needle in base, f"vp-dept.md missing {needle!r}"
+
+    def test_bash_spawn_path_gets_primer_plus_composed_prompt(self):
+        """sprint-lifecycle's spawn path (load_dept_vp_prompt) must deliver
+        primer + composed render — the same bytes the goldens pin."""
+        repo = Path(__file__).resolve().parent.parent
+        out = subprocess.run(
+            ["bash", "-c",
+             "source lib/tools/load-agent-prompt.sh && load_dept_vp_prompt it"],
+            capture_output=True, text=True, cwd=str(repo),
+            env={**os.environ, "SKILL_DIR": str(repo)},
+            timeout=30,
+        )
+        assert out.returncode == 0, out.stderr
+        primer = (repo / "lib" / "agents" / "_FRAMEWORK_PRIMER.md").read_text()
+        golden = (repo / "tests" / "golden" / "vp-it-composed.md").read_text()
+        assert out.stdout == primer + "\n" + golden
