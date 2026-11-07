@@ -121,10 +121,70 @@ BLOCKED_PATTERNS = [
 ]
 
 
-def is_safe_command(cmd_line: str) -> tuple[bool, str]:
+# G4: wrapper evasions — first tokens (bash, sh, python3, find, …) that
+# are NOT on the denylist but can still write .company state.
+SANDBOX_WRAPPER_PATTERNS = [
+    # `bash -c`, `sh -ec`, `python3 -u -c` … — a flag token carrying the
+    # inline-code flag before any positional argument. Bare
+    # `bash script.sh` (how agents run the lib/tools scripts) must stay
+    # legal, so only flag tokens are scanned.
+    (r"\b(?:bash|sh|dash|zsh|ksh)\s+(?:-\S+\s+)*-\w*c\w*(?=\s|$)",
+     "subshell -c invocation"),
+    (r"\bpython\d?(?:\.\d+)?\s+(?:-\S+\s+)*-\w*c\w*(?=\s|$)",
+     "python -c invocation"),
+    (r"\b(?:perl|ruby)\s+(?:-\S+\s+)*-\w*[ce]\w*(?=\s|$)",
+     "perl/ruby -e/-c invocation"),
+    (r"\bfind\b.*\s-delete\b", "find -delete"),
+    (r"\bfind\b.*\s-exec(dir)?\b", "find -exec"),
+]
+
+# Commands whose non-flag args are WRITE targets (arg position varies).
+_COMPANY_ARG_OPS = ("tee", "touch", "mkdir", "ln", "cp", "mv", "install")
+
+
+def _write_targets(cmd_line: str) -> list[str]:
+    """Extract write targets from a command line: redirection destinations,
+    tee/touch/mkdir/ln args, the last arg of cp/mv/install, and dd of=.
+    Reads (cat/ls/jq/grep, cp/mv SOURCES) are not write targets — the
+    .company invariant protects writes, reads stay free."""
+    targets: list[str] = []
+    # Redirections: `>` / `>>` followed by a path token. `2>&1` never
+    # matches (the char after > is & which is not a path char).
+    for m in re.finditer(r">>\s*([^\s;|&`]+)|>\s*([^>\s;|&`]+)", cmd_line):
+        targets.append(m.group(1) or m.group(2))
+    # Argument-style targets
+    for op in _COMPANY_ARG_OPS:
+        for m in re.finditer(
+                r"\b" + op + r"\s+((?:[^\s;|&`]+\s*)*)", cmd_line):
+            args = [a for a in m.group(1).split() if not a.startswith("-")]
+            if op in ("cp", "mv", "install"):
+                if args:
+                    targets.append(args[-1])      # destination only
+            elif op == "ln":
+                if args:
+                    targets.append(args[-1])      # link name
+            else:
+                targets.extend(args)
+    # dd of=PATH
+    m = re.search(r"\bdd\b[^;&|]*\bof=(\S+)", cmd_line)
+    if m:
+        targets.append(m.group(1))
+    return targets
+
+
+def _in_company(target: str, company_real: str, cwd: str | None) -> bool:
+    base = cwd or os.getcwd()
+    resolved = os.path.realpath(os.path.join(base, target))
+    return resolved == company_real or resolved.startswith(company_real + os.sep)
+
+
+def is_safe_command(cmd_line: str, cwd: str | None = None) -> tuple[bool, str]:
     """Check if a shell command is safe to execute.
 
-    Returns (is_safe, reason_if_unsafe).
+    Returns (is_safe, reason_if_unsafe). G4: covers wrapper evasions
+    (bash -c, python -c, find -exec/-delete, …) and any command whose
+    write targets resolve inside $COMPANY_DIR — the .company boundary is
+    technical, not prompt-only.
     """
     # Extract the base command
     parts = cmd_line.strip().split()
@@ -141,18 +201,72 @@ def is_safe_command(cmd_line: str) -> tuple[bool, str]:
         if re.search(pattern, cmd_line):
             return False, f"command matches dangerous pattern: {pattern}"
 
+    # G4: wrapper evasions
+    for pattern, label in SANDBOX_WRAPPER_PATTERNS:
+        if re.search(pattern, cmd_line):
+            return False, (f"sandbox policy: {label} can write .company "
+                           f"live state — use MCP tools / script tools for "
+                           f".company writes, plain commands for the rest")
+
+    # G4: write targets inside $COMPANY_DIR
+    company = os.environ.get("COMPANY_DIR")
+    if company:
+        company_real = os.path.realpath(company)
+        for target in _write_targets(cmd_line):
+            if _in_company(target, company_real, cwd):
+                return False, (f"sandbox policy: command writes to .company "
+                               f"live state ({target}) — .company is written "
+                               f"only through MCP tools / script tools")
+        # Absolute-path mention + any write op: block even when the target
+        # cannot be resolved (variables, indirection).
+        if (company_real in cmd_line and
+                re.search(r">|\b(?:tee|cp|mv|touch|mkdir|ln|install|dd)\b",
+                          cmd_line)):
+            return False, ("sandbox policy: command touches .company live "
+                           "state with a write operation — use MCP tools / "
+                           "script tools for .company writes")
+
     return True, ""
 
 
+def _snapshot_company(company_dir: str | None) -> dict[str, int] | None:
+    """G4 backstop: relpath -> mtime_ns for every file under .company.
+    Returns None when there is nothing to snapshot."""
+    if not company_dir or not os.path.isdir(company_dir):
+        return None
+    snap: dict[str, int] = {}
+    for root, _dirs, files in os.walk(company_dir):
+        for name in files:
+            p = os.path.join(root, name)
+            try:
+                snap[os.path.relpath(p, company_dir)] = os.stat(p).st_mtime_ns
+            except OSError:
+                pass
+    return snap
+
+
+def _company_diff(before: dict[str, int], after: dict[str, int]) -> list[str]:
+    """Paths added, deleted, or modified under .company between snapshots."""
+    changed = [p for p, m in after.items() if before.get(p) != m]
+    changed += [p for p in before if p not in after]
+    return sorted(changed)
+
+
 def run_shell_command(cmd_line: str, cwd: str | None = None,
-                      timeout: int = 120) -> dict[str, Any]:
+                      timeout: int = 120,
+                      company_dir: str | None = None) -> dict[str, Any]:
     """Execute a shell command safely.
 
     Returns a dict with ok/exit_code/stdout/stderr compatible with existing
-    log consumers.
+    log consumers. G4 additions:
+      * ``sandbox_blocked`` — the policy refused the command pre-execution
+        (it never ran).
+      * ``company_mutated`` — the post-execution snapshot found paths under
+        .company/ added, deleted, or modified (the command ran and touched
+        live state anyway; the mutation is flagged, never rolled back).
     """
     # Check safety
-    is_safe, reason = is_safe_command(cmd_line)
+    is_safe, reason = is_safe_command(cmd_line, cwd=cwd)
     if not is_safe:
         return {
             "ok": False,
@@ -160,7 +274,12 @@ def run_shell_command(cmd_line: str, cwd: str | None = None,
             "stdout": "",
             "stderr": f"Command blocked: {reason}",
             "command": cmd_line,
+            "sandbox_blocked": True,
         }
+
+    # G4 backstop: snapshot .company before the command runs.
+    company = company_dir or os.environ.get("COMPANY_DIR")
+    before = _snapshot_company(company)
 
     # Run the command
     try:
@@ -172,7 +291,7 @@ def run_shell_command(cmd_line: str, cwd: str | None = None,
             cwd=cwd,
             timeout=timeout,
         )
-        return {
+        out = {
             "ok": result.returncode == 0,
             "exit_code": result.returncode,
             "stdout": result.stdout,
@@ -180,7 +299,7 @@ def run_shell_command(cmd_line: str, cwd: str | None = None,
             "command": cmd_line,
         }
     except subprocess.TimeoutExpired as e:
-        return {
+        out = {
             "ok": False,
             "exit_code": 124,
             "stdout": e.stdout or "",
@@ -188,13 +307,20 @@ def run_shell_command(cmd_line: str, cwd: str | None = None,
             "command": cmd_line,
         }
     except Exception as e:
-        return {
+        out = {
             "ok": False,
             "exit_code": 1,
             "stdout": "",
             "stderr": f"execution error: {type(e).__name__}: {e}",
             "command": cmd_line,
         }
+
+    # G4 backstop: a killed/timed-out command may still have written.
+    if before is not None:
+        mutated = _company_diff(before, _snapshot_company(company))
+        if mutated:
+            out["company_mutated"] = mutated
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -603,6 +729,10 @@ def run_agent(
     total_actions = 0  # C2: every action ever executed (the result event's num_actions)
     assistant_text = ""
     start_time = datetime.now(timezone.utc)
+    # G4: sandbox accounting for the result event (blocks pre-execution,
+    # flagged mutations post-execution).
+    sandbox_blocked = 0
+    sandbox_violations = 0
 
     while num_turns < max_turns:
         # Call the LLM
@@ -630,6 +760,8 @@ def run_agent(
                     "subtype": "llm-unavailable",
                     "num_turns": 0,
                     "num_actions": 0,
+                    "sandbox_blocked": 0,
+                    "sandbox_violations": 0,
                     "duration_ms": int((end_time - start_time).total_seconds() * 1000),
                     "total_cost_usd": 0.0,
                     "result": f"LLM unavailable: {llm_result.get('error', 'unknown error')}",
@@ -699,13 +831,25 @@ def run_agent(
             if action["type"] == "bash":
                 print(json.dumps({"type": "tool_use", "tool": "bash",
                                   "args": {"command": action["command"]}}))
-                result = run_shell_command(action["command"], cwd=cwd)
+                result = run_shell_command(action["command"], cwd=cwd,
+                                           company_dir=company_dir)
                 out = f"```\n{result['stdout']}\n```"
                 if not result['ok']:
                     out += f"\nError: {result['stderr'].strip()}"
+                if result.get("sandbox_blocked"):
+                    sandbox_blocked += 1
+                mutated = result.get("company_mutated") or []
+                if mutated:
+                    sandbox_violations += 1
+                    out += ("\nSANDBOX VIOLATION: this command modified "
+                            ".company live state (" + ", ".join(mutated[:10])
+                            + ") — .company is written ONLY through MCP "
+                            "tools / script tools; the change is not rolled "
+                            "back. Flag this in your final message.")
                 action_results.append(out)
                 print(json.dumps({"type": "tool_result", "tool": "bash",
                                   "ok": bool(result.get("ok")),
+                                  "sandbox_violation": bool(mutated),
                                   "response": out[:8000]}))
             elif action["type"] == "mcp":
                 tool_name = action["name"]
@@ -731,16 +875,25 @@ def run_agent(
             total_actions += len(actionable)
             num_turns += 1
             end_time = datetime.now(timezone.utc)
+            sandbox_hit = sandbox_blocked or sandbox_violations
+            note = (f" [sandbox: {sandbox_blocked} blocked, "
+                    f"{sandbox_violations} flagged mutations]"
+                    if sandbox_hit else "")
             return {
                 "type": "result",
-                "is_error": exit_code != 0,
-                "subtype": "final" if exit_code == 0 else "agent-exit-error",
+                "is_error": bool(exit_code != 0 or sandbox_hit),
+                "subtype": ("final" if exit_code == 0 and not sandbox_hit
+                            else "sandbox-violation" if sandbox_hit
+                            else "agent-exit-error"),
                 "num_turns": num_turns,
                 "num_actions": total_actions,
+                "sandbox_blocked": sandbox_blocked,
+                "sandbox_violations": sandbox_violations,
                 "duration_ms": int((end_time - start_time).total_seconds() * 1000),
                 "total_cost_usd": total_cost_usd,
-                "result": (f"agent exited with code {exit_code}"
-                           if exit_code != 0 else assistant_text),
+                "result": (f"agent exited with code {exit_code}{note}"
+                           if exit_code != 0
+                           else assistant_text + note),
             }
 
         # Append action results as user message for the next turn
@@ -755,18 +908,25 @@ def run_agent(
     end_time = datetime.now(timezone.utc)
     duration_ms = int((end_time - start_time).total_seconds() * 1000)
 
+    sandbox_hit = sandbox_blocked or sandbox_violations
+    note = (f" [sandbox: {sandbox_blocked} blocked, "
+            f"{sandbox_violations} flagged mutations]" if sandbox_hit else "")
     return {
         "type": "result",
-        "is_error": num_turns >= max_turns,
-        "subtype": "final",
+        "is_error": bool((num_turns >= max_turns) or sandbox_hit),
+        "subtype": "final" if not sandbox_hit else "sandbox-violation",
         "num_turns": num_turns,
         # C2: how many actions the run actually executed. "completed
         # successfully with zero actions executed" (the live-run failure)
         # is now checkable by any reader of the stream.
         "num_actions": total_actions,
+        "sandbox_blocked": sandbox_blocked,
+        "sandbox_violations": sandbox_violations,
         "duration_ms": duration_ms,
         "total_cost_usd": total_cost_usd,
-        "result": assistant_text if num_turns < max_turns else f"Reached max turns ({max_turns}) without completing.",
+        "result": ((assistant_text if num_turns < max_turns
+                    else f"Reached max turns ({max_turns}) without completing.")
+                   + note),
     }
 
 
@@ -1073,6 +1233,8 @@ def main() -> int:
             "is_error": True,
             "subtype": "llm-not-configured",
             "num_turns": 0,
+            "sandbox_blocked": 0,
+            "sandbox_violations": 0,
             "duration_ms": 0,
             "total_cost_usd": 0.0,
             "result": f"No LLM provider configured — set {what}",

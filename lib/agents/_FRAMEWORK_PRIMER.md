@@ -73,7 +73,15 @@ you don't poll, you don't spawn anything.
 
 .company/ holds tickets, sprint state, chat, roster, logs, etc.
 THE FOLLOWING ARE FORBIDDEN and will break your ticket (verification
-rejects, or the work is useless) if you try them anyway:
+rejects, or the work is useless) if you try them anyway. Since 0.10 this
+rule is ENFORCED, not just taught: the agent harness blocks commands that
+evade it (subshell/interpreter `-c` invocations, `find -delete/-exec`,
+redirects or `tee`/`cp`/`mv`/`touch`/`mkdir` targeting .company) and
+snapshots .company before/after every bash block — a command that
+mutates .company anyway is flagged in your stream log and in the spawn
+result, the change is not rolled back, and the run is marked failed.
+Commands keep normal access to the ticket worktree itself (you are
+writing code there by design) — the enforced boundary is .company/.
 
    - Write / Edit / NotebookEdit on any file under .company/
    - Bash commands that mutate .company/:
