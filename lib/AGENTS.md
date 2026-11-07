@@ -12,13 +12,13 @@ lib/
                          JSON: per-file flock, atomic tmp+os.replace, schemas (Python)
   hive_config.py         THE config reader (G5) — one TOML parser + precedence;
                          bash reads config only via tools/config-get.sh
-  hive_mcp/              MCP server — ~55 tools wrapping bash scripts (Python/FastMCP)
+  hive_mcp/              MCP server — 48 tools wrapping bash scripts (Python/FastMCP)
     shell.py             Subprocess bridge — env setup, path resolution, JSON parsing
     tools/               17 domain modules (init, tickets, chat, verification, ...)
   hive_cli/              CLI dispatcher — argparse → handler modules → MCP client (Python)
     mcp_client.py        Auto-selecting MCP client (HTTP → stdio fallback)
     commands/            One module per CLI subcommand (20 handlers)
-  tools/                 101 bash scripts (~13k lines) — the operational engine
+  tools/                 80 bash scripts (~11.2k lines) — the operational engine
   core/                  5 foundational scripts — agent-spawn, orchestrator, init, hooks
   agents/                24 agent prompt files — role definitions for each IC/VP
   dashboard/             Single-file Node.js SPA (~5800 lines) — web UI, zero dependencies
@@ -48,10 +48,10 @@ The MCP server (`hive_mcp/`) is the write gateway. Every MCP tool calls `shell.p
 | Subdirectory | What it does | When to work here |
 |---|---|---|
 | [`hive_mcp/`](hive_mcp/) | MCP server + tool modules | Adding a new MCP tool, modifying tool behavior, changing transport |
-| [`hive_mcp/tools/`](hive_mcp/tools/) | 17 Python tool modules | Each tool is a thin wrapper around a bash script |
+| [`hive_mcp/tools/`](hive_mcp/tools/) | 13 Python tool modules | Each tool is a thin wrapper around a bash script |
 | [`hive_cli/`](hive_cli/) | CLI dispatcher | Adding a new CLI subcommand, fixing CLI behavior |
 | [`hive_cli/commands/`](hive_cli/commands/) | Per-subcommand handlers | Each file = one `hive <subcommand>` entry |
-| [`tools/`](tools/) | 101 bash scripts | Adding a new operation, fixing orchestration logic, modifying state handling |
+| [`tools/`](tools/) | 80 bash scripts | Adding a new operation, fixing orchestration logic, modifying state handling |
 | [`core/`](core/) | 5 foundational scripts | Changing agent spawning, workspace init, PreToolUse hooks |
 | [`agents/`](agents/) | 24 prompt files | Adding a new role, modifying agent behavior, updating procedures |
 | [`dashboard/`](dashboard/) | Node.js SPA + server | Modifying the web UI, adding API endpoints, changing SSE events |

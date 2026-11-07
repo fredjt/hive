@@ -23,7 +23,7 @@ lib/                                  Runtime core (see lib/AGENTS.md for detail
   hive_mcp/                           MCP server (Python, FastMCP)
   hive_cli/                           CLI dispatcher (Python)
   core/                               Foundational bash scripts (agent-spawn, init)
-  tools/                              ~100 bash scripts (~13k lines)
+  tools/                              ~80 bash scripts (~11.2k lines)
   agents/                             Agent prompt files
   dashboard/                          Node.js web dashboard (single-file SPA)
   templates/                          GitHub PR template, CI/release workflows
@@ -189,7 +189,7 @@ lib/                                  Runtime core
     main.py                           Subcommand routing
     commands/                         Per-subcommand handlers
   core/                               Foundational bash scripts (agent-spawn, init)
-  tools/                              ~101 bash scripts (~13k lines)
+  tools/                              ~80 bash scripts (~11.2k lines)
   agents/                             Agent prompt files
   dashboard/                          Node.js web dashboard (single-file SPA)
   templates/                          GitHub PR template, CI/release workflows

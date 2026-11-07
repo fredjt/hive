@@ -1560,3 +1560,29 @@ class TestRoundsCostApi:
             assert r["cost_usd"] == 0
         assert j["totals"] == {"calls": 0, "tokens": 0, "cost_usd": 0}
 
+
+
+class TestDocTreeCounts:
+    """G10: docs must not claim the pre-0.10 tree shape. The round-queue
+    era's counts (~100/101 scripts, ~13k lines, ~55 tools) are gone, and
+    the state layer (lib/hive_state/) is where docs must point."""
+
+    DOCS = ["AGENTS.md", "lib/AGENTS.md", "lib/tools/AGENTS.md"]
+
+    @pytest.mark.parametrize("doc", DOCS)
+    def test_no_stale_script_or_tool_counts(self, doc):
+        content = Path(doc).read_text()
+        assert "101 bash scripts" not in content, \
+            f"{doc} still claims 101 scripts"
+        assert "~100 bash scripts" not in content, \
+            f"{doc} still claims ~100 scripts"
+        assert "13k lines" not in content, \
+            f"{doc} still claims ~13k lines"
+        assert "55 tools" not in content, \
+            f"{doc} still claims ~55 tools"
+
+    def test_docs_mention_state_layer(self):
+        for doc in ("AGENTS.md", "lib/AGENTS.md"):
+            content = Path(doc).read_text()
+            assert "hive_state" in content, \
+                f"{doc} does not mention lib/hive_state/"
