@@ -1,13 +1,17 @@
 """B.1/B.2: explicit LLM provider configuration + provider wire shapes."""
 import json
+import os
 import subprocess
 import sys
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
+import pytest
+
 REPO = Path(__file__).resolve().parent.parent
 CORE = REPO / "lib" / "core"
+LIB = REPO / "lib"
 
 
 def _import_resolve():
@@ -206,6 +210,78 @@ class TestProviderSelection:
                               hive_root=str(tmp_path))
         assert not r.is_configured
         assert any("No LLM provider" in w for w in r.warnings)
+
+
+class TestNoTomlParser:
+    """A parser-less interpreter (the doctor dead-venv probe on Python
+    3.10 — a fresh venv has no tomllib, no tomli): provider resolution
+    must not die in config parsing. Env vars stay the source of truth
+    and the harness --selftest reports the REAL spawn-path failure
+    (missing httpx) instead of a config-parsing traceback that swallows
+    the diagnosis. Simulated by blocking tomllib/tomli/toml imports,
+    which is version-independent: on 3.13 it blocks the stdlib parser
+    the same way 3.10 simply lacks it."""
+
+    @pytest.fixture()
+    def no_parser(self, monkeypatch):
+        if str(LIB) not in sys.path:
+            sys.path.insert(0, str(LIB))
+        import hive_config
+        monkeypatch.setattr(hive_config, "tomllib", None)
+        monkeypatch.setitem(sys.modules, "tomllib", None)
+        monkeypatch.setitem(sys.modules, "tomli", None)
+        monkeypatch.setitem(sys.modules, "toml", None)
+
+    def test_resolve_degrades_to_env(self, no_parser, tmp_path):
+        # A readable defaults file makes the parse path run: without a
+        # parser it must degrade to an empty config (env wins), not
+        # raise out of resolve().
+        _write_config(tmp_path,
+                      "[llm]\nprovider = \"cfg-provider\"\n"
+                      "model = \"cfg-model\"\n")
+        r = _import_resolve()(
+            env={"HOME": str(tmp_path), "HIVE_PROVIDER": "openai",
+                 "HIVE_MODEL": "probe", "HIVE_API_BASE": "http://127.0.0.1:9",
+                 "HIVE_API_KEY": "k"},
+            hive_root=str(tmp_path))
+        assert r.is_configured
+        assert r.provider == "openai"  # env beats the unreadable config
+        assert r.model == "probe"
+
+    def test_selftest_reports_steps_not_config_crash(self, no_parser, tmp_path):
+        """The doctor probe contract, run against the real harness:
+        under a parser-less interpreter --selftest must emit its
+        per-step lines (interpreter, httpx, resolve) instead of dying
+        before the first print."""
+        blocker = tmp_path / "block_toml.py"
+        blocker.write_text(
+            "import sys, importlib.abc\n"
+            "class B(importlib.abc.MetaPathFinder):\n"
+            "    def find_spec(self, name, path=None, target=None):\n"
+            "        if name in ('tomllib', 'tomli', 'toml'):\n"
+            "            raise ImportError('blocked for test')\n"
+            "        return None\n"
+            "sys.meta_path.insert(0, B())\n")
+        harness = CORE / "agent-harness.py"
+        code = ("import runpy, sys; "
+                "sys.argv = ['agent-harness.py', '--selftest']; "
+                "exec(open(" + repr(str(blocker)) + ").read()); "
+                "runpy.run_path(" + repr(str(harness)) +
+                ", run_name='__main__')")
+        r = subprocess.run([sys.executable, "-c", code],
+                           capture_output=True, text=True, timeout=60,
+                           env={"PATH": os.environ.get("PATH", ""),
+                                "HOME": str(tmp_path),
+                                "HIVE_PROVIDER": "openai",
+                                "HIVE_MODEL": "probe",
+                                "HIVE_API_BASE": "http://127.0.0.1:9",
+                                "HIVE_API_KEY": "k"})
+        assert "[selftest]" in r.stdout, (
+            "harness died before its first selftest line under a "
+            f"parser-less interpreter (config-parsing crash): "
+            f"stdout={r.stdout!r} stderr={r.stderr[-400:]}")
+        assert "llm_providers.resolve" in r.stdout, r.stdout
+        assert "SELFTEST:" in r.stdout, r.stdout
 
 
 class TestHiveConfigOverride:

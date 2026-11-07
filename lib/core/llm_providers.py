@@ -40,10 +40,22 @@ PROVIDERS = {
 
 
 def _toml_loads(text: str) -> dict:
+    """TOML for the LLM path. Unlike hive_config (the config surface,
+    which fails loudly), a parser-less interpreter degrades to an EMPTY
+    config: env vars and CLI args remain authoritative LLM sources, and
+    --selftest must report the real spawn-path failure (e.g. missing
+    httpx) instead of dying in config parsing. The parser-less venv is
+    exactly the dead-spawn-path case the doctor probe exists to
+    diagnose — a crash here swallows that diagnosis (0.10.0 3.10 CI)."""
     try:
         import tomllib
     except ImportError:  # Python 3.10/3.11
-        import tomli as tomllib
+        try:
+            import tomli as tomllib
+        except ImportError:  # parser-less venv (the doctor dead-venv case)
+            tomllib = None
+    if tomllib is None:
+        return {}
     return tomllib.loads(text)
 
 

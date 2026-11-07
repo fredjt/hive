@@ -374,6 +374,44 @@ class TestConfigLayer:
         assert r.returncode == 0, r.stderr
         assert r.stdout.strip() == ""  # defaults carry an empty string
 
+    def test_fallback_parser_is_tomli_not_toml(self, tmp_path, monkeypatch):
+        """3.10 regression (G5): with stdlib tomllib absent, the fallback
+        must be tomli — the package packaging/requirements.txt installs
+        for Python < 3.11 — not the legacy ``toml`` package. The 3.10 CI
+        matrix died on `import toml` (ModuleNotFoundError), which broke
+        config-get.sh and every config consumer. Simulated 3.10: the
+        module's tomllib binding is unset and `import toml` is made
+        impossible; the chain must still parse via tomli."""
+        try:
+            import tomli  # noqa: F401
+        except ImportError:
+            pytest.skip("tomli not installed (pip install -r "
+                        "packaging/requirements.txt)")
+        import hive_config
+
+        monkeypatch.setattr(hive_config, "tomllib", None)
+        monkeypatch.setitem(sys.modules, "toml", None)
+
+        user = tmp_path / "user.toml"
+        user.write_text('[llm]\nbase_url = "http://user:1/v1"\n')
+        data = hive_config.load_config(
+            hive_root=str(REPO_ROOT),
+            env={"HOME": str(tmp_path), "HIVE_CONFIG": str(user)})
+        # Both the defaults file (repo etc/) and the user file parsed.
+        assert data["llm"]["base_url"] == "http://user:1/v1"
+        assert isinstance(data.get("release"), dict), (
+            "defaults section unparsed — the fallback parser chain failed")
+
+        # config-get.sh must answer through the same chain (the 3.10
+        # CI failure surfaced here, not in the module directly).
+        r = subprocess.run(
+            ["bash", str(LIB / "tools" / "config-get.sh"), "llm", "base_url"],
+            capture_output=True, text=True, timeout=30,
+            env={**os.environ, "HIVE_CONFIG": str(user),
+                 "HOME": str(tmp_path)})
+        assert r.returncode == 0, r.stderr
+        assert r.stdout.strip() == "http://user:1/v1"
+
     def test_key_set_via_cli_visible_to_harness_and_lifecycle(self, tmp_path):
         """A key set via `hive config set` must be visible to BOTH the
         harness path (llm_providers) and the lifecycle path
