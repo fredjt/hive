@@ -51,16 +51,10 @@ fi
 [ -f "$SHA256" ] || { echo "release-publish: sha256 not found at $SHA256" >&2; exit 2; }
 
 # Resolve publisher script. ~/.config/hive/config.toml overrides default.
-PUBLISHER=""
-CFG="${HIVE_CONFIG:-$HOME/.config/hive/config.toml}"
-if [ -f "$CFG" ]; then
-  # Naive grep — TOML parsing in pure bash is a swamp; the value should be
-  # a quoted absolute path. Format: publisher_script = "/path/to/script.sh"
-  PUBLISHER=$(awk -F= '/^[[:space:]]*publisher_script[[:space:]]*=/{
-    gsub(/^[[:space:]]+|[[:space:]]+$/,"",$2);
-    gsub(/^"|"$/,"",$2); print $2
-  }' "$CFG" 2>/dev/null | sed -n 1p)
-fi
+# G5: config is read through config-get.sh (one TOML parser — the awk
+# re-parse of [release].publisher_script lived here and only understood
+# single-line, section-blind matches).
+PUBLISHER="$(bash "$SKILL_DIR/lib/tools/config-get.sh" release publisher_script 2>/dev/null || true)"
 [ -z "$PUBLISHER" ] && PUBLISHER="$SKILL_DIR/lib/templates/publishers/github.sh"
 
 if [ ! -x "$PUBLISHER" ]; then

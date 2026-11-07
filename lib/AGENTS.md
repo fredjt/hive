@@ -10,6 +10,8 @@ This file documents the `this directory` area of the Hive project — what it do
 lib/
   hive_state/            THE state layer — the only code that reads/writes .company/
                          JSON: per-file flock, atomic tmp+os.replace, schemas (Python)
+  hive_config.py         THE config reader (G5) — one TOML parser + precedence;
+                         bash reads config only via tools/config-get.sh
   hive_mcp/              MCP server — ~55 tools wrapping bash scripts (Python/FastMCP)
     shell.py             Subprocess bridge — env setup, path resolution, JSON parsing
     tools/               17 domain modules (init, tickets, chat, verification, ...)

@@ -334,6 +334,112 @@ class TestSharedMoveAccessor:
 
 
 
+
+class TestConfigLayer:
+    """G5: one config reader. No awk/sed TOML parsing in lib/tools; the
+    Python hive_config module is the sole parser and precedence owner,
+    and bash reads config through config-get.sh only."""
+
+    def test_no_awk_or_sed_toml_parsing_in_tools(self):
+        hits = []
+        for f in sorted((LIB / "tools").glob("*.sh")):
+            for lineno, line in enumerate(f.read_text().splitlines(), 1):
+                if line.lstrip().startswith("#"):
+                    continue
+                if "config" in line and re.search(r"\b(awk|sed)\b", line):
+                    hits.append(f"{f.name}:{lineno}: {line.strip()}")
+        assert not hits, (
+            "awk/sed config parsing found in lib/tools/ (must go through "
+            "config-get.sh / hive_config):\n" + "\n".join(hits))
+
+    def test_config_get_sh_reads_the_chain(self, tmp_path, monkeypatch):
+        user = tmp_path / "user.toml"
+        user.write_text('[llm]\nbase_url = "http://user:1/v1"\n')
+        r = subprocess.run(
+            ["bash", str(LIB / "tools" / "config-get.sh"), "llm", "base_url"],
+            capture_output=True, text=True, timeout=30,
+            env={**os.environ, "HIVE_CONFIG": str(user)})
+        assert r.returncode == 0, r.stderr
+        assert r.stdout.strip() == "http://user:1/v1"
+
+    def test_config_get_sh_falls_back_to_defaults(self, tmp_path, monkeypatch):
+        # HIVE_CONFIG with no [release] section -> defaults file answers.
+        user = tmp_path / "user.toml"
+        user.write_text("[llm]\nbase_url = \"http://u/v1\"\n")
+        r = subprocess.run(
+            ["bash", str(LIB / "tools" / "config-get.sh"),
+             "release", "publisher_script"],
+            capture_output=True, text=True, timeout=30,
+            env={**os.environ, "HIVE_CONFIG": str(user)})
+        assert r.returncode == 0, r.stderr
+        assert r.stdout.strip() == ""  # defaults carry an empty string
+
+    def test_key_set_via_cli_visible_to_harness_and_lifecycle(self, tmp_path):
+        """A key set via `hive config set` must be visible to BOTH the
+        harness path (llm_providers) and the lifecycle path
+        (config-get.sh) with no per-consumer code change."""
+        cfg = tmp_path / "cfg.toml"
+        env = {**os.environ, "HIVE_CONFIG": str(cfg)}
+        out = cfg.parent / "out.txt"
+        # harness path
+        r = subprocess.run(
+            [sys.executable, "-c",
+             "import sys, pathlib; _r = pathlib.Path('lib').resolve(); sys.path.insert(0, str(_r)); sys.path.insert(0, str(_r / 'core'));"
+             "import llm_providers as lp; print(lp.load_config().get('llm',{}).get('base_url',''))"],
+            capture_output=True, text=True, timeout=30, env=env,
+            cwd=str(Path(__file__).resolve().parent.parent))
+        assert r.returncode == 0, r.stderr
+        before = r.stdout.strip()
+
+        # set the key through the CLI
+        r = subprocess.run(
+            ["python3", "-m", "hive_cli.main", "config", "set",
+             "llm.base_url", "http://new-endpoint:9/v1"],
+            capture_output=True, text=True, timeout=30,
+            env={**env, "PYTHONPATH": str(Path(__file__).resolve().
+                                           parent.parent / "lib")})
+        assert r.returncode == 0, r.stderr + r.stdout
+
+        # harness path sees it
+        r = subprocess.run(
+            [sys.executable, "-c",
+             "import sys, pathlib; _r = pathlib.Path('lib').resolve(); sys.path.insert(0, str(_r)); sys.path.insert(0, str(_r / 'core'));"
+             "import llm_providers as lp; print(lp.load_config().get('llm',{}).get('base_url',''))"],
+            capture_output=True, text=True, timeout=30, env=env,
+             cwd=str(Path(__file__).resolve().parent.parent))
+        assert r.stdout.strip() == "http://new-endpoint:9/v1", r.stdout
+
+        # lifecycle path sees the SAME value
+        r = subprocess.run(
+            ["bash", str(LIB / "tools" / "config-get.sh"), "llm", "base_url"],
+            capture_output=True, text=True, timeout=30, env=env)
+        assert r.stdout.strip() == "http://new-endpoint:9/v1", r.stdout
+
+    def test_hive_config_redirect_honored_by_every_consumer(self, tmp_path):
+        cfg = tmp_path / "redirect.toml"
+        cfg.write_text('[release]\npublisher_script = "/x/pub.sh"\n')
+        env = {**os.environ, "HIVE_CONFIG": str(cfg)}
+        # bash consumer
+        r = subprocess.run(
+            ["bash", str(LIB / "tools" / "config-get.sh"),
+             "release", "publisher_script"],
+            capture_output=True, text=True, timeout=30, env=env)
+        assert r.stdout.strip() == "/x/pub.sh"
+        # python consumers agree
+        r = subprocess.run(
+            [sys.executable, "-c",
+             "import sys, os, pathlib; _r = pathlib.Path('lib').resolve(); sys.path.insert(0, str(_r)); sys.path.insert(0, str(_r / 'core'));"
+             "import hive_config, llm_providers as lp;"
+             "a = hive_config.load_config(); b = lp.load_config(); "
+             "assert a == b, (a, b); "
+             "print(a['release']['publisher_script'])"],
+            capture_output=True, text=True, timeout=30, env=env,
+            cwd=str(Path(__file__).resolve().parent.parent))
+        assert r.returncode == 0, r.stderr
+        assert r.stdout.strip() == "/x/pub.sh"
+
+
+
 # ── round activity log ─────────────────────────────────────────────
 
 class TestRoundActivityLog:

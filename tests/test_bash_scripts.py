@@ -2309,6 +2309,12 @@ class TestPublisherRunnerCwd:
                     install / "lib" / "tools" / "hive-state.sh")
         shutil.copytree(self.REPO / "lib" / "hive_state",
                         install / "lib" / "hive_state")
+        # G5: the runner resolves the publisher via config-get.sh, which
+        # execs lib/hive_config.py — both must exist in the scratch install.
+        shutil.copy(self.REPO / "lib" / "tools" / "config-get.sh",
+                    install / "lib" / "tools" / "config-get.sh")
+        shutil.copy(self.REPO / "lib" / "hive_config.py",
+                    install / "lib" / "hive_config.py")
         local_only = (install / "lib" / "templates" / "publishers" / "local-only.sh")
         shutil.copy(self.REPO / "lib" / "templates" / "publishers" / "local-only.sh",
                     local_only)

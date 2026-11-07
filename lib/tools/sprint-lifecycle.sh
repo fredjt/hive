@@ -262,17 +262,12 @@ llm_outage_reset() {
 # (user config > defaults). Named in the incident and the halt marker so
 # the operator knows WHICH endpoint to fix.
 llm_outage_endpoint() {
+  # G5: config is read through config-get.sh (one TOML parser) — the awk
+  # re-parse of the config chain lived here and drifted from the Python
+  # resolver.
   local e="${HIVE_API_BASE:-}"
   if [ -z "$e" ]; then
-    local cfg
-    for cfg in "$HOME/.config/hive/config.toml" "$SKILL_DIR/etc/config.defaults.toml"; do
-      [ -f "$cfg" ] || continue
-      _bu=$(awk '/^[[:space:]]*\[llm\]/{s=1;next} /^[[:space:]]*\[/{s=0} s && /^[[:space:]]*base_url[[:space:]]*=/{sub(/^[[:space:]]*base_url[[:space:]]*=[[:space:]]*/,""); gsub(/["'"'"']/,""); print; exit}' "$cfg" 2>/dev/null) || _bu=""
-      if [ -n "$_bu" ]; then
-        e="$_bu"
-        break
-      fi
-    done
+    e="$(bash "$SKILL_DIR/lib/tools/config-get.sh" llm base_url 2>/dev/null || true)"
   fi
   echo "${e:-unconfigured}"
 }

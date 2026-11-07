@@ -49,11 +49,24 @@ def _toml_loads(text: str) -> dict:
 
 def load_config(hive_root: str | Path | None = None,
                 env: dict | None = None) -> dict:
-    """Merge etc/config.defaults.toml with ~/.config/hive/config.toml.
+    """Merge etc/config.defaults.toml with the user config.
 
-    env (defaults to os.environ) supplies HOME so callers — and tests —
-    can redirect the user config location without touching the real one.
+    G5: the real implementation is lib/hive_config.py (the ONE TOML
+    parser + precedence owner). This wrapper delegates to it whenever it
+    is importable; the fallback below stays only for file-hack contexts
+    where lib/ is not on sys.path (G6 retires that by packaging core/).
     """
+    try:
+        from hive_config import load_config as _canonical
+        return _canonical(hive_root=hive_root, env=env)
+    except ImportError:
+        return _load_config_fallback(hive_root=hive_root, env=env)
+
+
+def _load_config_fallback(hive_root: str | Path | None = None,
+                          env: dict | None = None) -> dict:
+    """Legacy inline merge — kept in sync with hive_config by test."""
+
     env = env if env is not None else dict(os.environ)
     root = (Path(hive_root) if hive_root
             else Path(__file__).resolve().parent.parent.parent)
