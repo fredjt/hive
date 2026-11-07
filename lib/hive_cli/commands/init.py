@@ -8,7 +8,8 @@ from pathlib import Path
 
 
 def handle(args) -> int:
-    hive_root = Path(os.environ.get("HIVE_ROOT", Path(__file__).resolve().parents[3]))
+    from hive_paths import install_root
+    hive_root = install_root()
     project_dir = str(Path(args.project_dir).resolve())
     cmd = ["bash", str(hive_root / "lib" / "core" / "init.sh"), project_dir]
     if args.brief:

@@ -24,8 +24,9 @@ Callers:
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
+
+import hive_paths as _hive_paths
 
 #: The departments whose VP prompts are composed from a fragment.
 FIXED_DEPTS = ("hr", "it", "rd", "marketing", "legal", "finance")
@@ -35,19 +36,8 @@ _SEAM_MARKER = "next sprint's stage 1 (ceo-plan) runs."
 
 
 def _lib_dir() -> Path:
-    """The lib/ directory this module belongs to.
-
-    HIVE_ROOT / HIVE_INSTALL_DIR win when set (installed context); the
-    __file__ fallback covers running from a source checkout. (G9 will
-    centralize this derivation in one _paths module.)
-    """
-    for var in ("HIVE_ROOT", "HIVE_INSTALL_DIR"):
-        val = os.environ.get(var)
-        if val:
-            p = Path(val) / "lib"
-            if p.is_dir():
-                return p
-    return Path(__file__).resolve().parent
+    """The lib/ directory — G9: resolved once in lib/hive_paths.py."""
+    return _hive_paths.lib_dir()
 
 
 def agents_dir() -> Path:

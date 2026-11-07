@@ -24,11 +24,12 @@ import httpx
 
 
 # HIVE_INSTALL_DIR — global install (venv, MCP server, dashboard).
-HIVE_INSTALL_DIR = Path(os.environ.get("HIVE_INSTALL_DIR",
-                                       Path(__file__).resolve().parents[3]))
+from hive_paths import install_root
+
+HIVE_INSTALL_DIR = install_root()
 
 # HIVE_ROOT — global install (projects use installed scripts directly).
-HIVE_ROOT = Path(os.environ.get("HIVE_ROOT", HIVE_INSTALL_DIR))
+HIVE_ROOT = install_root()
 
 
 def _find_dashboard_pid(company_dir: Path) -> int | None:

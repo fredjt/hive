@@ -18,8 +18,11 @@ from pathlib import Path
 from hive_cli import mcp_client
 
 
-# Resolve hive install root once. Mirrors hive_mcp.shell.HIVE_ROOT logic.
-_HIVE_ROOT = Path(os.environ.get("HIVE_ROOT") or Path(__file__).resolve().parents[3])
+# Resolve hive install root once (G9: lib/hive_paths.py is the single
+# implementation — the mirrored copies are gone).
+from hive_paths import install_root
+
+_HIVE_ROOT = install_root()
 
 
 def _project_root(args) -> str:

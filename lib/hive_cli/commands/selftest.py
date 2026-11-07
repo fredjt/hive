@@ -12,6 +12,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import hive_paths as _hive_paths
+
 
 def venv_python_executable(p: Path) -> bool:
     """The Python-side equivalent of agent-spawn.sh's `[ -x file ]` test
@@ -21,13 +23,9 @@ def venv_python_executable(p: Path) -> bool:
 
 def install_root() -> Path:
     """The install root the spawn path uses (agent-spawn.sh's
-    INSTALL_DIR): HIVE_INSTALL_DIR when set and present, else the root
-    this CLI runs from (the same contract as the Python-side defaults).
-    The venv lives here."""
-    install_env = os.environ.get("HIVE_INSTALL_DIR")
-    if install_env and Path(install_env).is_dir():
-        return Path(install_env)
-    return Path(__file__).resolve().parents[3]
+    INSTALL_DIR): G9 — resolved once in lib/hive_paths.py. The venv
+    lives here."""
+    return _hive_paths.install_root()
 
 
 def spawn_python(root: Path | None = None) -> str:

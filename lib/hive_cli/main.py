@@ -15,10 +15,15 @@ import os
 import sys
 from pathlib import Path
 
-# Ensure lib/ is importable
-_LIB = Path(__file__).resolve().parents[1]
+# Bootstrap: lib/ must be on sys.path before hive_paths (which lives in
+# lib/) can be imported. This single parent.parent hop is the one
+# unavoidable path derivation in the Python codebase (G9) — everything
+# else resolves through hive_paths.
+_LIB = Path(__file__).resolve().parent.parent
 if str(_LIB) not in sys.path:
     sys.path.insert(0, str(_LIB))
+
+from hive_paths import version_file  # noqa: E402
 
 from hive_cli.commands import (  # noqa: E402
     company, dashboard, init, ticket, chat, agent, gates, backlog,
@@ -28,7 +33,7 @@ from hive_cli.commands import (  # noqa: E402
 )
 
 
-_VERSION_FILE = Path(__file__).resolve().parents[2] / "VERSION"
+_VERSION_FILE = version_file()
 try:
     VERSION = _VERSION_FILE.read_text().strip()
 except FileNotFoundError:

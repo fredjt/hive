@@ -68,7 +68,8 @@ def _llm_test() -> int:
     import time
     import urllib.error
     import urllib.request
-    core = Path(__file__).resolve().parents[2] / "core"
+    from hive_paths import core_dir
+    core = core_dir()
     if str(core) not in sys.path:
         sys.path.insert(0, str(core))
     import llm_providers

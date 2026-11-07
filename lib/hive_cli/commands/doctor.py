@@ -15,10 +15,11 @@ from hive_cli.commands.company import _pid_alive
 
 
 # HIVE_INSTALL_DIR — global install (venv, MCP/CLI/dashboard source).
-HIVE_INSTALL_DIR = Path(os.environ.get("HIVE_INSTALL_DIR",
-                                       Path(__file__).resolve().parents[3]))
-# HIVE_ROOT — global install root (projects use installed scripts directly).
-HIVE_ROOT = Path(os.environ.get("HIVE_ROOT", HIVE_INSTALL_DIR))
+from hive_paths import install_root
+
+HIVE_INSTALL_DIR = install_root()
+
+HIVE_ROOT = install_root()
 
 
 # C1: run context — handle() sets JSON mode + the check/warning/llm sinks

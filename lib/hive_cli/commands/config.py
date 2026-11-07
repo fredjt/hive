@@ -13,7 +13,9 @@ except ImportError:
 from pathlib import Path
 
 
-HIVE_ROOT = Path(os.environ.get("HIVE_ROOT", Path(__file__).resolve().parents[3]))
+from hive_paths import install_root
+
+HIVE_ROOT = install_root()
 USER_CONFIG = Path.home() / ".config" / "hive" / "config.toml"
 DEFAULT_CONFIG = HIVE_ROOT / "etc" / "config.defaults.toml"
 TEMPLATE = HIVE_ROOT / "etc" / "config.template.toml"

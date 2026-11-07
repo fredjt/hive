@@ -16,14 +16,15 @@ from __future__ import annotations
 
 import argparse
 import importlib
-import os
 import sys
-from pathlib import Path
 
 from hive_mcp.server_compat import Server, run_http
 
+from hive_paths import install_root
 
-HIVE_ROOT = Path(os.environ.get("HIVE_ROOT", Path(__file__).resolve().parents[2]))
+
+# G9: install root resolved once in lib/hive_paths.py.
+HIVE_ROOT = install_root()
 
 
 # Order matters only for stable docs/help output.

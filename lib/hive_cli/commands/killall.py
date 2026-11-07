@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-import os
 import subprocess
-from pathlib import Path
 
 
-HIVE_ROOT = Path(os.environ.get("HIVE_ROOT", Path(__file__).resolve().parents[3]))
+from hive_paths import install_root
+
+HIVE_ROOT = install_root()
 
 
 def handle(args) -> int:

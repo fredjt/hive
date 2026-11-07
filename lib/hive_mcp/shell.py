@@ -17,14 +17,14 @@ from pathlib import Path
 from typing import Any
 
 
-# Where the global install (venv, MCP source, dashboard source) lives. Set
-# by the bin/hive launcher; falls back to walking up from this file for
-# direct-from-source runs.
-HIVE_INSTALL_DIR = Path(os.environ.get("HIVE_INSTALL_DIR",
-                                       Path(__file__).resolve().parents[2]))
+# Where the global install (venv, MCP source, dashboard source) lives.
+# G9: resolved ONCE in lib/hive_paths.py (env HIVE_ROOT > HIVE_INSTALL_DIR
+# > derived) — HIVE_INSTALL_DIR is an alias kept for existing readers.
+from hive_paths import install_root
 
 # HIVE_ROOT is the global install — projects use installed scripts directly.
-HIVE_ROOT = Path(os.environ.get("HIVE_ROOT", HIVE_INSTALL_DIR))
+HIVE_ROOT = install_root()
+HIVE_INSTALL_DIR = HIVE_ROOT
 
 
 @dataclass

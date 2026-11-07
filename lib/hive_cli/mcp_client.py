@@ -31,11 +31,13 @@ except ImportError:  # SDK-free environment (C.2)
     _HAS_MCP_SDK = False
 
 
-# HIVE_INSTALL_DIR — where the venv + MCP server source live (global).
-HIVE_INSTALL_DIR = Path(os.environ.get("HIVE_INSTALL_DIR",
-                                       Path(__file__).resolve().parents[2]))
-# HIVE_ROOT — global install root. Tools find their lib/tools/ here.
-HIVE_ROOT = Path(os.environ.get("HIVE_ROOT", HIVE_INSTALL_DIR))
+# G9: install root resolved once in lib/hive_paths.py. HIVE_ROOT is the
+# global install root (tools find their lib/tools/ here); HIVE_INSTALL_DIR
+# is an alias kept for existing readers.
+from hive_paths import install_root
+
+HIVE_ROOT = install_root()
+HIVE_INSTALL_DIR = HIVE_ROOT
 MCP_HOST = os.environ.get("HIVE_MCP_HOST", "127.0.0.1")
 MCP_PORT = int(os.environ.get("HIVE_MCP_PORT", "7891"))
 

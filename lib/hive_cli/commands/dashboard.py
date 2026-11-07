@@ -17,12 +17,11 @@ import httpx
 # HIVE_INSTALL_DIR — where venv, MCP server source, and dashboard server.js
 # live (the global install). Set by the bin/hive launcher; falls back to
 # walking up from this file's location for direct-from-source dev runs.
-HIVE_INSTALL_DIR = Path(os.environ.get("HIVE_INSTALL_DIR",
-                                       Path(__file__).resolve().parents[3]))
+from hive_paths import install_root
 
-# HIVE_ROOT — global install (projects use installed scripts directly).
-# Set by the launcher; falls back to the install dir for dev runs.
-HIVE_ROOT = Path(os.environ.get("HIVE_ROOT", HIVE_INSTALL_DIR))
+HIVE_INSTALL_DIR = install_root()
+
+HIVE_ROOT = install_root()
 
 
 def _wait_for_port(host: str, port: int, timeout: float = 10.0) -> bool:
