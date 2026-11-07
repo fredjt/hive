@@ -29,6 +29,8 @@ while [ $# -gt 0 ]; do
 done
 
 COMPANY_DIR="${COMPANY_DIR:-.company}"
+# shellcheck source=/dev/null
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hive-state.sh"
 VELOCITY_WINDOW="${VELOCITY_WINDOW:-1800}"     # 30 minutes - velocity = done delta over this window
 STUCK_THRESHOLD="${STUCK_THRESHOLD:-3600}"     # 1 hour - tickets older than this in in-progress = stuck
 HISTORY_KEEP="${HISTORY_KEEP:-200}"            # cap status-history.jsonl at this many entries
@@ -128,22 +130,15 @@ rebuild_dept() {
     health="warning"
   fi
 
-  # Append to history (atomic-ish - single line append is atomic on POSIX)
-  printf '{"ts":%d,"iso":"%s","backlog":%d,"sprint":%d,"in_progress":%d,"in_review":%d,"done":%d,"archive":%d,"total_done":%d,"stuck":%d}\n' \
-    "$NOW" "$NOW_ISO" "$backlog" "$sprint" "$in_progress" "$in_review" "$done_count" "$archive_count" "$total_done" "$stuck" \
-    >> "$history_file"
-
-  # Trim history file to last HISTORY_KEEP entries
-  if [ -f "$history_file" ]; then
-    local lines
-    lines=$(wc -l < "$history_file")
-    if [ "$lines" -gt "$HISTORY_KEEP" ]; then
-      tail -n "$HISTORY_KEEP" "$history_file" > "$history_file.tmp" && mv "$history_file.tmp" "$history_file"
-    fi
-  fi
+  # Append to history via the state layer: one locked append+trim step.
+  local hist_rel="departments/$dept/status-history.jsonl"
+  local hist_line
+  hist_line=$(printf '{"ts":%d,"iso":"%s","backlog":%d,"sprint":%d,"in_progress":%d,"in_review":%d,"done":%d,"archive":%d,"total_done":%d,"stuck":%d}' \
+    "$NOW" "$NOW_ISO" "$backlog" "$sprint" "$in_progress" "$in_review" "$done_count" "$archive_count" "$total_done" "$stuck")
+  hs jsonl-append "$hist_rel" --line "$hist_line" --keep "$HISTORY_KEEP" >/dev/null || \
+    echo "status-rebuild: history append failed for $dept" >&2
 
   # Write status.json atomically
-  local tmp="$status_file.tmp.$$"
   jq -n \
     --arg dept "$dept" \
     --arg ts "$NOW_ISO" \
@@ -176,8 +171,7 @@ rebuild_dept() {
       },
       velocity_per_window: $velocity,
       stuck_tickets: $stuck
-    }' > "$tmp"
-  mv "$tmp" "$status_file"
+    }' | hs write "departments/$dept/status.json" --stdin >/dev/null
 
   if [ "$QUIET" = false ]; then
     echo "  $dept: health=$health velocity=$velocity stuck=$stuck (bl=$backlog sp=$sprint ip=$in_progress ir=$in_review d=$done_count)" >&2

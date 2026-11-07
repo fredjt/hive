@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-set -euo pipefail
+set -uo pipefail
 
 # ticket-approve.sh - Verification IC's explicit approval of a ticket.
 #
@@ -7,9 +7,10 @@ set -euo pipefail
 # moves the ticket to done with reason=implemented. The verifier's intent
 # is unambiguous — there's no reason to require a separate ticket-move call.
 #
-# The done move triggers ticket-move.sh's PR-merge side-effect (gh-pr-merge,
-# Closes #N → linked GH issue auto-close, etc.), so a single approve call
-# fully ships the ticket.
+# G1/G2: the stamp + move is ONE state-layer op (lib/hive_state, op
+# ticket-approve) — the same accessors the MCP ticket_approve tool and the
+# lifecycle share. The PR-merge side-effect is the process edge
+# (pr-side-effects.sh), shared with ticket-move.sh.
 #
 # Usage: ticket-approve.sh <dept> <ticket-id> <verifier-name> <rationale>
 #
@@ -36,67 +37,27 @@ RATIONALE="$4"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 COMPANY_DIR="${COMPANY_DIR:-.company}"
-source "$SCRIPT_DIR/ticket-paths.sh"
-TICKET_BOARD="$(ticket_dir "$DEPT")"
+export COMPANY_DIR
+source "$SCRIPT_DIR/hive-state.sh"
+source "$SCRIPT_DIR/pr-side-effects.sh"
 
-# Reject lazy approvals
-if [ "${#RATIONALE}" -lt 30 ]; then
-  echo "ERROR: rationale too short (${#RATIONALE} chars, need >=30)." >&2
-  echo "Rubber-stamp approvals are not allowed. Describe what you actually checked." >&2
-  exit 1
-fi
+PROJECT_ROOT=$(cd "$COMPANY_DIR/.." 2>/dev/null && pwd)
 
-# Find the ticket - must be in in-review
-TICKET_FILE="$TICKET_BOARD/in-review/$TICKET_ID.json"
-if [ ! -f "$TICKET_FILE" ]; then
-  echo "ERROR: ticket $TICKET_ID is not in in-review for $DEPT (cannot approve)." >&2
-  exit 1
-fi
+RESULT=$(hs ticket-approve --dept "$DEPT" --ticket "$TICKET_ID" \
+  --verifier "$VERIFIER" --rationale "$RATIONALE" 2>&1)
+RC=$?
+[ $RC -ne 0 ] && { printf '%s\n' "$RESULT" >&2; exit $RC; }
 
-# Require gates to have passed first
-GATES_OK=$(jq -r '.gates_passed // false' "$TICKET_FILE" 2>/dev/null)
-if [ "$GATES_OK" != "true" ]; then
-  echo "ERROR: deterministic gates have not passed for $TICKET_ID." >&2
-  echo "Run: bash $SCRIPT_DIR/verification-gates.sh $DEPT \$PROJECT_ROOT" >&2
-  echo "If gates fail, the ticket will be bounced back to in-progress for the IC to fix." >&2
-  exit 1
-fi
+PR_ACTION=$(printf '%s' "$RESULT" | jq -r '.pr_action // "merge"')
+hive_pr_side_effects "$PR_ACTION" "$DEPT" "$TICKET_ID" "implemented" "" "$VERIFIER" "$PROJECT_ROOT"
 
-# Set approval fields
-TS=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-jq \
-  --arg by "$VERIFIER" \
-  --arg at "$TS" \
-  --arg rationale "$RATIONALE" \
-  '.verified_by = $by | .verified_at = $at | .verification_rationale = $rationale' \
-  "$TICKET_FILE" > "$TICKET_FILE.tmp" && mv "$TICKET_FILE.tmp" "$TICKET_FILE"
-
-# Add a visible comment
-bash "$SCRIPT_DIR/ticket-comment.sh" "$DEPT" "$TICKET_ID" "$VERIFIER" \
-  "✅ APPROVED. Rationale: $RATIONALE" 2>/dev/null || true
-
-# Move the ticket to done in one atomic step. ticket-move.sh's PR-merge
-# side-effect runs from here. On gh-pr-merge exit-5 (conflict),
-# ticket-move catches it, rolls the ticket back to in-progress with
-# skip_tdd_red=true, and exits 0 so the verifier's turn doesn't error.
-SHORT_RATIONALE=$(echo "$RATIONALE" | head -c 200 | tr '\n' ' ')
-HIVE_SCRIPTED_MOVE=1 HIVE_ROLE=Verification-IC HIVE_AGENT="$VERIFIER" \
-  bash "$SCRIPT_DIR/ticket-move.sh" "$DEPT" "$TICKET_ID" done \
-    "Verified by $VERIFIER: $SHORT_RATIONALE" "$VERIFIER" implemented
-
-# Detect whether the move actually landed the ticket in done/ or whether
-# the conflict rollback fired and bounced it to in-progress. Read the
-# ticket file from the destination first; if it's not there, look in
-# in-progress (the rollback target).
+TICKET_BOARD="$COMPANY_DIR/departments/$DEPT/tickets"
 DONE_FILE="$TICKET_BOARD/done/$TICKET_ID.json"
 INPROGRESS_FILE="$TICKET_BOARD/in-progress/$TICKET_ID.json"
 if [ -f "$DONE_FILE" ]; then
-  echo "$TICKET_ID approved by $VERIFIER at $TS — moved to done (PR merged)"
+  echo "$TICKET_ID approved by $VERIFIER — moved to done (PR merged)"
   exit 0
 elif [ -f "$INPROGRESS_FILE" ]; then
-  # Conflict rollback fired. The verifier's APPROVE was correct but the
-  # PR couldn't be merged cleanly. The ticket is back in in-progress
-  # with skip_tdd_red=true so the engineering IC will rebase next loop.
   echo "$TICKET_ID approval RECORDED but PR has merge conflicts."
   echo "  Ticket was automatically bounced back to in-progress with"
   echo "  skip_tdd_red=true; the engineering IC will rebase the feature"

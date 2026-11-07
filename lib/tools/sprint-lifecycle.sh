@@ -100,37 +100,21 @@ runner_heartbeat() {
 runner_heartbeat
 
 ROUND_FILE="$COMPANY_DIR/rounds/current-round.json"
-# Item 13: the dashboard's round panel reads rounds/current-round.json +
-# history/; nothing wrote those since the round-runner was retired. The
-# lifecycle now emits one entry per agent spawn and archives the round
-# with the sprint.
-round_ensure(){
-  mkdir -p "$(dirname "$ROUND_FILE")"
-  [ -f "$ROUND_FILE" ] || jq -n --arg id "round-$(jq -r '.sprint_id // "unknown"' "$COMPANY_DIR/sprints/current.json" 2>/dev/null)" --arg now "$(ts)" \
-    '{round_id:$id, source:"sprint-lifecycle", started_at:$now, ended_at:null, cursor:0, entries:[]}' > "$ROUND_FILE" 2>/dev/null || true
-}
+# G1: rounds/current-round.json is an append-only ACTIVITY LOG with one
+# entry schema, and the lifecycle is its ONLY writer — through the state
+# layer (lib/hive_state, op round-append). Per-file flock + atomic
+# tmp+os.replace + schema validation live there; a racing writer can no
+# longer clobber an entry that lands mid read-modify-write cycle.
+round_ensure(){ :; }  # round-append creates the log on first write
 round_entry(){ # kind agent dept role ticket status
-  round_ensure
-  [ -f "$ROUND_FILE" ] || return 0
-  jq --arg k "$1" --arg a "$2" --arg d "$3" --arg r "$4" --arg t "$5" --arg st "$6" --arg now "$(ts)" '
-    if $st == "running" then
-      .entries += [{id:($k + "-" + (if $t != "" then $t else $a end) + "-" + ((.entries|length)+1 | tostring)),
-        agent:$a, dept:$d, role:$r, kind:$k,
-        ticket:(if $t != "" then $t else null end), log_to:"", queued_by:"sprint-lifecycle",
-        queued_at:$now, status:"running", started_at:$now, ended_at:null,
-        spawn_id:null, exit_code:null, duration_s:null, skip_reason:null}]
-    else
-      ([.entries|to_entries[]|select(.value.kind==$k and ((.value.ticket//"")==$t) and (.value.status=="running"))]|last|(if . then .key else -1 end)) as $i
-      | if $i < 0 then . else .entries[$i] |= (.status=$st | .ended_at=$now) end
-    end' "$ROUND_FILE" > "${ROUND_FILE}.tmp.$$" 2>/dev/null \
-    && mv "${ROUND_FILE}.tmp.$$" "$ROUND_FILE" || true
+  hs round-append --stage "$1" --agent "$2" --dept "$3" --role "$4" \
+    --ticket "$5" --status "$6" >/dev/null 2>&1 || true
 }
 round_archive(){
-  [ -f "$ROUND_FILE" ] || return 0
-  jq '.ended_at = "'"$(ts)"'"' "$ROUND_FILE" > "${ROUND_FILE}.tmp.$$" 2>/dev/null && mv "${ROUND_FILE}.tmp.$$" "$ROUND_FILE" || true
-  mkdir -p "$COMPANY_DIR/rounds/history"
-  mv "$ROUND_FILE" "$COMPANY_DIR/rounds/history/$(basename "$ROUND_FILE")" 2>/dev/null || true
+  hs round-archive >/dev/null 2>&1 || true
 }
+# Absolute .company/ path -> company-relative (for hs <op> rel-path args).
+hs_rel(){ local f="$1"; printf '%s\n' "${f#"$COMPANY_DIR"/}"; }
 # ── Helpers ─────────────────────────────────────────────────────────
 
 # Pick the first ticket from sprint-current, or the first bouncing ticket
@@ -376,7 +360,7 @@ defer_on_bounce_cap() {
     "Bounce limit exceeded ($bc >= $MAX_VERIFICATION_BOUNCES, $source)"
   f="$COMPANY_DIR/departments/$dept/tickets/backlog/${ticket}.json"
   if [ -f "$f" ]; then
-    jq 'del(.bounce_count)' "$f" > "${f}.tmp.$$" && mv "${f}.tmp.$$" "$f"
+    hs jq "$(hs_rel "$f")" 'del(.bounce_count)' >/dev/null || log "  bounce_count clear failed for $f"
   else
     log "  defer_on_bounce_cap: $dept/$ticket not found in backlog after move"
   fi
@@ -796,7 +780,8 @@ After committing the failing test, EXIT. The engineer will run next.$FRESH_HINT"
 
     if [ "$HAS_RED" = "0" ]; then
       tdd_red_attempts=$((tdd_red_attempts + 1))
-      jq --argjson n "$tdd_red_attempts" '.tdd_red_attempts = $n' "$TFILE" > "${TFILE}.tmp.$$" && mv "${TFILE}.tmp.$$" "$TFILE"
+      hs jq "$(hs_rel "$TFILE")" '.tdd_red_attempts = $n' --argjson n "$tdd_red_attempts" >/dev/null \
+        || log "  tdd_red_attempts write failed for $TFILE"
       log "$log_prefix: no [TDD-RED] commit (attempt $tdd_red_attempts)"
       if [ "$tdd_red_attempts" -ge 3 ]; then
         # Do NOT set skip_tdd_red here: that flag means 'skip the tester,
@@ -974,7 +959,8 @@ After exit 0, this script will:
       bash "$SKILL_DIR/lib/tools/ticket-comment.sh" "$dept" "$ticket" "sprint-lifecycle" \
         "Engineer exited cleanly but committed nothing on $_I7_BR (no new commit) - bounced to in-progress" \
         >> "$LOG" 2>&1 || true
-      jq '.bounce_count = ((.bounce_count // 0) + 1)' "$TFILE" > "${TFILE}.tmp.$$" && mv "${TFILE}.tmp.$$" "$TFILE"
+      hs jq "$(hs_rel "$TFILE")" '.bounce_count = ((.bounce_count // 0) + 1)' >/dev/null \
+        || log "  bounce_count increment failed for $TFILE"
       local _I7_BC
       _I7_BC=$(jq -r '.bounce_count // 0' "$TFILE" 2>/dev/null)
       if [ "${_I7_BC:-0}" -ge "$MAX_VERIFICATION_BOUNCES" ]; then
@@ -996,7 +982,7 @@ After exit 0, this script will:
   for _GF in "$COMPANY_DIR/departments/$dept/tickets/in-review/${ticket}.json" \
              "$COMPANY_DIR/departments/$dept/tickets/in-progress/${ticket}.json"; do
     if [ -f "$_GF" ]; then
-      jq '.gates_passed = false' "$_GF" > "${_GF}.tmp.$$" && mv "${_GF}.tmp.$$" "$_GF"
+      hs jq "$(hs_rel "$_GF")" '.gates_passed = false' >/dev/null || log "  gates_passed reset failed for $_GF"
       break
     fi
   done
@@ -1023,7 +1009,8 @@ After exit 0, this script will:
     # a silent no-op on the missing file).
     log "$log_prefix: gates failed (rc=$GATES_RC) — bouncing to tdd-green"
     scripted_move "$dept" "$ticket" in-progress "Gate failure (rc=$GATES_RC)"
-    jq '.bounce_count = ((.bounce_count // 0) + 1)' "$TFILE" > "${TFILE}.tmp.$$" && mv "${TFILE}.tmp.$$" "$TFILE"
+    hs jq "$(hs_rel "$TFILE")" '.bounce_count = ((.bounce_count // 0) + 1)' >/dev/null \
+        || log "  bounce_count increment failed for $TFILE"
     # Per-ticket bounce cap (release goal A.2): a ticket whose
     # deterministic gates keep failing (flaky test, skip_tdd_red rework
     # loop) previously bounced only against the GLOBAL
@@ -1109,7 +1096,8 @@ After approve or bounce, EXIT. This script handles the status move."
     # bounce picker never saw the ticket again, and a crashing verifier
     # abandoned it in in-progress instead of re-processing (or capping) it.
     scripted_move "$dept" "$ticket" in-progress "Verifier failed (exit=$EC)"
-    jq '.bounce_count = ((.bounce_count // 0) + 1)' "$TFILE" > "${TFILE}.tmp.$$" && mv "${TFILE}.tmp.$$" "$TFILE"
+    hs jq "$(hs_rel "$TFILE")" '.bounce_count = ((.bounce_count // 0) + 1)' >/dev/null \
+        || log "  bounce_count increment failed for $TFILE"
     # A persistently crashing verifier counts toward the same per-ticket
     # cap as bounces (the increment was always meant to feed it).
     bc=$(jq -r '.bounce_count // 0' "$TFILE" 2>/dev/null)
@@ -1226,7 +1214,7 @@ if [ -n "$SAFETY_TICKET" ]; then
   log "safety valve: $SAFETY_DEPT/$SAFETY_TICKET exceeded MAX_LOOP_ITERATIONS → backlog"
   scripted_move "$SAFETY_DEPT" "$SAFETY_TICKET" backlog "Safety valve: loop iteration $LOOP_ITERATION exceeded"
   TFILE="$COMPANY_DIR/departments/$SAFETY_DEPT/tickets/backlog/${SAFETY_TICKET}.json"
-  jq 'del(.bounce_count)' "$TFILE" > "${TFILE}.tmp.$$" 2>/dev/null && mv "${TFILE}.tmp.$$" "$TFILE"
+  hs jq --no-require "$(hs_rel "$TFILE")" 'del(.bounce_count)' >/dev/null 2>&1
   log "stuck ticket deferred; checking for remaining active tickets"
 fi
 

@@ -15,6 +15,9 @@
 # Priority order: critical > high > medium > low; ties broken by oldest first.
 
 COMPANY_DIR="${COMPANY_DIR:-.company}"
+# shellcheck source=/dev/null
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hive-state.sh"
+hs_rel() { echo "${1#"$COMPANY_DIR"/}"; }
 source "$(dirname "$0")/ticket-paths.sh"
 MAX_ACTIVE=5
 TARGET_DEPT=""
@@ -127,21 +130,15 @@ PYEOF
       continue
     fi
 
-    # Update status in JSON and move (env-var inputs)
-    SF_SRC="$src" SF_DST="$dst" python3 - <<'PYEOF' 2>/dev/null
-import json, os
-t = json.load(open(os.environ['SF_SRC']))
-t['status'] = 'sprint-current'
-from datetime import datetime, timezone
-t['updated_at'] = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
-json.dump(t, open(os.environ['SF_DST'], 'w'), indent=2)
-PYEOF
-
-    if [ -f "$dst" ]; then
-      rm "$src"
-      promoted=$((promoted + 1))
-      TOTAL_PROMOTED=$((TOTAL_PROMOTED + 1))
+    # Update status in JSON and move — one state-layer step each (the
+    # move is a locked atomic rename with destination validation).
+    if ! HIVE_SCRIPTED_MOVE=1 hs --company-dir "$COMPANY_DIR" ticket-move \
+         --dept "$dept" --ticket "$ticket_id" --status sprint-current \
+         --author sprint-fill --comment "sprint-fill: promoted to sprint" >/dev/null 2>&1; then
+      continue
     fi
+    promoted=$((promoted + 1))
+    TOTAL_PROMOTED=$((TOTAL_PROMOTED + 1))
   done
 
   if [ "$promoted" -gt 0 ]; then

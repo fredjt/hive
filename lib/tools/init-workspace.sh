@@ -76,29 +76,17 @@ ensure_gitignore_entry ".company"   "Company skill workspace (state, logs, agent
 ensure_gitignore_entry ".worktrees" "Per-ticket git worktrees"
 
 
-# Initialize empty JSON files from templates
-echo '{"next_ticket_id": 1}' > "$COMPANY_DIR/tickets/global-counter.json"
-echo '{"jobs": []}' > "$COMPANY_DIR/cron-jobs.json"
-
-# Verification gates config — defaults to RELAXED so a fresh project can ship
-# work without test infrastructure already in place. Tighten as the project
-# matures by editing this file (see lib/tools/verification-gates.sh).
-cat > "$COMPANY_DIR/gates.json" <<'EOF'
-{
-  "_doc": "Set true for any check that should BLOCK promotion to done. Defaults are relaxed for early-stage projects.",
-  "mode": "strict",
-  "require_tests":    true,
-  "require_lint":     true,
-  "require_security": true,
-  "require_commits":  true,
-  "coverage_min":     0
-}
-EOF
+# State layer owns the .company/ JSON scaffold (G1).
+. "$(dirname "${BASH_SOURCE[0]}")/hive-state.sh"
+hs --company-dir "$COMPANY_DIR" write "tickets/global-counter.json" --json '{"next_ticket_id": 1}' >/dev/null
+hs --company-dir "$COMPANY_DIR" write "cron-jobs.json" --json '{"jobs": []}' >/dev/null
+hs --company-dir "$COMPANY_DIR" write "gates.json" --json '{"_doc": "Set true for any check that should BLOCK promotion to done. Defaults are relaxed for early-stage projects.", "mode": "strict", "require_tests": true, "require_lint": true, "require_security": true, "require_commits": true, "coverage_min": 0}' >/dev/null
 
 # Roster is derived - generate the initial (empty) version via roster-rebuild
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 COMPANY_DIR="$COMPANY_DIR" bash "$SCRIPT_DIR/roster-rebuild.sh" --quiet 2>/dev/null || \
-  echo '{"agents": [], "source": "roster-rebuild.sh", "note": "DERIVED FILE. Do not edit."}' > "$COMPANY_DIR/roster.json"
+  printf '%s' '{"agents": [], "source": "roster-rebuild.sh", "note": "DERIVED FILE. Do not edit."}' \
+    | hs --company-dir "$COMPANY_DIR" write "roster.json" --stdin >/dev/null
 
 # Org chart is derived too — but E2: it must be rebuilt AFTER the manifest
 # exists, or the compose stamps "Untitled Project" (and a manifest-less

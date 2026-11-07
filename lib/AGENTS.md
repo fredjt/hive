@@ -8,6 +8,8 @@ This file documents the `this directory` area of the Hive project — what it do
 
 ```
 lib/
+  hive_state/            THE state layer — the only code that reads/writes .company/
+                         JSON: per-file flock, atomic tmp+os.replace, schemas (Python)
   hive_mcp/              MCP server — ~55 tools wrapping bash scripts (Python/FastMCP)
     shell.py             Subprocess bridge — env setup, path resolution, JSON parsing
     tools/               17 domain modules (init, tickets, chat, verification, ...)
@@ -55,11 +57,19 @@ The MCP server (`hive_mcp/`) is the write gateway. Every MCP tool calls `shell.p
 
 ## How writes reach `.company/`
 
-There are exactly three paths by which `.company/` state is mutated:
+G1: **one state layer**. `lib/hive_state/` is the ONLY code permitted to
+read or write `.company/` JSON. Every other layer (MCP tools, CLI, bash
+scripts, the sprint-lifecycle) reaches it the same way: bash scripts call
+the `hs` helper (`lib/tools/hive-state.sh` → `python -m hive_state <op>`),
+Python code imports the `hive_state` package. Per-file `flock`, one
+atomic tmp+`os.replace` convention, and schema validation on every write
+live in the state layer — no bash script keeps a JSON mutation of its own.
 
-1. **MCP tools** — `hive_mcp/tools/*.py` → `shell.py.run()` → `lib/tools/*.sh` → atomic tmp+mv
+Write paths into the state layer (all converge on the same ops):
+
+1. **MCP tools** — `hive_mcp/tools/*.py` → `shell.py.run()` → `lib/tools/*.sh` → `hs`
 2. **CLI commands** — `hive_cli/commands/*.py` → either MCP client (Style A) or direct bash subprocess (Style B)
-3. **Sprint-lifecycle** — `lib/tools/sprint-lifecycle.sh` → directly calls `lib/tools/*.sh` scripts (bypasses MCP)
+3. **Sprint-lifecycle** — `lib/tools/sprint-lifecycle.sh` → directly calls `lib/tools/*.sh` scripts (bypasses MCP) → `hs`
 
 Agents spawned by the sprint-lifecycle **never write `.company/` directly**. They read state, act on the project files (source code, docs, config), and signal completion via exit codes. The sprint-lifecycle then moves tickets and triggers the next stage.
 

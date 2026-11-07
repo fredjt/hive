@@ -19,6 +19,9 @@ set -uo pipefail
 PROJECT_ROOT="${1:-.}"
 PROJECT_ROOT="$(cd "$PROJECT_ROOT" && pwd)"
 COMPANY_DIR="$PROJECT_ROOT/.company"
+export COMPANY_DIR
+# shellcheck source=/dev/null
+. "$(cd "$(dirname "$0")" && pwd)/hive-state.sh"
 
 # Build set of ancestor PIDs we must never kill (us, parent, grandparent, ...).
 ANCESTOR_PIDS=" $$ "
@@ -122,17 +125,10 @@ done
 
 # 3. Update processes.json
 if [ -f "$COMPANY_DIR/processes.json" ]; then
-  CS_PROCS_FILE="$COMPANY_DIR/processes.json" CS_STOPPED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)" python3 - <<'PYEOF' 2>/dev/null
-import json, os
-try:
-    procs_file = os.environ['CS_PROCS_FILE']
-    data=json.load(open(procs_file))
-    data['stopped_at']=os.environ['CS_STOPPED_AT']
-    data['processes']=[]
-    json.dump(data, open(procs_file,'w'), indent=2)
-except Exception:
-    pass
-PYEOF
+  CS_STOPPED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  hs --company-dir "$COMPANY_DIR" jq "processes.json" \
+    --arg ts "$CS_STOPPED_AT" '.stopped_at = $ts | .processes = []' >/dev/null 2>&1 || \
+    echo "company-stop: processes.json stop-mark failed" >&2
 fi
 
 echo "Stopped $killed processes"

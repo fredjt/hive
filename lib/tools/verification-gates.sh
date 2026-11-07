@@ -61,6 +61,8 @@ for arg in "$@"; do
 done
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=/dev/null
+. "$SCRIPT_DIR/hive-state.sh"
 COMPANY_DIR="$PROJECT_ROOT/.company"
 export COMPANY_DIR
 
@@ -143,21 +145,16 @@ detect_lint_cmd() {
 # Record a gate result for a ticket.
 record_gate() {
   local ticket_id="$1" gate="$2" status="$3" detail="$4"
-  local gates_file="$COMPANY_DIR/departments/$DEPT/components/$ticket_id/gates.json"
-  mkdir -p "$(dirname "$gates_file")"
-  if [ ! -f "$gates_file" ]; then
-    # jq (not string interpolation) so an odd ticket id can't produce
-    # invalid JSON.
-    jq -n --arg tid "$ticket_id" '{ticket_id: $tid, gates: {}}' > "$gates_file"
+  local gates_rel="departments/$DEPT/components/$ticket_id/gates.json"
+  if ! hs read "$gates_rel" >/dev/null 2>&1; then
+    # First touch: create the per-ticket gate record (validated write).
+    hs write "$gates_rel" --json "$(jq -n --arg tid "$ticket_id" '{ticket_id: $tid, gates: {}}')" >/dev/null || return 1
   fi
-  # Per-process tmp: two concurrent writers to the SAME fixed name let one
-  # process's mv steal the other's tmp and kill the loser (see the gate lock
-  # below — defense in depth for writers the lock doesn't serialize).
-  local tmp="${gates_file}.tmp.$$"
-  jq --arg gate "$gate" --arg status "$status" --arg detail "$detail" --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-    '.gates[$gate] = {status: $status, detail: $detail, checked_at: $ts}' \
-    "$gates_file" > "$tmp" || { rm -f "$tmp"; return 1; }
-  mv "$tmp" "$gates_file" || { rm -f "$tmp"; return 1; }
+  # State layer: per-file flock + atomic replace (the old fixed-name tmp
+  # let two concurrent writers steal each other's file).
+  hs jq "$gates_rel" \
+    --arg gate "$gate" --arg status "$status" --arg detail "$detail" --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+    '.gates[$gate] = {status: $status, detail: $detail, checked_at: $ts}' >/dev/null || return 1
 }
 
 # Bounce a ticket back to in-progress with a comment explaining why.
@@ -180,15 +177,9 @@ mark_gates_passed() {
   log "  PASS $ticket_id: all gates passed - awaiting IC review"
   bash "$SCRIPT_DIR/ticket-comment.sh" "$DEPT" "$ticket_id" "verification-gates" \
     "All deterministic gates passed. Awaiting verification IC for logic/design review." 2>/dev/null || true
-  local ticket_file
-  ticket_file=$(find "$TICKET_DIR/in-review" -name "$ticket_id.json" -type f 2>/dev/null | head -1)
-  if [ -n "$ticket_file" ]; then
-    local tmp="${ticket_file}.tmp.$$"
-    jq --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-      '.gates_passed_at = $ts | .gates_passed = true' \
-      "$ticket_file" > "$tmp" || { rm -f "$tmp"; return 1; }
-    mv "$tmp" "$ticket_file" || { rm -f "$tmp"; return 1; }
-  fi
+  hs jq "departments/$DEPT/tickets/in-review/$ticket_id.json" \
+    --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+    '.gates_passed_at = $ts | .gates_passed = true' >/dev/null || return 1
 }
 
 # ── Find the ticket file ────────────────────────────────────────────

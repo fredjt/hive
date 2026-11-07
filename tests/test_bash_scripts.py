@@ -1887,8 +1887,13 @@ class TestCompanyStartLiveness:
         install = tmp_path / "install"
         tools = install / "lib" / "tools"
         tools.mkdir(parents=True)
-        for name in ("company-start.sh", "company-stop.sh"):
+        for name in ("company-start.sh", "company-stop.sh", "hive-state.sh"):
             shutil.copy(Path(SCRIPTS_DIR) / name, tools / name)
+        # G1: company-start/stop route .company/ JSON writes through the
+        # state layer, so the scratch install must carry it (the real
+        # install always has it).
+        shutil.copytree(Path(SCRIPTS_DIR).parent / "hive_state",
+                        install / "lib" / "hive_state")
         for name in self.INFRA_DAEMONS:
             fake = tools / f"{name}.sh"
             fake.write_text(self.DYING_FAKE if name in dying else self.ALIVE_FAKE)
@@ -2072,6 +2077,12 @@ class TestReleasePublishNoGhFallback:
         (install / "dist").mkdir()
         shutil.copy(self.REPO / "lib" / "tools" / "gh-helpers.sh",
                     install / "lib" / "tools" / "gh-helpers.sh")
+        # G1: release-publish.sh routes the record update through the state
+        # layer, so the scratch install must carry it.
+        shutil.copy(self.REPO / "lib" / "tools" / "hive-state.sh",
+                    install / "lib" / "tools" / "hive-state.sh")
+        shutil.copytree(self.REPO / "lib" / "hive_state",
+                        install / "lib" / "hive_state")
         shutil.copy(self.REPO / "lib" / "templates" / "publishers" / "local-only.sh",
                     install / "lib" / "templates" / "publishers" / "local-only.sh")
         (install / "dist" / "hive-0.9.0.tar.gz").write_bytes(b"tarball")
@@ -2292,6 +2303,12 @@ class TestPublisherRunnerCwd:
         (install / "dist").mkdir()
         shutil.copy(self.REPO / "lib" / "tools" / "sprint-state.sh",
                     install / "lib" / "tools" / "sprint-state.sh")
+        # G1: sprint-state.sh routes its writes through the state layer, so
+        # the scratch install must carry it (the real install always does).
+        shutil.copy(self.REPO / "lib" / "tools" / "hive-state.sh",
+                    install / "lib" / "tools" / "hive-state.sh")
+        shutil.copytree(self.REPO / "lib" / "hive_state",
+                        install / "lib" / "hive_state")
         local_only = (install / "lib" / "templates" / "publishers" / "local-only.sh")
         shutil.copy(self.REPO / "lib" / "templates" / "publishers" / "local-only.sh",
                     local_only)

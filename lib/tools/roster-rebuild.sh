@@ -18,6 +18,8 @@ QUIET=false
 [ "${1:-}" = "--quiet" ] && QUIET=true
 
 COMPANY_DIR="${COMPANY_DIR:-.company}"
+# shellcheck source=/dev/null
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hive-state.sh"
 PROJECT_ROOT="$(cd "$(dirname "$COMPANY_DIR")" && pwd)"
 ROSTER_FILE="$COMPANY_DIR/roster.json"
 
@@ -160,16 +162,14 @@ if [ -d "$COMPANY_DIR/departments" ]; then
   done
 fi
 
-# 3. Write roster atomically.
-TMP="$ROSTER_FILE.tmp.$$"
+# 3. Write roster atomically (state layer: flock + tmp+replace + validation).
 jq -n --argjson agents "$AGENTS" --arg ts "$NOW_ISO" \
   '{
     agents: $agents,
     updated_at: $ts,
     source: "roster-rebuild.sh",
     note: "DERIVED FILE. Do not edit. Regenerated from tickets, worktrees, and VP logs."
-  }' > "$TMP"
-mv "$TMP" "$ROSTER_FILE"
+  }' | hs write "roster.json" --stdin >/dev/null
 
 if [ "$QUIET" = false ]; then
   vp_count=$(jq '[.agents[] | select(.role == "VP")] | length' "$ROSTER_FILE")

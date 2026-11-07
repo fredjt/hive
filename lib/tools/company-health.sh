@@ -43,6 +43,9 @@ PROJECT_ROOT="${1:-.}"
 PROJECT_ROOT="$(cd "$PROJECT_ROOT" && pwd)"
 COMPANY_DIR="$PROJECT_ROOT/.company"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+export COMPANY_DIR
+# shellcheck source=/dev/null
+. "$SCRIPT_DIR/hive-state.sh"
 SKILL_DIR="${HIVE_ROOT:-$(cd "$SCRIPT_DIR/../.." && pwd)}"
 INSTALL_DIR="${HIVE_INSTALL_DIR:-$SKILL_DIR}"
 
@@ -99,7 +102,7 @@ PYEOF
 mark_daemon_dead() {
   local pid="$1"
   local reason="$2"
-  CH_PROCS_FILE="$COMPANY_DIR/processes.json" CH_PID="$pid" CH_REASON="$reason" python3 - <<'PYEOF' 2>/dev/null
+  CH_DEAD_OUT=$(CH_PROCS_FILE="$COMPANY_DIR/processes.json" CH_PID="$pid" CH_REASON="$reason" python3 - <<'PYEOF' 2>/dev/null
 import json, os, sys
 from datetime import datetime, timezone
 
@@ -124,10 +127,13 @@ for p in data.get('processes', []):
 if not changed:
     sys.exit(0)
 
-tmp = procs_file + '.tmp.' + str(os.getpid())
-json.dump(data, open(tmp, 'w'), indent=2)
-os.replace(tmp, procs_file)
+import sys as _s
+_s.stdout.write(__import__("json").dumps(data, indent=2))
 PYEOF
+  )
+  if [ -n "${CH_DEAD_OUT:-}" ]; then
+    printf '%s' "$CH_DEAD_OUT" | hs --company-dir "$COMPANY_DIR" write "processes.json" --stdin >/dev/null || true
+  fi
 }
 
 # --- Cleanup stale active spawn records ---
@@ -432,7 +438,7 @@ PYEOF
 
     # Update processes.json with the new PID and incremented restart count
     # (env-var inputs; heredoc is single-quoted so no interpolation).
-    CH_PROCS_FILE="$COMPANY_DIR/processes.json" CH_NEW_PID="$new_pid" CH_PID="$pid" CH_ROLE="$role" CH_INTERVAL="$interval" python3 - <<'PYEOF' 2>/dev/null
+    CH_RESTART_OUT=$(CH_PROCS_FILE="$COMPANY_DIR/processes.json" CH_NEW_PID="$new_pid" CH_PID="$pid" CH_ROLE="$role" CH_INTERVAL="$interval" python3 - <<'PYEOF' 2>/dev/null
 import json, os, sys
 from datetime import datetime, timezone
 
@@ -470,10 +476,13 @@ if not found:
     })
 
 data['processes'] = procs
-tmp = procs_file + '.tmp.' + str(os.getpid())
-json.dump(data, open(tmp, 'w'), indent=2)
-os.replace(tmp, procs_file)
+import sys as _s
+_s.stdout.write(__import__("json").dumps(data, indent=2))
 PYEOF
+    )
+    if [ -n "${CH_RESTART_OUT:-}" ]; then
+      printf '%s' "$CH_RESTART_OUT" | hs --company-dir "$COMPANY_DIR" write "processes.json" --stdin >/dev/null || true
+    fi
 
     # Wait for the restarted process to exit
     wait $new_pid 2>/dev/null || true

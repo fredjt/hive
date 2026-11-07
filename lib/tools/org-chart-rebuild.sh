@@ -21,6 +21,8 @@ QUIET=false
 [ "${1:-}" = "--quiet" ] && QUIET=true
 
 COMPANY_DIR="${COMPANY_DIR:-.company}"
+# shellcheck source=/dev/null
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hive-state.sh"
 ORG_FILE="$COMPANY_DIR/org-chart.json"
 MANIFEST="$COMPANY_DIR/manifest.json"
 
@@ -128,9 +130,7 @@ jq -n \
     source: "org-chart-rebuild.sh",
     note: "DERIVED FILE. Filesystem-discovered departments are filled in automatically; CEO-authored departments are preserved."
   } | with_entries(select(.value != null))
-  ' > "$ORG_FILE.tmp"
-
-mv "$ORG_FILE.tmp" "$ORG_FILE"
+  ' | hs write "org-chart.json" --stdin >/dev/null
 
 if [ "$QUIET" = false ]; then
   count=$(jq '.departments | length' "$ORG_FILE")

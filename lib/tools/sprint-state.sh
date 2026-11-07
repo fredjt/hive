@@ -14,7 +14,12 @@
 #
 # Single source of truth for stage names — kept in sync with sprint-lifecycle.sh.
 
-# All operations are flock'd on the file itself so concurrent reads don't tear writes.
+# G1: all mutations go through the state layer (lib/hive_state); per-file
+# flock + atomic tmp+os.replace + schema validation live there. Reads stay
+# in bash.
+HS_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=/dev/null
+. "$HS_SCRIPT_DIR/hive-state.sh"
 
 SS_VALID_STAGES=(
   idle
@@ -63,28 +68,21 @@ ss_init() {
   # history/<sid>.json clobbers the archived cycle. $RANDOM disambiguates.
   local sid="sprint-$(date -u +%Y%m%dT%H%M%SZ)-$RANDOM"
   local now;  now=$(ss_now)
-  cat > "$f" <<JSON
-{
-  "sprint_id": "$sid",
-  "started_at": "$now",
-  "stage": "ceo-plan",
-  "stage_started_at": "$now",
-  "loop_iteration": 0,
-  "release_retry_count": 0,
-  "tickets_in_sprint": [],
-  "ceo_direction_path": null,
-  "release": {
-    "version": null,
-    "test_log": null,
-    "verify_log": null,
-    "tarball": null,
-    "sha256": null,
-    "publish_status": "pending"
-  }
-}
-JSON
+  local init_json
+  init_json=$(jq -n \
+      --arg sid "$sid" --arg now "$now" \
+      '{sprint_id:$sid, started_at:$now, stage:"ceo-plan", stage_started_at:$now,
+        loop_iteration:0, release_retry_count:0, tickets_in_sprint:[],
+        ceo_direction_path:null,
+        release:{version:null, test_log:null, verify_log:null, tarball:null,
+                 sha256:null, publish_status:"pending"}}')
+  # G1: the initial sprint state is a state-layer write (validated).
+  if ! hs write "sprints/current.json" --json "$init_json" >/dev/null; then
+    echo "ss_init: state-layer write failed" >&2
+    return 1
+  fi
   # E1: a sprint just started — the manifest tracks it (current_sprint).
-  # Atomic (flock + tmp + rename); no-op when no manifest exists.
+  # Atomic in the state layer; no-op when no manifest exists.
   ss_sync_manifest '.current_sprint = $s' --arg s "$sid"
 }
 
@@ -100,15 +98,15 @@ ss_get_field() {
   jq -r "$1 // empty" "$f"
 }
 
+# G1: writes go through the state layer (lib/hive_state) — per-file flock,
+# one atomic tmp+os.replace convention, schema validation. Reads stay in
+# bash (jq -r) — the state layer is the only MUTATOR.
 ss__atomic_jq() {
   local prog="$1"; shift
-  local f; f=$(ss_state_file)
-  local lock; lock=$(ss__lock_fd)
-  local tmp="${f}.tmp.$$"
-  (
-    flock -x 9
-    jq "$@" "$prog" "$f" > "$tmp" && mv "$tmp" "$f"
-  ) 9>"$lock"
+  hs jq "sprints/current.json" "$prog" "$@" >/dev/null || {
+    echo "ss__atomic_jq: state-layer apply failed: $prog" >&2
+    return 1
+  }
 }
 
 ss_set_stage() {
@@ -160,24 +158,13 @@ ss_manifest_file() {
 #          ss_sync_manifest '.current_sprint = $s' --arg s "$sid"
 ss_sync_manifest() {
   local prog="$1"; shift
-  local f; f=$(ss_manifest_file)
-  [ -f "$f" ] || return 0
-  local lock; lock=$(ss__lock_fd)
-  local tmp="${f}.tmp.$$"
-  (
-    # E1: pipefail inside the subshell — without it a failing program
-    # flows through the stamping pipe, which succeeds on empty input and
-    # would mv a 0-byte tmp over the manifest. The mv happens ONLY when
-    # the whole pipeline produced output; otherwise the tmp is removed.
-    set -o pipefail
-    flock -x 9
-    if jq "$prog" "$@" "$f" 2>/dev/null | \
-        jq --arg t "$(ss_now)" '.updated_at = $t' > "$tmp"; then
-      mv "$tmp" "$f"
-    else
-      rm -f "$tmp"
-    fi
-  ) 9>"$lock"
+  # E1: the state-layer jq op applies the program, stamps updated_at, and
+  # renames ONLY when the whole pipeline produced valid JSON — a failing
+  # program leaves the manifest untouched (no torn/0-byte write).
+  hs jq "manifest.json" ".updated_at = \$__t | ($prog)" --arg __t "$(ss_now)" "$@" --no-require >/dev/null || {
+    echo "ss_sync_manifest: state-layer apply failed: $prog" >&2
+    return 1
+  }
 }
 
 ss_set_ceo_direction_path() {
@@ -238,11 +225,11 @@ ss_archive_and_start_new() {
       || echo "ss_archive_and_start_new: sprint-archive-done.sh failed" >&2
   fi
 
-  local lock; lock=$(ss__lock_fd)
-  (
-    flock -x 9
-    mv "$f" "$(dirname "$f")/history/${sid}.json"
-  ) 9>"$lock"
+  # G1: the archive move is a state-layer rename (locked + validated).
+  hs mv "sprints/current.json" "sprints/history/${sid}.json" >/dev/null || {
+    echo "ss_archive_and_start_new: state-layer archive move failed" >&2
+    return 1
+  }
   ss_init   # E1: also syncs the manifest's current_sprint to the new sprint
   # E1: the archived cycle is complete — count it.
   ss_sync_manifest '.cycle_count = (.cycle_count + 1)'

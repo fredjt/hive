@@ -19,6 +19,7 @@ required anywhere.
 ```
 bin/hive                              CLI launcher (bash)
 lib/                                  Runtime core (see lib/AGENTS.md for details)
+  hive_state/                         The .company/ state layer (flock + atomic + schema)
   hive_mcp/                           MCP server (Python, FastMCP)
   hive_cli/                           CLI dispatcher (Python)
   core/                               Foundational bash scripts (agent-spawn, init)
@@ -180,6 +181,7 @@ python -m pytest tests/ --cov=lib/hive_cli --cov=lib/hive_mcp --cov-report=term-
 ```
 bin/hive                              CLI launcher (bash)
 lib/                                  Runtime core
+  hive_state/                         The .company/ state layer (flock + atomic + schema)
   hive_mcp/                           MCP server (Python, FastMCP)
     server.py                         Main entry point, two-transport (stdio + HTTP)
     tools/                            MCP tool modules (Python→bash bridge)

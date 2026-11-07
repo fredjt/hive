@@ -41,6 +41,8 @@ BUGFIX=0
 
 SKILL_DIR="${SKILL_DIR:-${HIVE_ROOT:-$(cd "$(dirname "$0")/../.." && pwd)}}"
 COMPANY_DIR="${COMPANY_DIR:-${PROJECT_ROOT:-$PWD}/.company}"
+# shellcheck source=/dev/null
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hive-state.sh"
 export COMPANY_DIR
 
 # shellcheck disable=SC1091
@@ -56,34 +58,32 @@ else
   OUT="$COMPANY_DIR/sprints/${SPRINT_ID}-direction.json"
 fi
 
-mkdir -p "$(dirname "$OUT")"
+# Read JSON from stdin, validate (reads only), then one state-layer write.
+INPUT=$(cat)
 
-# Read JSON from stdin, validate, write atomically.
-TMP=$(mktemp -t sprint-dir.XXXXXX.json)
-trap 'rm -f "$TMP"' EXIT
-
-cat > "$TMP"
-
-if ! jq empty "$TMP" >/dev/null 2>&1; then
+if ! printf '%s' "$INPUT" | jq empty >/dev/null 2>&1; then
   echo "sprint-direction-write: invalid JSON on stdin" >&2
   exit 2
 fi
 
 # Required keys
-if ! jq -e '.rationale and .departments' "$TMP" >/dev/null 2>&1; then
+if ! printf '%s' "$INPUT" | jq -e '.rationale and .departments' >/dev/null 2>&1; then
   echo "sprint-direction-write: required keys missing (.rationale, .departments)" >&2
   exit 2
 fi
 
 if [ "$BUGFIX" = 1 ]; then
-  if ! jq -e '.departments | to_entries | all(.value.bugs and (.value.bugs | type == "array"))' "$TMP" >/dev/null 2>&1; then
+  if ! printf '%s' "$INPUT" | jq -e '.departments | to_entries | all(.value.bugs and (.value.bugs | type == "array"))' >/dev/null 2>&1; then
     echo "sprint-direction-write: --bugfix requires .departments.<dept>.bugs to be an array" >&2
     exit 2
   fi
 fi
 
-mv "$TMP" "$OUT"
-trap - EXIT
+REL="${OUT#"$COMPANY_DIR"/}"
+printf '%s' "$INPUT" | hs --company-dir "$COMPANY_DIR" write "$REL" --stdin >/dev/null || {
+  echo "sprint-direction-write: state-layer write failed for $REL" >&2
+  exit 1
+}
 
 # Update sprint state
 ss_set_ceo_direction_path "$OUT"

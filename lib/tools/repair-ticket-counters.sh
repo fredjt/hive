@@ -48,6 +48,7 @@ for dept_dir in "$COMPANY_DIR/departments"/*/; do
   echo "── $dept (canonical prefix: $canonical) ──"
 
   # Walk every ticket file and decide what to rename
+  HS_LIB_DIR="$(cd "$(dirname "$0")/.." && pwd)" COMPANY_DIR="$COMPANY_DIR" \
   APPLY="$APPLY" CANONICAL="$canonical" TICKETS_DIR="$tickets_dir" python3 - <<'PYEOF'
 import json, os, re, glob, sys
 apply = os.environ["APPLY"] == "1"
@@ -96,17 +97,25 @@ else:
     for r in renames:
         print(f"    {r['status']:14s}  {r['old_id']:18s} → {r['new_id']}")
 
-# 4. Apply (or dry-run)
+# 4. Apply (or dry-run) — writes go through the state layer CLI
 if apply:
+    import subprocess
+    libdir = os.environ["HS_LIB_DIR"]
     for r in renames:
-        # Update id in JSON
+        old_rel = os.path.relpath(r["old"], os.environ["COMPANY_DIR"])
+        new_rel = os.path.relpath(r["new"], os.environ["COMPANY_DIR"])
         try:
-            with open(r["old"]) as fp: data = json.load(fp)
-            data["id"] = r["new_id"]
-            with open(r["old"], "w") as fp: json.dump(data, fp, indent=2)
-            os.rename(r["old"], r["new"])
+            env = dict(os.environ, PYTHONPATH=libdir)
+            subprocess.run([sys.executable, "-m", "hive_state",
+                            "--company-dir", os.environ["COMPANY_DIR"],
+                            "jq", old_rel, ".id = $id", "--arg", "id", r["new_id"]],
+                           check=True, env=env, stdout=subprocess.DEVNULL)
+            subprocess.run([sys.executable, "-m", "hive_state",
+                            "--company-dir", os.environ["COMPANY_DIR"],
+                            "mv", old_rel, new_rel],
+                           check=True, env=env, stdout=subprocess.DEVNULL)
         except Exception as e:
-            print(f"    FAIL {r['old_id']} → {r['new_id']}: {e}", file=sys.stderr)
+            print(f"    FAIL {r['old_id']} \u2192 {r['new_id']}: {e}", file=sys.stderr)
 
 # 5. Rewrite counter.json (always — even if no renames needed, this fixes
 # corrupted counters like {prefix:"", next_id:0})
@@ -127,7 +136,16 @@ else:
     counter["next_id"] = next_free
 
 if apply:
-    with open(counter_path, "w") as fp: json.dump(counter, fp, indent=2)
+    import subprocess
+    counter_rel = os.path.relpath(counter_path, os.environ["COMPANY_DIR"])
+    env = dict(os.environ, PYTHONPATH=os.environ["HS_LIB_DIR"])
+    try:
+        subprocess.run([sys.executable, "-m", "hive_state",
+                        "--company-dir", os.environ["COMPANY_DIR"],
+                        "write", counter_rel, "--json", json.dumps(counter)],
+                       check=True, env=env, stdout=subprocess.DEVNULL)
+    except Exception as e:
+        print(f"    FAIL counter.json: {e}", file=sys.stderr)
     print(f"  counter.json → {counter}")
 else:
     print(f"  [dry-run] counter.json would become {counter}")

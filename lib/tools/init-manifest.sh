@@ -56,9 +56,11 @@ TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 
 # Determine COMPANY_DIR (use env var or default to current dir)
 COMPANY_DIR="${COMPANY_DIR:-.company}"
+# shellcheck source=/dev/null
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hive-state.sh"
 
 # Create manifest JSON
-cat > "$COMPANY_DIR/manifest.json" <<EOF
+hs --company-dir "$COMPANY_DIR" write "manifest.json" --stdin <<EOF
 {
   "project_name": "$PROJECT_NAME",
   "status": "intake",

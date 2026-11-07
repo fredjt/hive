@@ -24,7 +24,10 @@ RATIONALE="$*"
 
 PROJECT_ROOT="${PROJECT_ROOT:-$PWD}"
 SKILL_DIR="${HIVE_ROOT:-$(cd "$(dirname "$0")/../.." && pwd)}"
+# shellcheck source=/dev/null
+. "$SKILL_DIR/lib/tools/hive-state.sh"
 COMPANY_DIR="$PROJECT_ROOT/.company"
+export COMPANY_DIR
 . "$SKILL_DIR/lib/tools/gh-helpers.sh"
 
 case "$VERSION" in v*) ;; *) VERSION="v$VERSION" ;; esac
@@ -88,29 +91,17 @@ $excerpt"
       RATIONALE="$RATIONALE (local-only: gh unavailable)"
     fi
 
-    REC="$rec" URL="$url" RATIONALE="$RATIONALE" NOW="$now" python3 - <<'PYEOF'
-import json, os
-f = os.environ["REC"]; d = json.load(open(f))
-d["phase"] = "done"
-d["adversarial_verdict"] = "GO"
-d["release_url"] = os.environ["URL"]
-d["go_rationale"] = os.environ["RATIONALE"]
-d["ended_at"] = os.environ["NOW"]
-json.dump(d, open(f + ".tmp","w"), indent=2); os.replace(f + ".tmp", f)
-PYEOF
+    hs jq "releases/${VERSION}.json" \
+      --arg url "$url" --arg rat "$RATIONALE" --arg now "$now" \
+      '.phase = "done" | .adversarial_verdict = "GO" | .release_url = $url
+       | .go_rationale = $rat | .ended_at = $now' >/dev/null || exit 1
     echo "release-publish: $VERSION published → $url"
     ;;
   NO-GO)
-    REC="$rec" RATIONALE="$RATIONALE" NOW="$now" python3 - <<'PYEOF'
-import json, os
-f = os.environ["REC"]; d = json.load(open(f))
-d["phase"] = "failed"
-d["adversarial_verdict"] = "NO-GO"
-d["nogo_rationale"] = os.environ["RATIONALE"]
-d["ended_at"] = os.environ["NOW"]
-d.setdefault("blockers", []).append(os.environ["RATIONALE"])
-json.dump(d, open(f + ".tmp","w"), indent=2); os.replace(f + ".tmp", f)
-PYEOF
+    hs jq "releases/${VERSION}.json" \
+      --arg rat "$RATIONALE" --arg now "$now" \
+      '.phase = "failed" | .adversarial_verdict = "NO-GO" | .nogo_rationale = $rat
+       | .ended_at = $now | .blockers = ((.blockers // []) + [$rat])' >/dev/null || exit 1
     bash "$SKILL_DIR/lib/tools/ticket-create.sh" it bug high \
       "Release $VERSION BLOCKED" "release-ic NO-GO. Rationale: $RATIONALE" \
       "release-ic" "release-blocked" >/dev/null || true

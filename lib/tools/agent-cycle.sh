@@ -5,6 +5,8 @@
 # Data stored in .company/logs/agent-cycles.json
 
 COMPANY_DIR="${COMPANY_DIR:-.company}"
+# shellcheck source=/dev/null
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hive-state.sh"
 ROLE="$1"
 DEPT="$2"
 
@@ -21,22 +23,12 @@ KEY="${ROLE}_${DEPT}"
 
 # Env-var inputs + single-quoted heredoc (path/role/dept may contain
 # quotes or spaces that would break inline python interpolation)
-AC_CYCLE_FILE="$CYCLE_FILE" AC_KEY="$KEY" AC_ROLE="$ROLE" AC_DEPT="$DEPT" AC_TIMESTAMP="$TIMESTAMP" python3 - <<'PYEOF'
-import json, os
-
-f = os.environ['AC_CYCLE_FILE']
-data = {}
-if os.path.exists(f):
-    try: data = json.load(open(f))
-    except Exception: data = {}
-
-key = os.environ['AC_KEY']
-if key not in data:
-    data[key] = {'role': os.environ['AC_ROLE'], 'department': os.environ['AC_DEPT'], 'cycles': 0, 'first_seen': os.environ['AC_TIMESTAMP'], 'last_seen': os.environ['AC_TIMESTAMP']}
-
-data[key]['cycles'] += 1
-data[key]['last_seen'] = os.environ['AC_TIMESTAMP']
-
-json.dump(data, open(f, 'w'), indent=2)
-print(data[key]['cycles'])
-PYEOF
+# State layer: create the log if missing, then one locked atomic increment.
+if ! hs --company-dir "$COMPANY_DIR" read "logs/agent-cycles.json" >/dev/null 2>&1; then
+  hs --company-dir "$COMPANY_DIR" write "logs/agent-cycles.json" --json '{}' >/dev/null || true
+fi
+hs --company-dir "$COMPANY_DIR" jq "logs/agent-cycles.json" \
+  --arg k "$KEY" --arg r "$ROLE" --arg d "$DEPT" --arg t "$TIMESTAMP" \
+  '.[$k] = ((.[$k] // {role:$r, department:$d, cycles:0, first_seen:$t, last_seen:$t})
+           | .cycles = ((.cycles // 0) + 1) | .last_seen = $t)' >/dev/null
+hs --company-dir "$COMPANY_DIR" read "logs/agent-cycles.json" | jq -r ".[\"$KEY\"].cycles // 1"

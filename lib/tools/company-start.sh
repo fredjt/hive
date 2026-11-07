@@ -21,6 +21,9 @@ fi
 PROJECT_ROOT="${1:-.}"
 PROJECT_ROOT="$(cd "$PROJECT_ROOT" && pwd)"
 COMPANY_DIR="$PROJECT_ROOT/.company"
+export COMPANY_DIR
+# shellcheck source=/dev/null
+. "$SCRIPT_DIR/hive-state.sh"
 export SKILL_DIR
 
 if [ ! -d "$COMPANY_DIR" ]; then
@@ -98,7 +101,7 @@ PYEOF
 fi
 
 # Clean up roster: dedup VPs, ensure verification managers exist
-CS_ROSTER_FILE="$COMPANY_DIR/roster.json" CS_ORG_FILE="$COMPANY_DIR/org-chart.json" python3 - <<'PYEOF'
+ROSTER_OUT=$(CS_ROSTER_FILE="$COMPANY_DIR/roster.json" CS_ORG_FILE="$COMPANY_DIR/org-chart.json" python3 - <<'PYEOF'
 import json, os
 roster_file=os.environ['CS_ROSTER_FILE']
 org_file=os.environ['CS_ORG_FILE']
@@ -134,12 +137,16 @@ if os.path.exists(org_file):
             agents.append({'id':'verification-mgr-'+d,'role':'Manager-Verification','department':d,'status':'active'})
 if isinstance(r,dict): r['agents']=agents
 else: r=agents
-# Atomic write: a company-stop mid-write (kill -9) must not leave a
-# 0-byte roster.json behind for the next startup to choke on.
-tmp=roster_file+'.tmp.'+str(os.getpid())
-json.dump(r,open(tmp,'w'),indent=2)
-os.replace(tmp,roster_file)
+# Emit the normalized roster on stdout; the state layer performs the
+# locked atomic write (a company-stop mid-write must not leave a 0-byte
+# roster.json for the next startup to choke on).
+import sys
+json.dump(r, sys.stdout, indent=2)
 PYEOF
+)
+if [ -n "${ROSTER_OUT:-}" ]; then
+  printf '%s' "$ROSTER_OUT" | hs --company-dir "$COMPANY_DIR" write "roster.json" --stdin >/dev/null || true
+fi
 
 # Clean up stale worktrees — but ONLY ones whose tickets are no longer
 # active. The previous logic deleted any worktree with "0 commits ahead
@@ -511,7 +518,7 @@ add_proc $! "company-health" "infrastructure" "30s"
 
 # --- Save process info ---
 
-CS_PROCS="$PROCS" CS_STARTED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)" CS_PROJECT_ROOT="$PROJECT_ROOT" CS_PROCS_FILE="$COMPANY_DIR/processes.json" python3 - <<'PYEOF'
+PROCS_OUT=$(CS_PROCS="$PROCS" CS_STARTED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)" CS_PROJECT_ROOT="$PROJECT_ROOT" CS_PROCS_FILE="$COMPANY_DIR/processes.json" python3 - <<'PYEOF'
 import json, os
 try:
     procs=json.loads(os.environ.get('CS_PROCS') or '[]')
@@ -523,14 +530,16 @@ result={
   'project_root': os.environ['CS_PROJECT_ROOT'],
   'processes': procs
 }
-# Atomic write (tmp + rename), same pattern as company-health.sh: readers
-# (company-stop, company-health, the dashboard) must never observe a
+# Emit on stdout; the state layer does the locked atomic write so readers
+# (company-stop, company-health, the dashboard) never observe a
 # half-written/empty processes.json.
-f=os.environ['CS_PROCS_FILE']
-tmp=f+'.tmp.'+str(os.getpid())
-json.dump(result, open(tmp,'w'), indent=2)
-os.replace(tmp,f)
+import sys
+json.dump(result, sys.stdout, indent=2)
 PYEOF
+)
+if [ -n "${PROCS_OUT:-}" ]; then
+  printf '%s' "$PROCS_OUT" | hs --company-dir "$COMPANY_DIR" write "processes.json" --stdin >/dev/null || true
+fi
 
 # --- Prove the daemons are alive before reporting success ---------------
 # company-start used to report success the moment the PIDs were recorded:

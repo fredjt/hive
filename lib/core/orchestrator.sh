@@ -32,6 +32,8 @@ HIVE_ROOT="${HIVE_ROOT:-$HOME/.local/share/hive}"
 export COMPANY_DIR="$PROJECT_ROOT/.company"
 export SKILL_DIR="$HIVE_ROOT"
 
+# shellcheck source=/dev/null
+. "$HIVE_ROOT/lib/tools/hive-state.sh"
 MANIFEST="$COMPANY_DIR/manifest.json"
 [ -f "$MANIFEST" ] || { echo "No manifest at $MANIFEST. Run 'hive init' first." >&2; exit 1; }
 
@@ -61,18 +63,19 @@ echo "Spawning CEO ($SPAWN_MODE mode)..." >&2
 CEO_OUTPUT="$(echo "$CEO_PROMPT" | bash "$HIVE_ROOT/lib/core/agent-spawn.sh")"
 
 # Save CEO output for debugging
-echo "$CEO_OUTPUT" > "$COMPANY_DIR/logs/ceo-initial-build.json"
+# Raw agent transcript (not guaranteed JSON) — a debug log, not company state.
+printf '%s\n' "$CEO_OUTPUT" > "$COMPANY_DIR/logs/ceo-initial-build.log"
 
 if echo "$CEO_OUTPUT" | grep -q "INITIAL_BUILD_COMPLETE"; then
   echo "CEO initial build complete. Transitioning to perpetual mode..." >&2
 
-  # Update manifest mode to perpetual
+  # Update manifest mode to perpetual (state-layer locked write)
   jq '.mode = "perpetual" | .perpetual_since = (now | strftime("%Y-%m-%dT%H:%M:%SZ"))' \
-    "$MANIFEST" > "$MANIFEST.tmp" && mv "$MANIFEST.tmp" "$MANIFEST"
+    "$MANIFEST" | hs --company-dir "$COMPANY_DIR" write "manifest.json" --stdin >/dev/null
 
   # Launch all daemons
   exec bash "$HIVE_ROOT/lib/tools/company-start.sh" "$PROJECT_ROOT"
 else
-  echo "CEO did not return INITIAL_BUILD_COMPLETE. See $COMPANY_DIR/logs/ceo-initial-build.json" >&2
+  echo "CEO did not return INITIAL_BUILD_COMPLETE. See $COMPANY_DIR/logs/ceo-initial-build.log" >&2
   exit 1
 fi
