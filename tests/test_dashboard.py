@@ -1637,3 +1637,37 @@ class TestReleaseDocVersion:
         assert va and vb and va.group(1) == vb.group(1), \
             "root README.md and share/docs/README.md disagree on the " \
             "latest release (they are kept byte-identical)"
+
+
+class TestPackagingDocCutPath:
+    """R2: share/docs/PACKAGING.md names the ONE cut path — the bump
+    commit (every version-bearing surface, one commit) validated with
+    --check-surface, then packaging/cut-release.sh — and says
+    hand-taged cuts are explicitly not a path. 0.10.0 was cut by hand
+    and left both READMEs stale; the doc is what keeps the next cut on
+    the path."""
+
+    DOC = "share/docs/PACKAGING.md"
+
+    def test_release_section_names_the_one_cut_path(self):
+        content = Path(self.DOC).read_text()
+        assert "cut-release.sh" in content, \
+            "PACKAGING.md must name packaging/cut-release.sh as the cut"
+        assert re.search(r"only path", content, re.I), \
+            "PACKAGING.md must state the cut path is the only one"
+        assert "--check-surface" in content, \
+            "PACKAGING.md must show the --check-surface pre-cut validation"
+
+    def test_hand_taged_cuts_are_named_and_disclaimed(self):
+        content = Path(self.DOC).read_text()
+        assert re.search(r"hand-tag", content, re.I), \
+            "PACKAGING.md must name hand-taged cuts explicitly"
+        assert re.search(r"not\s+a\s+path", content), \
+            "PACKAGING.md must say hand-taged cuts are not a path"
+
+    def test_cut_commit_names_every_version_bearing_surface(self):
+        content = Path(self.DOC).read_text()
+        for surface in ("VERSION", "pyproject", "CHANGELOG",
+                        "share/docs/README.md"):
+            assert surface in content, \
+                f"PACKAGING.md's cut commit must name {surface}"

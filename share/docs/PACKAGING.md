@@ -26,6 +26,35 @@ file mtimes pinned to a **stable per-release anchor** resolved in this order
 3. The HEAD commit date (shallow clones where `VERSION`'s history is absent).
 4. Fixed epoch 0 for trees outside git.
 
+## Cutting a hive release — the only path
+
+A release is cut in exactly one way, and gate 0 of the cut script
+refuses any tree where the version-bearing surfaces disagree:
+
+1. **The cut commit — one commit.** Bump `VERSION`,
+   `packaging/pyproject.toml` (`version`), the newest `CHANGELOG.md`
+   section, and both READMEs (`README.md` and `share/docs/README.md`:
+   the "Latest release" line and the tarball-name lines) to the new
+   version. Validate the commit before the cut:
+
+   ```bash
+   bash packaging/cut-release.sh --check-surface
+   ```
+
+2. **The cut.** `bash packaging/cut-release.sh` — run `--dry-run` first
+   if you want every gate without the tag, push, or publish. Gates, in
+   order: 0 every version-bearing surface agrees (a mismatch fails,
+   naming each stale file), 1 git state (clean tree, no existing tag),
+   2 the test suite green, 3 build-package, 4 tar listing, 5
+   credential scan, 6 sha256 sidecar, 7 release notes — then
+   `git tag v<version>`, push, and `gh release create` with the
+   tarball + sha256 sidecar.
+
+Hand-taged cuts (tagging and publishing by hand, outside the script)
+are **not a path**. The 0.10.0 cut was done that way and left both
+READMEs one release behind until caught post-push; gate 0 now covers
+every version-bearing surface, so a cut cannot leave one stale.
+
 ### Committing the checksum sidecar with a release tag
 
 The `release.yml` workflow (installed by `gh-init.sh`) re-builds the tarball
