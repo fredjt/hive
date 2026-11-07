@@ -1,7 +1,9 @@
 # Packaging & Distribution
 
-Hive ships as a single `.tar.gz` archive (140 files, ~170 KB). Targets need
-only `bash`, `python3` (3.10+), `git`, `jq`, and `node` (for the dashboard).
+Hive ships as a single `.tar.gz` archive (a few hundred KB — the build
+prints the full entry listing; that is the exact truth). Targets need
+only `bash`, `python3` (3.10+), `git`, `jq`, and `node` (for the
+dashboard).
 
 ## Build a release tarball
 

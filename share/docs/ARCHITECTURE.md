@@ -6,7 +6,7 @@
 |-----------|----------|----------------|
 | `bin/hive` | Bash | Tiny launcher that resolves the venv and execs `hive_cli.main`. |
 | `lib/hive_cli/` | Python | argparse CLI, one module per top-level subcommand. Calls MCP tools via `mcp_client.py`. |
-| `lib/hive_mcp/` | Python | FastMCP server exposing ~55 tools. Each tool wraps a bash script via `shell.py`. Two transports: stdio (for spawned agents) and HTTP (for dashboard + CLI). |
+| `lib/hive_mcp/` | Python | FastMCP server exposing ~48 tools. Each tool wraps a bash script via `shell.py`. Two transports: stdio (for spawned agents) and HTTP (for dashboard + CLI). |
 | `lib/core/agent-spawn.sh` | Bash | Wrapper around the agent harness. Injects an MCP config (so spawned agents see hive tools) and logs every spawn. |
 | `lib/core/init.sh` | Bash | Workspace initialization. Replaces SKILL.md Steps 1-3. |
 | `lib/core/orchestrator.sh` | Bash | Initial CEO build + transition to perpetual mode. Replaces SKILL.md Steps 4-7. |
@@ -147,13 +147,13 @@ PIDs recorded in `.company/processes.json`. `hive stop` kills them all.
 | Spawn wrapper | Bash. Thinnest possible layer over the harness exec. |
 | MCP server | Python. SDK is mature (`mcp` package). |
 | CLI dispatcher | Python. argparse beats nested case statements. |
-| Dashboard | Node.js. Already built (~2000 lines, zero npm deps), reused as-is with surgical mutation tweaks. |
+| Dashboard | Node.js. Already built (~5,700 lines, zero npm deps), reused as-is with surgical mutation tweaks. |
 
 ## Why Hive is a standalone application
 
 Hive is a standalone app, not a skill for an external tool:
-- 50+ shell scripts
-- 16 agent prompts
+- ~80 shell scripts
+- ~25 agent prompts
 - A web dashboard
 - Strict quality gates
 - A swappable LLM provider layer

@@ -44,7 +44,7 @@ Each key subdirectory has its own `AGENTS.md` with deeper detail. See the
 - **HIVE_INSTALL_DIR** (~/.local/share/hive): Global install — venv, MCP
   server, CLI, dashboard. Read-only from inside agents.
 - **HIVE_ROOT**: The same global install, seen from the agent side —
-  lib/agents (prompts), lib/tools (~100 scripts), lib/templates,
+  lib/agents (prompts), lib/tools (~80 scripts), lib/templates,
   lib/core (spawn + harness). Defaults to HIVE_INSTALL_DIR (bin/hive sets
   both). Shared by every project on the machine; read-only from inside
   agents. There is NO per-project copy — `hive init` does not create one.

@@ -34,8 +34,8 @@ The root `AGENTS.md` covers the high-level architecture and common commands but 
 
 When working on documentation that references specific code areas, the following nested AGENTS.md files contain deeper detail:
 
-- `lib/core/AGENTS.md` — the 5 foundational bash scripts (agent-spawn, orchestrator, init, hooks)
-- `lib/tools/AGENTS.md` — 101 bash scripts organized by category (lifecycle, tickets, chat, gates, etc.)
+- `lib/core/AGENTS.md` — the ~5 foundational bash scripts (agent-spawn, orchestrator, init, hooks)
+- `lib/tools/AGENTS.md` — ~80 bash scripts organized by category (lifecycle, tickets, chat, gates, etc.)
 - `lib/hive_mcp/tools/AGENTS.md` — MCP tool modules, their domains, and the Python→bash bridge pattern
 - `lib/agents/AGENTS.md` — agent prompt architecture, role hierarchy, and prompt conventions
 - `lib/dashboard/AGENTS.md` — modular Node.js SPA architecture (G8 split)

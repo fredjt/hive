@@ -1,6 +1,6 @@
 # Hive MCP Tools
 
-**48 tools registered.** Most wrap bash scripts in `lib/tools/`; a few read `.company/` state directly.
+**~48 tools registered.** Most wrap bash scripts in `lib/tools/`; a few read `.company/` state directly. (The count drifts as tools are added; `lib/hive_mcp/tools/` is the truth.)
 
 ### `agent_run_ic`
 
