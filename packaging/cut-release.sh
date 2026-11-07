@@ -10,12 +10,15 @@ set -euo pipefail
 #
 # Precondition (the cut commit, done BEFORE running this script — this
 # script verifies but never edits the tree):
-#   * VERSION, the pyproject version, and the newest CHANGELOG.md
-#     section all agree on the new version (TestVersionFile pins this)
+#   * every version-bearing surface agrees on the new version —
+#     VERSION, the pyproject version, the newest CHANGELOG.md section,
+#     and the "Latest release" + tarball-name lines in README.md and
+#     share/docs/README.md (gate 0 checks all of them and names each
+#     stale file; --check-surface runs just that gate)
 #   * the tree is clean and on a branch that can be pushed
 #
 # Usage: cut-release.sh [--version X.Y.Z] [--out-dir DIR] [--suite CMD]
-#                       [--dry-run]
+#                       [--dry-run] [--check-surface]
 #   --version  Version to cut (default: the VERSION file)
 #   --out-dir  Build output directory (default: dist/)
 #   --suite    Replace the test-suite command (default: full suite,
@@ -26,11 +29,15 @@ set -euo pipefail
 #              stop. No tag, no push, no release. The tarball, sha256
 #              sidecar, scan report, and notes file all land in
 #              --out-dir.
+#   --check-surface  Run only gate 0 (every version-bearing surface
+#              agrees) and stop. Validates the cut commit before the
+#              cut runs; no git, no suite, no build.
 
 SOURCE_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 VERSION=""
 OUT_DIR=""
 DRY_RUN=0
+CHECK_SURFACE=0
 SUITE="python -m pytest tests/ -q -x"
 
 while [ $# -gt 0 ]; do
@@ -39,13 +46,17 @@ while [ $# -gt 0 ]; do
     --out-dir) OUT_DIR="$2"; shift 2 ;;
     --suite)   SUITE="$2"; shift 2 ;;
     --dry-run) DRY_RUN=1; shift ;;
+    --check-surface) CHECK_SURFACE=1; shift ;;
     -h|--help)
       cat <<'EOF'
 Usage: cut-release.sh [--version X.Y.Z] [--out-dir DIR] [--suite CMD]
-                      [--dry-run]
+                      [--dry-run] [--check-surface]
 
 The release cut, as a command (E1). Gates, in order:
-  0  version sanity (VERSION file + newest CHANGELOG section agree)
+  0  version sanity — every version-bearing surface agrees (VERSION,
+     packaging/pyproject.toml, newest CHANGELOG section, and the
+     "Latest release" + tarball-name lines in README.md and
+     share/docs/README.md; a mismatch fails naming each stale file)
   1  git state (repo, clean tree, no existing tag, on a branch)
   2  test suite green (default: python -m pytest tests/ -q -x)
   3  build-package
@@ -57,6 +68,10 @@ The release cut, as a command (E1). Gates, in order:
 
 --dry-run runs gates 0-7 and stops before the tag; the tarball, sha256,
 scan report, and notes all land in --out-dir.
+
+--check-surface runs only gate 0 and stops: it validates the cut
+commit (all version-bearing surfaces at the same version) before the
+cut runs. No git, no suite, no build.
 EOF
       exit 0 ;;
     *) echo "Unknown option: $1" >&2; exit 1 ;;
@@ -65,7 +80,17 @@ EOF
 
 echo "==> Hive release cut"
 
-# ---- Gate 0: version sanity -------------------------------------------------
+# ---- Gate 0: version sanity — every version-bearing surface -------------
+# The cut commit must move ALL version-bearing surfaces together:
+#   VERSION, packaging/pyproject.toml, the newest CHANGELOG.md section,
+#   and the "Latest release" + tarball-name lines in README.md and
+#   share/docs/README.md. The 0.10.0 cut moved the first three (and
+#   the tag) but not the READMEs — the gate had no README surface, so
+#   it could not catch the rot; it shipped and was caught post-push.
+#   Every stale surface is collected and named in one FAIL (only the
+#   stale ones), so a mismatch says exactly which files the cut commit
+#   must fix. TestReleaseDocVersion pins the same README surface for
+#   the suite; this gate pins it for the cut.
 if [ -z "$VERSION" ]; then
   if [ ! -f "$SOURCE_DIR/VERSION" ]; then
     echo "FAIL: no VERSION file and no --version given" >&2
@@ -79,18 +104,60 @@ if ! echo "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
 fi
 echo "    cutting v$VERSION"
 
+STALE=""
+
 FILE_VERSION="$(tr -d '[:space:]' < "$SOURCE_DIR/VERSION")"
 if [ "$FILE_VERSION" != "$VERSION" ]; then
-  echo "FAIL: VERSION file says $FILE_VERSION, cutting $VERSION." >&2
-  echo "      Make the cut commit first (VERSION + CHANGELOG section)." >&2
-  exit 1
+  STALE="$STALE
+      VERSION (says $FILE_VERSION)"
+fi
+
+PY_VERSION=""
+[ -f "$SOURCE_DIR/packaging/pyproject.toml" ] && \
+  PY_VERSION="$(sed -n 's/^version = "\(.*\)"$/\1/p' \
+    "$SOURCE_DIR/packaging/pyproject.toml" | sed -n 1p)"
+if [ "$PY_VERSION" != "$VERSION" ]; then
+  STALE="$STALE
+      packaging/pyproject.toml (version = \"$PY_VERSION\")"
 fi
 
 TOP_ENTRY="$(sed -n '/^## /{s/^## //;p;q}' "$SOURCE_DIR/CHANGELOG.md")"
 if [ "$TOP_ENTRY" != "$VERSION" ]; then
-  echo "FAIL: newest CHANGELOG entry is '$TOP_ENTRY', cutting $VERSION." >&2
-  echo "      Add the $VERSION changelog section first (the cut commit)." >&2
+  STALE="$STALE
+      CHANGELOG.md (newest section is $TOP_ENTRY)"
+fi
+
+for README in "$SOURCE_DIR/README.md" "$SOURCE_DIR/share/docs/README.md"; do
+  REL=""
+  [ -f "$README" ] && \
+    REL="$(sed -n 's/^Latest release: \*\*v\{0,1\}\([0-9.]*\)\*\*.*/\1/p' \
+      "$README" | sed -n 1p)"
+  if [ "$REL" != "$VERSION" ]; then
+    STALE="$STALE
+      ${README#$SOURCE_DIR/} ('Latest release: **v$REL**')"
+  elif ! grep -q "hive-${VERSION}\.tar\.gz" "$README"; then
+    STALE="$STALE
+      ${README#$SOURCE_DIR/} (install steps do not reference hive-${VERSION}.tar.gz)"
+  fi
+done
+
+if [ -n "$STALE" ]; then
+  echo "FAIL: version-bearing surfaces disagree — the cut commit moves" >&2
+  echo "      every one of them in a single commit. Stale surfaces:" >&2
+  echo "$STALE" >&2
+  echo "      Resume: make the cut commit (every version-bearing surface" >&2
+  echo "      at v$VERSION), validate it with" >&2
+  echo "      'bash packaging/cut-release.sh --check-surface', then re-run:" >&2
+  echo "      bash packaging/cut-release.sh --version $VERSION" >&2
   exit 1
+fi
+echo "    all version-bearing surfaces agree on v$VERSION"
+
+if [ "$CHECK_SURFACE" = 1 ]; then
+  echo ""
+  echo "==> --check-surface: gate 0 validated — nothing more to run"
+  echo "    (full cut: bash packaging/cut-release.sh)"
+  exit 0
 fi
 
 cd "$SOURCE_DIR"

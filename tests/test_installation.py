@@ -689,6 +689,151 @@ class TestCutReleaseScript:
             in notes.read_text()
 
 
+class TestCutReleaseSurfaceGate:
+    """R2 — gate 0 covers every version-bearing surface: VERSION,
+    packaging/pyproject.toml, the newest CHANGELOG.md section, and the
+    'Latest release' + tarball-name lines in README.md and
+    share/docs/README.md. One surface stale → the gate fails naming
+    the stale file and nothing else (the others agree); two stale →
+    both named. --check-surface runs the gate standalone so the cut
+    commit can be validated before the cut runs.
+
+    Regression: the 0.10.0 cut moved VERSION + pyproject + CHANGELOG +
+    the tag but left both READMEs at v0.9.0 — the gate had no README
+    surface, so it could not have caught the rot.
+    """
+
+    ALL_SURFACES = ("VERSION", "packaging/pyproject.toml", "CHANGELOG.md",
+                    "README.md", "share/docs/README.md")
+
+    def _build_tree(self, tmp_path, version="9.9.9"):
+        """A minimal tree where every surface agrees on `version`.
+
+        Not a git repo — --check-surface is read-only and precedes the
+        git-state gate, so the git gates are not in play."""
+        tree = tmp_path / "tree"
+        (tree / "packaging").mkdir(parents=True)
+        (tree / "share" / "docs").mkdir(parents=True)
+        shutil.copy(_repo_root() / "packaging" / "cut-release.sh",
+                    tree / "packaging" / "cut-release.sh")
+        (tree / "VERSION").write_text(f"{version}\n")
+        (tree / "packaging" / "pyproject.toml").write_text(
+            f'version = "{version}"\n')
+        (tree / "CHANGELOG.md").write_text(
+            f"## {version}\n\nnotes for this release\n\n"
+            f"## 0.0.0\n\nolder\n")
+        readme = (f"Latest release: **v{version}**.\n\n"
+                  f"1. Download `hive-{version}.tar.gz` and its "
+                  f"`hive-{version}.sha256` sidecar\n"
+                  f"   sha256sum -c hive-{version}.sha256\n"
+                  f"   tar xzf hive-{version}.tar.gz\n")
+        (tree / "README.md").write_text(readme)
+        (tree / "share" / "docs" / "README.md").write_text(readme)
+        return tree
+
+    def _run(self, tree, extra=()):
+        return subprocess.run(
+            ["bash", str(tree / "packaging" / "cut-release.sh"),
+             "--check-surface", *extra],
+            capture_output=True, text=True, timeout=60, cwd=str(tree))
+
+    def _assert_names_only(self, tree, stale):
+        """Gate 0 fails, names every stale surface — and names no
+        surface that agrees."""
+        r = self._run(tree)
+        assert r.returncode != 0, \
+            f"gate 0 must fail with {stale} stale: {r.stdout} {r.stderr}"
+        out = r.stdout + r.stderr
+        for s in stale:
+            assert s in out, f"gate 0 must name stale surface {s}: {out}"
+        for other in self.ALL_SURFACES:
+            if other in stale:
+                continue
+            # "README.md" is a substring of "share/docs/README.md", so a
+            # docs-README report necessarily contains the root name too;
+            # the root-README report does not contain the docs path.
+            if other == "README.md" and "share/docs/README.md" in stale:
+                continue
+            assert other not in out, \
+                f"gate 0 must not name the agreeing surface {other}: {out}"
+
+    def test_check_surface_passes_when_every_surface_agrees(self, tmp_path):
+        tree = self._build_tree(tmp_path)
+        r = self._run(tree)
+        assert r.returncode == 0, r.stdout + "\n" + r.stderr
+        assert "agree" in r.stdout
+
+    def test_check_surface_passes_on_the_committed_repo(self):
+        """The committed tree's surfaces agree: the gate, run read-only
+        against the repo itself, passes — gate 0 now covers what
+        TestReleaseDocVersion pins."""
+        r = subprocess.run(
+            ["bash", str(_repo_root() / "packaging" / "cut-release.sh"),
+             "--check-surface"],
+            capture_output=True, text=True, timeout=60,
+            cwd=str(_repo_root()))
+        assert r.returncode == 0, r.stdout + "\n" + r.stderr
+
+    @pytest.mark.parametrize("surface", [
+        "packaging/pyproject.toml",
+        "CHANGELOG.md",
+        "README.md",
+        "share/docs/README.md",
+    ])
+    def test_one_stale_surface_is_named_and_only_it(self, tmp_path, surface):
+        """Bump exactly one surface: the gate fails, names it, and
+        names nothing else."""
+        tree = self._build_tree(tmp_path)
+        if surface == "packaging/pyproject.toml":
+            (tree / "packaging" / "pyproject.toml").write_text(
+                'version = "8.8.8"\n')
+        elif surface == "CHANGELOG.md":
+            (tree / "CHANGELOG.md").write_text(
+                "## 8.8.8\n\nstale notes\n\n## 9.9.9\n\nnewer\n")
+        else:
+            readme = tree / surface
+            readme.write_text(
+                readme.read_text().replace("v9.9.9", "v8.8.8"))
+        self._assert_names_only(tree, (surface,))
+
+    def test_readme_tarball_line_is_a_surface(self, tmp_path):
+        """The 'Latest release' line can agree while the install steps
+        still point at the previous tarball — the tarball-name line is
+        a surface of its own."""
+        tree = self._build_tree(tmp_path)
+        readme = tree / "README.md"
+        readme.write_text(
+            readme.read_text().replace("hive-9.9.9.tar.gz",
+                                       "hive-8.8.8.tar.gz"))
+        self._assert_names_only(tree, ("README.md",))
+
+    def test_version_file_stale_against_explicit_version(self, tmp_path):
+        """With --version given, the VERSION file is a surface like any
+        other: the file says 8.8.8, the cut is 9.9.9, every other
+        surface agrees on 9.9.9 — only VERSION is named."""
+        tree = self._build_tree(tmp_path)
+        (tree / "VERSION").write_text("8.8.8\n")
+        r = self._run(tree, ("--version", "9.9.9"))
+        assert r.returncode != 0, r.stdout + "\n" + r.stderr
+        out = r.stdout + r.stderr
+        assert "VERSION" in out
+        for other in self.ALL_SURFACES:
+            if other != "VERSION":
+                assert other not in out, \
+                    f"gate 0 must not name the agreeing surface {other}: {out}"
+
+    def test_two_stale_surfaces_are_both_named(self, tmp_path):
+        """'Name each stale file' is plural: two stale surfaces fail
+        with both named in one report."""
+        tree = self._build_tree(tmp_path)
+        (tree / "CHANGELOG.md").write_text(
+            "## 8.8.8\n\nstale notes\n\n## 9.9.9\n\nnewer\n")
+        readme = tree / "share" / "docs" / "README.md"
+        readme.write_text(readme.read_text().replace("v9.9.9", "v8.8.8"))
+        self._assert_names_only(tree,
+                                ("CHANGELOG.md", "share/docs/README.md"))
+
+
 class TestCutReleaseResumeHints:
     """D3: a failing cut-release gate ends with a 'Resume:' line naming the
     exact command to run next (suite red, scan dirty, tag exists, publish
@@ -712,15 +857,24 @@ class TestCutReleaseResumeHints:
         assert "bash packaging/cut-release.sh --version" in "\n".join(src)
 
     def test_resume_hint_printed_on_tag_exists(self, tmp_path):
-        # Exercise the tag-exists branch for real: a minimal scratch repo
-        # carrying just the script + VERSION + CHANGELOG, pre-tagged.
+        # Exercise the tag-exists branch for real: a scratch repo
+        # carrying the script + every version-bearing surface (gate 0
+        # runs first and needs them all), pre-tagged.
         tree = tmp_path / "cut"
         (tree / "packaging").mkdir(parents=True)
+        (tree / "share" / "docs").mkdir(parents=True)
         shutil.copy(_repo_root() / "packaging" / "cut-release.sh",
                     tree / "packaging" / "cut-release.sh")
         ver = (_repo_root() / "VERSION").read_text().strip()
         (tree / "VERSION").write_text(ver + "\n")
+        (tree / "packaging" / "pyproject.toml").write_text(
+            f'version = "{ver}"\n')
         (tree / "CHANGELOG.md").write_text(f"## {ver}\n\nnotes\n")
+        readme = (f"Latest release: **v{ver}**.\n\n"
+                  f"1. Download `hive-{ver}.tar.gz` and its "
+                  f"`hive-{ver}.sha256` sidecar\n")
+        (tree / "README.md").write_text(readme)
+        (tree / "share" / "docs" / "README.md").write_text(readme)
         env = {**os.environ, "GIT_AUTHOR_NAME": "d3", "GIT_AUTHOR_EMAIL": "d3@e.com",
                "GIT_COMMITTER_NAME": "d3", "GIT_COMMITTER_EMAIL": "d3@e.com"}
         subprocess.run(["git", "init", "-q"], cwd=tree, check=True)
