@@ -280,15 +280,32 @@ class TestSharedMoveAccessor:
         }))
         return company, tid
 
-    @staticmethod
-    def _ticket_state(company, tid):
+    _TIMESTAMP_KEYS = ("created_at", "updated_at", "started_at",
+                       "resolved_at", "stage_started_at", "timestamp")
+
+    @classmethod
+    def _normalize_clock(cls, value):
+        # Normalize wall clock: the two moves run a few ms apart and
+        # cross a second boundary on ~5% of runs (updated_at, comment
+        # timestamps, resolution.started_at all carry the move's instant)
+        # — the contract is that the MOVE PATHS write identical files,
+        # not that they ran at the same instant.
+        if isinstance(value, dict):
+            return {k: ("T" if k in cls._TIMESTAMP_KEYS
+                        and isinstance(v, str)
+                        else cls._normalize_clock(v))
+                    for k, v in value.items()}
+        if isinstance(value, list):
+            return [cls._normalize_clock(v) for v in value]
+        return value
+
+    @classmethod
+    def _ticket_state(cls, company, tid):
         for d in ("backlog", "sprint-current", "in-progress", "in-review",
                   "done", "archive"):
             f = company / "departments" / "backend" / "tickets" / d / f"{tid}.json"
             if f.is_file():
-                data = json.loads(f.read_text())
-                data.pop("updated_at", None)
-                return d, data
+                return d, cls._normalize_clock(json.loads(f.read_text()))
         return None, None
 
     def test_both_paths_name_the_same_move_script(self):

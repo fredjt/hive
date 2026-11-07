@@ -192,8 +192,14 @@ enter_idle_if_no_work() {
   has_active_tickets && return 1
   has_backlog_tickets && return 1
 
-  ss_set_stage idle
+  # Manifest first, stage second: stage=idle is the commit point. An
+  # observer (dashboard, the idle test) that sees stage=idle is
+  # guaranteed to see idle_mode=true already — the reverse order left a
+  # window where stage said idle but the manifest still said not (the
+  # xdist flake in test_idle_sprint), and the wake path below already
+  # uses this manifest→stage order.
   ss_sync_manifest '.idle_mode = true'
+  ss_set_stage idle
   log "IDLE: no active tickets and empty backlog — going idle (polling every ${IDLE_POLL_INTERVAL}s; no release, no archive, no exit)"
   while true; do
     sleep "$IDLE_POLL_INTERVAL"
