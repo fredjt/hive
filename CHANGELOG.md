@@ -1,5 +1,87 @@
 # Changelog
 
+## 0.10.0
+
+Retiring design debt.
+
+Every post-mortem item from the 2026-11-06 field run was already fixed
+before this line started (a18050e and earlier). This release does not
+chase incidents — it retires the structural debt those incidents
+exposed, found in a code audit on 2026-11-06: Hive was a Python system
+with a bash front, and the two copies of state mutation, provider
+wiring, and config parsing had drifted apart. 0.10 converges on one
+state layer, one write path, one config reader, one provider
+implementation, one paths module — and enforces the agent sandbox with
+code instead of prompt prose. No new features. The stub-LLM full-round
+E2E (A1) stayed green through every goal.
+
+### One state layer (G1, 28b14d7)
+- `lib/hive_state/`: the single writer for `.company/` — flock + atomic
+  replace + schema validation. Ad-hoc jq edits, tmp+mv renames, and
+  per-script locking are gone from the bash surface.
+
+### One write path (G2, c655b96)
+- The four state-write paths converge on the MCP server; the Style B
+  CLI state writer is retired. Agents, the CLI, and the dashboard all
+  mutate through the same gated + audited tool surface.
+
+### Round retirement (G3, 959b70c)
+- The legacy round-queue architecture is out. One honest activity log
+  replaces the zombie queue; the seven `round_*` MCP tools are retired
+  (55 tools -> 48).
+
+### Sandbox enforced in code (G4, e33fdf5)
+- The `.company` boundary and the command policy are now technical,
+  not prompt conventions: the harness policy blocks wrapper evasions
+  (subshell/python inline code, find -delete/-exec, write-target
+  redirections into `.company`) pre-execution, and a before/after
+  snapshot flags any command that mutated live state anyway. Spawn
+  results carry `sandbox_blocked` / `sandbox_violations`; a violation
+  marks the run `sandbox-violation`. Worktree access is unchanged and
+  the residual risk is documented in the primer.
+
+### One config reader (G5, a05fd1e)
+- `hive_config` is the only TOML parser on the Python side; bash no
+  longer parses config. Defaults, user overrides, and env vars resolve
+  in one place.
+
+### One provider registry (G6, 3b698ee)
+- `lib/core` is a package; the duplicated provider implementation in
+  the harness is retired in favor of the registry (`detect_provider`,
+  header/payload/response builders). The `spec_from_file_location`
+  import hacks are gone (0 hits in the tree).
+
+### Composed prompts (G7, dca0e3e)
+- The 6-way VP prompt copy-paste is a composed render
+  (`hive_agents.compose`): one shared skeleton, per-dept fragments.
+  The IT-sentence restoration is the only deliberate prompt content
+  change in the release; every other render is byte-identical.
+
+### Dashboard split (G8, 855604e)
+- `server.js` is 74 lines. The SPA is real files under `static/`
+  (app.html, app.js, styles.css) served from disk — the template
+  literal and its double-escape convention are gone, and
+  `node --check` on the real JS is meaningful. MCP client, SSE
+  watcher, and API handlers are their own modules. Still zero
+  dependencies, no build step.
+
+### One paths module (G9, 20ca36a)
+- `hive_paths` resolves the install root once (env HIVE_ROOT >
+  HIVE_INSTALL_DIR > derived). The 14 per-module parents[N]
+  re-derivations are gone; a test pins that none can reappear.
+
+### Docs match the tree (G10, f204ca1)
+- The round-queue-era counts (~101 scripts / ~13k lines / ~55 tools)
+  are out of the AGENTS.md files; the state layer is named where it
+  lives. A docs test keeps the counts honest.
+
+### Out of scope, deliberately
+- No new features, no new agent roles, no lifecycle reordering. Bash
+  stays at the process-management edge (daemon supervision, worktree
+  plumbing); the convergence is one Python state/config layer under
+  it, not a supervisor rewrite.
+
+
 ## 0.9.0
 
 Proof by execution, and a price tag on it.
