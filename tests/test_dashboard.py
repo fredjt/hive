@@ -1583,3 +1583,42 @@ class TestDocTreeCounts:
             content = Path(doc).read_text()
             assert "hive_state" in content, \
                 f"{doc} does not mention lib/hive_state/"
+
+
+class TestReleaseDocVersion:
+    """The README's release claims must not rot again. 0.10.0 was cut
+    (VERSION + changelog + tag) while both READMEs still said
+    "Latest release: v0.9.0" with 0.9.0 tarball steps — the releases
+    page was the only version-bearing surface that moved. Pin the
+    claim to the VERSION file, which every release commit updates."""
+
+    @pytest.mark.parametrize("readme",
+                             ["README.md", "share/docs/README.md"])
+    def test_latest_release_matches_version_file(self, readme):
+        p = Path(readme)
+        version_file = Path("VERSION")
+        if not p.is_file() or not version_file.is_file():
+            pytest.skip(f"{readme} not in this tree")
+        content = p.read_text()
+        version = version_file.read_text().strip()
+        m = re.search(r"Latest release:\s*\*\*v?([\d.]+)\*\*", content)
+        assert m, f"{readme} has no 'Latest release: **vX.Y.Z**' line"
+        assert m.group(1) == version, \
+            (f"{readme} says latest release v{m.group(1)} but VERSION "
+             f"is {version} — the release cut must update the README")
+        # The install steps must reference the same version's tarball.
+        assert f"hive-{version}.tar.gz" in content, \
+            f"{readme} install steps do not reference " \
+            f"hive-{version}.tar.gz"
+
+    def test_root_and_docs_readme_agree_on_version(self):
+        a, b = Path("README.md"), Path("share/docs/README.md")
+        if not a.is_file() or not b.is_file():
+            pytest.skip("both READMEs not in this tree")
+        va = re.search(r"Latest release:\s*\*\*v?([\d.]+)\*\*",
+                       a.read_text())
+        vb = re.search(r"Latest release:\s*\*\*v?([\d.]+)\*\*",
+                       b.read_text())
+        assert va and vb and va.group(1) == vb.group(1), \
+            "root README.md and share/docs/README.md disagree on the " \
+            "latest release (they are kept byte-identical)"
