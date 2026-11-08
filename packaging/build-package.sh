@@ -22,6 +22,10 @@ SOURCE_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 OUT_DIR="$SOURCE_DIR/dist"
 VERSION=""
 
+# The shared entry-set parser (S2): the staged set is defined once in
+# packaging/entries.list and shared with install.sh --copy-to.
+. "$SOURCE_DIR/packaging/entries.sh"
+
 while [ $# -gt 0 ]; do
   case "$1" in
     --version) VERSION="$2"; shift 2 ;;
@@ -58,37 +62,44 @@ trap 'rm -rf "$STAGE"' EXIT
 echo "Staging Hive $VERSION → $STAGE/$PKG_NAME"
 mkdir -p "$STAGE/$PKG_NAME"
 
-# Copy everything we want to ship. Stage with tar --exclude, not cp -r:
-# cp -r walks the LIVE tree, and while a test suite runs (xdist workers
-# importing mid-build) __pycache__ files appear and vanish mid-copy —
-# "cp: cannot stat ...pyc.<tmp>" kills the build (2026-11-04 CI flake).
-# tar's exclude prunes those paths at copy time, so the race cannot occur.
-ENTRIES=()
-for d in bin lib etc share packaging VERSION; do
-  if [ -e "$SOURCE_DIR/$d" ]; then
-    ENTRIES+=("$d")
+# Copy exactly the shared entry set (packaging/entries.list — the ONE
+# list; install.sh --copy-to stages the same set, S2). Directories go
+# through tar --exclude, not cp -r: cp -r walks the LIVE tree, and
+# while a test suite runs (xdist workers importing mid-build)
+# __pycache__ files appear and vanish mid-copy — "cp: cannot stat
+# ...pyc.<tmp>" kills the build (2026-11-04 CI flake). tar's exclude
+# prunes those paths at copy time, so the race cannot occur.
+DIRS=()
+FILES=()   # "SRC DEST" pairs
+while read -r SRC DEST; do
+  if [ ! -e "$SOURCE_DIR/$SRC" ]; then
+    echo "  NOTE: entry '$SRC' missing from the source — skipped"
+    continue
   fi
+  if [ -d "$SOURCE_DIR/$SRC" ]; then
+    DIRS+=("$SRC")
+  else
+    FILES+=("$SRC $DEST")
+  fi
+done < <(entry_pairs "$SOURCE_DIR/packaging/entries.list")
+
+# Top-level public-surface files ship VERBATIM. Regenerating
+# INSTALL/LICENSE from heredocs here is how a stale version-pinned
+# INSTALL header and the truncated 324-byte LICENSE got back into
+# published tarballs after the repo files were fixed (D.2) — and
+# B.1-B.3 extended the surface beyond README/INSTALL/LICENSE (release
+# history, contributor and security docs). No regeneration, ever.
+for PAIR in "${FILES[@]}"; do
+  SRC="${PAIR%% *}"; DEST="${PAIR##* }"
+  cp "$SOURCE_DIR/$SRC" "$STAGE/$PKG_NAME/$DEST"
 done
-tar -C "$SOURCE_DIR" -cf - \
+
+if [ ${#DIRS[@]} -gt 0 ]; then
+  tar -C "$SOURCE_DIR" -cf - \
     --exclude='__pycache__' --exclude='*.pyc' --exclude='*.pyc.*' \
     --exclude='*.pyo' \
-    "${ENTRIES[@]}" | tar -C "$STAGE/$PKG_NAME" -xf -
-
-# Top-level public-surface files: ship the tracked repo files VERBATIM.
-# Regenerating INSTALL/LICENSE from heredocs here is how a stale
-# version-pinned INSTALL header and the truncated 324-byte LICENSE got
-# back into published tarballs after the repo files were fixed (D.2).
-cp "$SOURCE_DIR/share/docs/README.md" "$STAGE/$PKG_NAME/README.md"
-cp "$SOURCE_DIR/INSTALL" "$STAGE/$PKG_NAME/INSTALL"
-cp "$SOURCE_DIR/LICENSE" "$STAGE/$PKG_NAME/LICENSE"
-# B.1-B.3 extended the public surface beyond README/INSTALL/LICENSE;
-# a tarball install must carry it too (release history, contributor and
-# security docs) — same verbatim-copy rule, no regeneration.
-for f in CHANGELOG.md CONTRIBUTING.md SECURITY.md; do
-  if [ -f "$SOURCE_DIR/$f" ]; then
-    cp "$SOURCE_DIR/$f" "$STAGE/$PKG_NAME/$f"
-  fi
-done
+    "${DIRS[@]}" | tar -C "$STAGE/$PKG_NAME" -xf -
+fi
 
 # Prune things that shouldn't ship
 echo "Pruning build artifacts and caches..."
@@ -172,5 +183,6 @@ echo "  curl -L <url-to-tarball> | tar xz"
 echo "  cd $PKG_NAME"
 echo "  bash packaging/install.sh --copy-to ~/.local/share/hive"
 echo ""
-echo "Or via the one-liner installer (set HIVE_PKG_URL):"
-echo "  curl -fsSL <url-to-install-online.sh> | sh"
+echo "Or via the one-liner installer (defaults to this repo's GitHub release;"
+echo "  HIVE_PKG_URL / HIVE_PKG_FILE / HIVE_REPO override):"
+echo "  curl -fsSL https://raw.githubusercontent.com/fredjt/hive/main/packaging/install-online.sh | sh"

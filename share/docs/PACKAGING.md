@@ -96,14 +96,20 @@ hive doctor
 
 `packaging/install-online.sh` is a POSIX-sh installer that downloads the
 tarball, verifies its checksum (if a sidecar `.sha256` is published next to
-the tarball), extracts, and installs:
+the tarball), extracts, and installs. With no env set it installs the latest
+release of this repo from GitHub releases (VERSION is fetched from the raw
+branch, so the URL is always current):
 
 ```bash
-curl -fsSL https://example.com/install-hive.sh | HIVE_PKG_URL=https://example.com/hive-0.1.0.tar.gz sh
+curl -fsSL https://raw.githubusercontent.com/fredjt/hive/main/packaging/install-online.sh | sh
 ```
 
-Env vars:
-- `HIVE_PKG_URL` — tarball URL (or use `HIVE_PKG_FILE` for a local file)
+Env vars (resolution order: `HIVE_PKG_URL` > `HIVE_PKG_FILE` > default):
+- `HIVE_PKG_URL` — explicit tarball URL (wins over everything)
+- `HIVE_PKG_FILE` — a local tarball (no download)
+- `HIVE_REPO` — owner/repo for the default GitHub release URL
+  (default `fredjt/hive`)
+- `HIVE_BRANCH` — branch to fetch VERSION from (default `main`)
 - `HIVE_INSTALL_DIR` — install location (default `~/.local/share/hive`)
 
 ### Option C: clone the install tree directly

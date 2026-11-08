@@ -1,0 +1,31 @@
+# The shipped top-level entry set — ONE source of truth (S2, 0.12).
+#
+# Every entry point that stages a Hive copy reads this list:
+#   - packaging/build-package.sh stages these entries into the tarball
+#     and writes them into MANIFEST.txt (S1)
+#   - packaging/install.sh --copy-to stages the SAME set into the
+#     install dir
+#
+# Nothing outside the set is ever staged: runtime state (.company/,
+# .worktrees/), build artifacts (dist/), and local junk cannot reach a
+# tarball or an install, and unreadable or unexpected paths elsewhere
+# in the source cannot abort a copy (the rsync exit 23 hard-fail).
+#
+# Format (parsed by packaging/entries.sh):
+#   one entry per line; comments (#) and blank lines are ignored.
+#   A one-field line names an entry that exists at the source root —
+#   a directory or a file, staged under its own name.
+#   "SRC as DEST" stages SRC under the name DEST (the public README.md
+#   ships from share/docs/README.md).
+bin
+lib
+etc
+share
+packaging
+VERSION
+share/docs/README.md as README.md
+INSTALL
+LICENSE
+CHANGELOG.md
+CONTRIBUTING.md
+SECURITY.md

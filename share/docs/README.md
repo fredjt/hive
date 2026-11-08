@@ -26,6 +26,14 @@ external agent CLI is installed, invoked, or required.
 
 Latest release: **v0.11.0**.
 
+**One-liner** (fetches the latest release tarball from this repo's
+GitHub releases, verifies its sha256 sidecar, and installs to
+`~/.local/share/hive`):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/fredjt/hive/main/packaging/install-online.sh | sh
+```
+
 **Release tarball** (no git required):
 
 1. Download `hive-0.11.0.tar.gz` and its `hive-0.11.0.sha256` sidecar

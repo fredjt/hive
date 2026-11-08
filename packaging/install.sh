@@ -13,6 +13,10 @@ SOURCE_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 INSTALL_DIR="$SOURCE_DIR"
 BIN_LINK="${HOME}/.local/bin/hive"
 
+# The shared entry-set parser (S2): --copy-to stages the SAME set the
+# build ships (packaging/entries.list) — never the whole tree.
+. "$SOURCE_DIR/packaging/entries.sh"
+
 while [ $# -gt 0 ]; do
   case "$1" in
     --copy-to)   INSTALL_DIR="$2"; shift 2 ;;
@@ -32,17 +36,54 @@ EOF
 done
 
 if [ "$INSTALL_DIR" != "$SOURCE_DIR" ]; then
-  echo "Copying $SOURCE_DIR → $INSTALL_DIR ..."
+  # S2: the whole-tree rsync is gone. Only the shared entry set
+  # (packaging/entries.list — the same list build-package.sh stages) is
+  # copied. Runtime state (.company/, .worktrees/), build artifacts
+  # (dist/), and local junk are outside the set, so they can never
+  # reach the install; unreadable or unexpected paths elsewhere in the
+  # source are never touched, so they cannot abort the copy either
+  # (the old rsync died with exit 23 under set -e on unreadable
+  # unrelated paths — the 0.11.0 scratch-install validation hit it).
+  echo "Staging the shared entry set (packaging/entries.list) → $INSTALL_DIR ..."
   mkdir -p "$INSTALL_DIR"
-  # Use rsync if available (preserves permissions, excludes .git), otherwise cp
-  if command -v rsync >/dev/null 2>&1; then
-    rsync -a --exclude='.git' --exclude='__pycache__' --exclude='*.pyc' "$SOURCE_DIR/" "$INSTALL_DIR/"
-  else
-    cp -r --no-dereference "$SOURCE_DIR"/. "$INSTALL_DIR/" 2>/dev/null || \
-      cp -r "$SOURCE_DIR"/. "$INSTALL_DIR/" 2>/dev/null || true
-    # Remove .git if it was copied (not needed for installation)
-    rm -rf "$INSTALL_DIR/.git"
+  MISSING=""
+  while read -r SRC DEST; do
+    if [ ! -e "$SOURCE_DIR/$SRC" ]; then
+      MISSING="$MISSING $SRC"
+      continue
+    fi
+    if [ -d "$SOURCE_DIR/$SRC" ]; then
+      mkdir -p "$INSTALL_DIR/$DEST"
+      if command -v rsync >/dev/null 2>&1; then
+        rsync -a \
+          --exclude='.git' --exclude='__pycache__' --exclude='*.pyc' \
+          --exclude='*.pyc.*' --exclude='*.pyo' \
+          "$SOURCE_DIR/$SRC/" "$INSTALL_DIR/$DEST/"
+      else
+        cp -r --no-dereference "$SOURCE_DIR/$SRC/." "$INSTALL_DIR/$DEST/" 2>/dev/null || \
+          cp -r "$SOURCE_DIR/$SRC/." "$INSTALL_DIR/$DEST/"
+      fi
+    else
+      mkdir -p "$(dirname "$INSTALL_DIR/$DEST")"
+      cp "$SOURCE_DIR/$SRC" "$INSTALL_DIR/$DEST"
+    fi
+  done < <(entry_pairs "$SOURCE_DIR/packaging/entries.list")
+  if [ -n "$MISSING" ]; then
+    echo "  NOTE: source entries missing (skipped):$MISSING" >&2
   fi
+  # Post-stage verification: the runtime core must be present, else the
+  # install is broken and the chmod/symlink steps below would fail
+  # obscurely. Names each missing entry.
+  for REQUIRED in bin/hive lib/core/agent-spawn.sh lib/core/agent-harness.py \
+                  lib/hive_mcp/server.py lib/dashboard/server.js \
+                  etc/config.defaults.toml etc/config.template.toml \
+                  packaging/requirements.txt; do
+    if [ ! -e "$INSTALL_DIR/$REQUIRED" ]; then
+      echo "  ERROR: $REQUIRED missing after staging — the install would" >&2
+      echo "  be incomplete (source entry missing or unreadable)." >&2
+      exit 1
+    fi
+  done
 fi
 
 echo "Installing Hive at $INSTALL_DIR"

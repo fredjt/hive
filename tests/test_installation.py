@@ -964,6 +964,57 @@ class TestTarballContentGuard:
         )
 
 
+@pytest.fixture()
+def dirty_tree(tmp_path, request):
+    """A copy of the repo tree plus what a working checkout actually
+    contains: .company/ live state, dist/ build artifacts, junk files,
+    and an unreadable unrelated dir (the rsync exit 23 hard-fail
+    observed during the 0.11.0 scratch validation). No git — neither
+    build-package.sh nor install.sh --copy-to needs it. Shared by the
+    S1 (shipping manifest) and S2 (installer parity) test classes."""
+    repo = _repo_root()
+    tree = tmp_path / "tree"
+    tree.mkdir()
+    tar = subprocess.run(
+        ["tar", "-cf", "-",
+         "--exclude=.git", "--exclude=unsloth-tmp", "--exclude=.local",
+         "--exclude=dist", "--exclude=__pycache__", "--exclude=*.pyc",
+         "."],
+        cwd=str(repo), capture_output=True, timeout=300,
+    )
+    assert tar.returncode == 0, tar.stderr.decode(errors="replace")
+    subprocess.run(["tar", "-xf", "-", "-C", str(tree)],
+                   input=tar.stdout, check=True, capture_output=True,
+                   timeout=300)
+    # The copy may already carry the repo's own live .company/ —
+    # exist_ok keeps the fixture idempotent either way.
+    (tree / ".company" / "tickets").mkdir(parents=True, exist_ok=True)
+    (tree / ".company" / "tickets" / "state.json").write_text("{}\n")
+    (tree / ".company" / "roster.json").write_text("{}\n")
+    (tree / ".worktrees" / "junk-ticket").mkdir(parents=True, exist_ok=True)
+    (tree / ".worktrees" / "junk-ticket" / "file.txt").write_text("x")
+    (tree / "dist" / "old").mkdir(parents=True, exist_ok=True)
+    (tree / "dist" / "old" / "hive-0.0.1.tar.gz").write_bytes(b"old")
+    (tree / "junk.txt").write_text("junk\n")
+    (tree / "notes.tmp").write_text("scratch\n")
+    # Unreadable unrelated dir (outside every entry set): a whole-tree
+    # copy aborts on it (rsync exit 23 under set -e); an entry-set copy
+    # never touches it.
+    locked = tree / "locked"
+    locked.mkdir()
+    (locked / "secret.txt").write_text("secret\n")
+    locked.chmod(0o000)
+    request.addfinalizer(lambda: _try_chmod(locked, 0o700))
+    return tree
+
+
+def _try_chmod(path: Path, mode: int):
+    try:
+        path.chmod(mode)
+    except OSError:
+        pass
+
+
 class TestShippingManifest:
     """S1 (0.12) — the tarball carries its own bill of materials.
 
@@ -994,37 +1045,6 @@ class TestShippingManifest:
     STATE_TOP = (".company", ".worktrees", "venv", "dist",
                  "__pycache__", ".git")
 
-    @pytest.fixture()
-    def dirty_tree(self, tmp_path):
-        """A copy of the repo tree plus what a working checkout actually
-        contains: .company/ live state, dist/ build artifacts, and junk
-        files. No git — build-package.sh needs none of it."""
-        repo = _repo_root()
-        tree = tmp_path / "tree"
-        tree.mkdir()
-        tar = subprocess.run(
-            ["tar", "-cf", "-",
-             "--exclude=.git", "--exclude=unsloth-tmp", "--exclude=.local",
-             "--exclude=dist", "--exclude=__pycache__", "--exclude=*.pyc",
-             "."],
-            cwd=str(repo), capture_output=True, timeout=300,
-        )
-        assert tar.returncode == 0, tar.stderr.decode(errors="replace")
-        subprocess.run(["tar", "-xf", "-", "-C", str(tree)],
-                       input=tar.stdout, check=True, capture_output=True,
-                       timeout=300)
-        # The copy may already carry the repo's own live .company/ —
-        # exist_ok keeps the fixture idempotent either way.
-        (tree / ".company" / "tickets").mkdir(parents=True, exist_ok=True)
-        (tree / ".company" / "tickets" / "state.json").write_text("{}\n")
-        (tree / ".company" / "roster.json").write_text("{}\n")
-        (tree / ".worktrees" / "junk-ticket").mkdir(parents=True, exist_ok=True)
-        (tree / ".worktrees" / "junk-ticket" / "file.txt").write_text("x")
-        (tree / "dist" / "old").mkdir(parents=True, exist_ok=True)
-        (tree / "dist" / "old" / "hive-0.0.1.tar.gz").write_bytes(b"old")
-        (tree / "junk.txt").write_text("junk\n")
-        (tree / "notes.tmp").write_text("scratch\n")
-        return tree
 
     def _build(self, tree: Path, out_dir: Path) -> Path:
         out_dir.mkdir(parents=True, exist_ok=True)
@@ -1153,23 +1173,27 @@ class TestShippingManifest:
                      ["git", "commit", "-qm", "state-entry"]):
             subprocess.run(args, cwd=str(dirty_tree), env=env, check=True,
                            timeout=120)
-        # Simulate the drift the manifest guards against: the staging
-        # list and the prune list are two hand-maintained lists, and the
-        # class of bug is one drifting from the other — stage .company/
-        # AND let the prune list forget it.
+        # Simulate the drift the manifest guards against: the shared
+        # entry list (entries.list) and the prune list in
+        # build-package.sh are two hand-maintained lists, and the class
+        # of bug is one drifting from the other — stage .company/ via
+        # the entry list AND let the prune list forget it.
+        elist = dirty_tree / "packaging" / "entries.list"
+        etext = elist.read_text()
+        assert "VERSION" in etext.splitlines(), \
+            "entries.list shape moved — update this test"
+        etext = etext.replace("VERSION\n", "VERSION\n.company\n", 1)
+        elist.write_text(etext)
         build = dirty_tree / "packaging" / "build-package.sh"
         text = build.read_text()
-        stage_needle = 'for d in bin lib etc share packaging VERSION; do'
         prune_needle = ("find \"$STAGE/$PKG_NAME\" -type d -name "
                         "'.company' -prune -exec rm -rf {} +")
-        assert stage_needle in text and prune_needle in text, \
-            "build-package.sh staging/prune shape moved — update this test"
-        text = text.replace(
-            stage_needle,
-            'for d in bin lib etc share packaging VERSION .company; do')
+        assert prune_needle in text, \
+            "build-package.sh prune list moved — update this test"
         text = text.replace(prune_needle, ":  # pruned away by the drift")
         build.write_text(text)
-        for args in (["git", "add", "packaging/build-package.sh"],
+        for args in (["git", "add", "packaging/build-package.sh",
+                      "packaging/entries.list"],
                      ["git", "commit", "-qm", "stage-state"]):
             subprocess.run(args, cwd=str(dirty_tree), env=env, check=True,
                            timeout=60)
@@ -1187,3 +1211,288 @@ class TestShippingManifest:
         assert ".company" in out, (
             "gate 4 must NAME the offending state entry; got:\n" + out[-3000:]
         )
+
+
+class TestInstallCopyToEntrySet:
+    """S2 (0.12) — install the entry set, not the tree.
+
+    install.sh --copy-to used to rsync the WHOLE source dir (excluding
+    only .git/__pycache__/*.pyc): from a working checkout it dragged
+    dist/, .company/ live state, and local junk into the install, and it
+    hard-failed (rsync exit 23 under set -e) when the source contained
+    unreadable unrelated paths — observed on the 0.12 reference box
+    while validating the 0.11.0 scratch install. --copy-to now stages
+    the SAME explicit entry set the build ships (packaging/entries.list
+    — one source of truth shared with build-package.sh): runtime state
+    and anything outside the set is never staged, and unreadable or
+    unexpected paths in the source cannot abort the copy.
+    """
+
+    #: The top-level surface an entry-set install may carry (the entry
+    #: set plus the venv the installer creates in the install dir).
+    ALLOWED_TOP = {
+        "bin", "lib", "etc", "share", "packaging", "VERSION",
+        "README.md", "INSTALL", "LICENSE", "CHANGELOG.md",
+        "CONTRIBUTING.md", "SECURITY.md", "venv",
+    }
+
+    @staticmethod
+    def _run_install(tree: Path, install_dir: Path, home: Path):
+        return subprocess.run(
+            ["bash", str(tree / "packaging" / "install.sh"),
+             "--copy-to", str(install_dir),
+             "--bin-link", str(home / ".local" / "bin" / "hive")],
+            capture_output=True, text=True, timeout=600,
+            cwd=str(tree),
+            env={**os.environ, "HOME": str(home)},
+        )
+
+    @staticmethod
+    def _stub_venv(install_dir: Path) -> None:
+        """Pre-create the venv install.sh will 'reuse': pip/python stubs
+        that exit 0. Staging is what these tests assert on — no real
+        venv, no network, no PyPI round-trip."""
+        vbin = install_dir / "venv" / "bin"
+        vbin.mkdir(parents=True)
+        for tool in ("pip", "python"):
+            p = vbin / tool
+            p.write_text("#!/bin/sh\nexit 0\n")
+            p.chmod(0o755)
+
+    @staticmethod
+    def _assert_entry_set_install(install_dir: Path) -> None:
+        top = {p.name for p in install_dir.iterdir()}
+        stray = top - TestInstallCopyToEntrySet.ALLOWED_TOP
+        assert not stray, (
+            f"install carries entries outside the entry set: {sorted(stray)}"
+        )
+        assert not (install_dir / ".company").exists(), \
+            "live .company/ state reached the install"
+        assert not (install_dir / ".worktrees").exists(), \
+            ".worktrees/ reached the install"
+        assert not (install_dir / "dist").exists(), \
+            "build artifacts (dist/) reached the install"
+        assert not (install_dir / "junk.txt").exists(), \
+            "junk reached the install"
+        assert not (install_dir / "notes.tmp").exists(), \
+            "junk reached the install"
+        assert not (install_dir / "locked").exists(), \
+            "the unreadable unrelated dir reached the install"
+        for required in ("bin/hive", "lib/core/agent-spawn.sh",
+                         "lib/core/agent-harness.py",
+                         "lib/hive_mcp/server.py", "lib/dashboard/server.js",
+                         "etc/config.defaults.toml", "etc/config.template.toml",
+                         "packaging/requirements.txt", "packaging/entries.list"):
+            assert (install_dir / required).is_file(), \
+                f"required entry missing from the install: {required}"
+        # the public README ships from share/docs/README.md
+        assert (install_dir / "README.md").read_text() == \
+            (install_dir / "share" / "docs" / "README.md").read_text(), \
+            "README.md must be share/docs/README.md verbatim"
+
+    def test_dirty_tree_copy_to_is_a_clean_install(self, dirty_tree,
+                                                   tmp_path):
+        """Full flow (real venv): dirty source → clean install, hive
+        version correct, nothing outside the entry set in the tree."""
+        home = tmp_path / "home"
+        home.mkdir()
+        install_dir = tmp_path / "install"
+        r = self._run_install(dirty_tree, install_dir, home)
+        assert r.returncode == 0, r.stdout + "\n" + r.stderr
+        version = (dirty_tree / "VERSION").read_text().strip()
+        rv = subprocess.run([str(install_dir / "bin" / "hive"), "version"],
+                            capture_output=True, text=True, timeout=60)
+        assert rv.returncode == 0, rv.stdout + "\n" + rv.stderr
+        assert version in rv.stdout, \
+            f"hive version must report {version}; got: {rv.stdout!r}"
+        self._assert_entry_set_install(install_dir)
+        # the launcher symlink points into the install
+        link = home / ".local" / "bin" / "hive"
+        assert link.is_symlink() and \
+            str(install_dir / "bin" / "hive") in os.readlink(str(link))
+
+    def test_unreadable_source_path_cannot_abort_the_copy(self, dirty_tree,
+                                                          tmp_path):
+        """Staging-only pass (stubbed venv): an unreadable unrelated dir
+        in the source cannot abort the copy — the whole-tree rsync that
+        died with exit 23 is gone."""
+        home = tmp_path / "home"
+        home.mkdir()
+        install_dir = tmp_path / "install"
+        self._stub_venv(install_dir)
+        r = self._run_install(dirty_tree, install_dir, home)
+        assert r.returncode == 0, (
+            "the entry-set copy must complete with an unreadable "
+            "unrelated dir in the source:\n" + r.stdout + "\n" + r.stderr
+        )
+        self._assert_entry_set_install(install_dir)
+
+    def test_missing_optional_entry_warns_but_installs(self, dirty_tree,
+                                                       tmp_path):
+        home = tmp_path / "home"
+        home.mkdir()
+        (dirty_tree / "SECURITY.md").unlink()
+        install_dir = tmp_path / "install"
+        self._stub_venv(install_dir)
+        r = self._run_install(dirty_tree, install_dir, home)
+        assert r.returncode == 0, r.stdout + "\n" + r.stderr
+        out = r.stdout + r.stderr
+        assert "SECURITY.md" in out, \
+            "the missing optional entry must be named in the output"
+        assert not (install_dir / "SECURITY.md").exists()
+        self._assert_entry_set_install(install_dir)
+
+    def test_missing_required_entry_fails_named(self, dirty_tree, tmp_path):
+        import shutil as _shutil
+        _shutil.rmtree(dirty_tree / "lib" / "core")
+        home = tmp_path / "home"
+        home.mkdir()
+        install_dir = tmp_path / "install"
+        self._stub_venv(install_dir)
+        r = self._run_install(dirty_tree, install_dir, home)
+        assert r.returncode != 0, (
+            "a source missing the runtime core must fail the install"
+        )
+        out = r.stdout + r.stderr
+        assert "lib/core" in out, \
+            f"the failure must name the missing entry; got:\n{out[-2000:]}"
+
+class TestEntryListSingleSource:
+    """S2 (0.12) — the shipped entry set is defined ONCE and shared by
+    the build and the installer."""
+
+    def test_entry_list_is_the_single_source_of_truth(self):
+        """The entry list is defined ONCE (packaging/entries.list) and
+        shared by build-package.sh and install.sh — no second
+        hand-maintained staging list, no whole-tree rsync."""
+        repo = _repo_root()
+        elist = (repo / "packaging" / "entries.list").read_text()
+        lines = [l.strip() for l in elist.splitlines()
+                 if l.strip() and not l.strip().startswith("#")]
+        plain = [l for l in lines if " as " not in l]
+        mapped = [l.split(" as ") for l in lines if " as " in l]
+        assert set(plain) == {
+            "bin", "lib", "etc", "share", "packaging", "VERSION",
+            "INSTALL", "LICENSE", "CHANGELOG.md", "CONTRIBUTING.md",
+            "SECURITY.md",
+        }, f"unexpected entry set: {sorted(plain)}"
+        assert [m for m in mapped if len(m) == 2] == \
+            [["share/docs/README.md", "README.md"]], \
+            f"unexpected SRC as DEST mappings: {mapped}"
+        build = (repo / "packaging" / "build-package.sh").read_text()
+        assert "entries.list" in build and "entries.sh" in build, \
+            "build-package.sh must stage from the shared entry list"
+        assert "for d in bin lib etc share packaging VERSION" not in build, \
+            "build-package.sh keeps its own hand-maintained staging list"
+        install = (repo / "packaging" / "install.sh").read_text()
+        assert "entries.list" in install and "entries.sh" in install, \
+            "install.sh must stage the shared entry list"
+        assert '"$SOURCE_DIR/" "$INSTALL_DIR/"' not in install, \
+            "install.sh still rsyncs the whole source tree"
+
+
+import base64 as _base64
+
+#: Fake curl bodies for the install-online URL-resolution tests —
+#: base64 keeps the shell script text out of the Python source.
+_FAKE_CURL = _base64.b64decode(
+    "IyEvYmluL3NoCmxhc3Q9IiIKZm9yIGEgaW4gIiRAIjsgZG8gbGFzdD0iJGEiOyBkb25lCmNhc2UgIiRsYXN0IiBpbgogICpyYXcuZ2l0aHVidXNlcmNvbnRlbnQqKQogICAgaWYgWyAtbiAiJHtGQUtFX0NVUkxfRkFJTDotfSIgXTsgdGhlbgogICAgICBlY2hvICJmYWtlIGN1cmw6IGZldGNoIGZhaWxlZCIgPiYyCiAgICAgIGV4aXQgMQogICAgZmkKICAgIHByaW50ZiAnJXNcbicgIiR7RkFLRV9DVVJMX1ZFUlNJT046LTAuMTEuMH0iCiAgICA7OwogICopIGV4aXQgMCA7Owplc2FjCg=="
+).decode()
+
+_FAKE_CURL_LOG = _base64.b64decode(
+    "IyEvYmluL3NoCmxhc3Q9IiIKZm9yIGEgaW4gIiRAIjsgZG8gbGFzdD0iJGEiOyBkb25lCnByaW50ZiAnJXNcbicgIiRsYXN0IiA+ICIke0ZBS0VfQ1VSTF9MT0c6LS9kZXYvbnVsbH0iCmNhc2UgIiRsYXN0IiBpbgogICpyYXcuZ2l0aHVidXNlcmNvbnRlbnQqKQogICAgcHJpbnRmICclc1xuJyAiJHtGQUtFX0NVUkxfVkVSU0lPTjotMC4xMS4wfSIKICAgIDs7CiAgKikgZXhpdCAwIDs7CmVzYWMK"
+).decode()
+
+
+class TestInstallOnlineUrlResolution:
+    """S2 (0.12) — install-online.sh resolves the tarball source:
+    HIVE_PKG_URL > HIVE_PKG_FILE > the GitHub release default for this
+    repo (owner/repo overridable via HIVE_REPO, branch via HIVE_BRANCH,
+    VERSION fetched from the raw branch). The documented path worked
+    only with HIVE_PKG_URL set; without it the script errored, and the
+    README one-liner was a placeholder URL.
+
+    HIVE_PRINT_URL is the hermetic seam: resolve the source, print it,
+    exit — no download, no install. A fake curl on PATH serves the
+    raw-branch VERSION fetch (FAKE_CURL_VERSION / FAKE_CURL_FAIL).
+    """
+
+    @staticmethod
+    def _fake_curl(tmp_path: Path) -> Path:
+        b = tmp_path / "fakebin"
+        b.mkdir(exist_ok=True)
+        curl = b / "curl"
+        curl.write_text(_FAKE_CURL)
+        curl.chmod(0o755)
+        return b
+
+    def _run(self, tmp_path: Path, env_extra: dict) -> subprocess.CompletedProcess:
+        fakebin = self._fake_curl(tmp_path)
+        home = tmp_path / "home"
+        home.mkdir(exist_ok=True)
+        env = {**os.environ,
+               "PATH": f"{fakebin}:{os.environ['PATH']}",
+               "HOME": str(home),
+               "HIVE_PRINT_URL": "1"}
+        env.update(env_extra)
+        return subprocess.run(
+            ["sh", str(_repo_root() / "packaging" / "install-online.sh")],
+            capture_output=True, text=True, timeout=60, env=env,
+        )
+
+    def test_explicit_pkg_url_wins(self, tmp_path):
+        r = self._run(tmp_path,
+                      {"HIVE_PKG_URL": "https://example.com/h.tar.gz"})
+        assert r.returncode == 0, r.stderr
+        assert r.stdout.strip() == "https://example.com/h.tar.gz"
+
+    def test_pkg_file_short_circuits(self, tmp_path):
+        r = self._run(tmp_path, {"HIVE_PKG_FILE": "/tmp/x.tar.gz"})
+        assert r.returncode == 0, r.stderr
+        assert r.stdout.strip() == "file:/tmp/x.tar.gz"
+
+    def test_default_url_derives_from_repo_and_version(self, tmp_path):
+        r = self._run(tmp_path, {"FAKE_CURL_VERSION": "0.12.0"})
+        assert r.returncode == 0, r.stderr
+        assert r.stdout.strip() == (
+            "https://github.com/fredjt/hive/releases/download/"
+            "v0.12.0/hive-0.12.0.tar.gz"
+        )
+
+    def test_repo_override_changes_the_url(self, tmp_path):
+        r = self._run(tmp_path, {"HIVE_REPO": "other/org"})
+        assert r.returncode == 0, r.stderr
+        assert r.stdout.strip() == (
+            "https://github.com/other/org/releases/download/"
+            "v0.11.0/hive-0.11.0.tar.gz"
+        )
+
+    def test_branch_override_changes_the_version_fetch(self, tmp_path):
+        """The raw-branch VERSION fetch must use HIVE_BRANCH (default
+        main) — pinned by recording the URL the fake curl was asked to
+        fetch and checking it ends at the override branch."""
+        fakebin = self._fake_curl(tmp_path)
+        curl = fakebin / "curl"
+        curl.write_text(_FAKE_CURL_LOG)
+        curl.chmod(0o755)
+        log = tmp_path / "curl.log"
+        home = tmp_path / "home"
+        home.mkdir(exist_ok=True)
+        env = {**os.environ,
+               "PATH": f"{fakebin}:{os.environ['PATH']}",
+               "HOME": str(home),
+               "HIVE_PRINT_URL": "1",
+               "HIVE_BRANCH": "stable",
+               "FAKE_CURL_LOG": str(log)}
+        r = subprocess.run(
+            ["sh", str(_repo_root() / "packaging" / "install-online.sh")],
+            capture_output=True, text=True, timeout=60, env=env)
+        assert r.returncode == 0, r.stderr
+        fetched = log.read_text().strip()
+        assert fetched.endswith("/fredjt/hive/stable/VERSION"), \
+            f"VERSION fetch must use HIVE_BRANCH; got: {fetched}"
+
+    def test_unreachable_version_fetch_fails(self, tmp_path):
+        r = self._run(tmp_path, {"FAKE_CURL_FAIL": "1"})
+        assert r.returncode != 0, "a failed VERSION fetch must fail"
+        assert "ERROR" in r.stderr
