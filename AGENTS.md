@@ -475,10 +475,21 @@ assert "$STAGES" in result.stdout or "stages" in result.stdout.lower()
 
 ## CI / Continuous Integration
 
-Tests run automatically on every push/PR. The pipeline:
+Tests run automatically on every push/PR. The test matrix is split
+by risk (S4): **one version (3.12) carries the full suite**; every
+supported version (3.10, 3.13) carries its **version-sensitive
+subset** — the config-load/tomli-fallback tests
+(`tests/test_json_structures.py`, `tests/test_llm_providers.py`,
+`tests/test_commands.py::TestConfigSetUpsert`,
+`tests/test_commands.py::TestConfigIntegrity`) + a CLI smoke
+(`tests/test_cli.py`) + an import smoke. The version-
+sensitive surface is PINNED by
+`tests/test_integration.py::TestTomliSurfaceGuard`: a new
+`import tomli` / `tomllib` outside the pinned files fails the guard
+until the ci.yml subset is updated with it. The pipeline:
 
 1. **Clone the repo**
-2. **Run `python -m pytest tests/ -v`** — all tests must pass
+2. **Run the matrix** — full suite on 3.12; the subset on 3.10 + 3.13 (plus bash syntax, ruff, dashboard, and gitleaks jobs)
 3. **Report failures** — each failing test includes the file, line, and traceback
 
 If a PR fails CI, fix the underlying bug (not just the test). The test exists to prevent that exact regression.

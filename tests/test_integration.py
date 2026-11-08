@@ -153,3 +153,67 @@ class TestICSpawnDiagnostics:
         company_dir = tmp_project_dir / ".company"
         company_dir.mkdir()
 
+
+
+class TestTomliSurfaceGuard:
+    """S4 (0.12) — the version-sensitive surface is pinned.
+
+    The CI matrix runs the FULL suite on one version (3.12); the 3.10
+    and 3.13 rows run the version-sensitive subset only (the
+    config-load/tomli-fallback tests + an import smoke + a quick CLI
+    smoke — the file list in ci.yml). A new `import tomli` /
+    `tomllib` outside the pinned files would silently outgrow that
+    subset's coverage, so this guard fails (and the pin set must be
+    updated together with the ci.yml subset).
+    """
+
+    # The ONLY files allowed to import a TOML parser.
+    PINNED = {
+        "lib/hive_config.py",
+        "lib/hive_cli/commands/config.py",
+        "lib/hive_cli/commands/doctor.py",
+        "lib/core/llm_providers.py",
+    }
+    # The ci.yml version-sensitive subset — its tests exercise every
+    # parser path in PINNED: hive_config.load_config + llm_providers
+    # (test_llm_providers), commands/config.py (TestConfigSetUpsert),
+    # commands/doctor.py (TestConfigIntegrity).
+    SUBSET_FILES = (
+        "tests/test_json_structures.py",
+        "tests/test_llm_providers.py",
+        "tests/test_cli.py",
+        "tests/test_commands.py::TestConfigSetUpsert",
+        "tests/test_commands.py::TestConfigIntegrity",
+    )
+
+    def test_no_tomli_imports_outside_pinned_files(self):
+        import re
+        from conftest import get_install_dir
+        repo = get_install_dir()
+        found = set()
+        for py in (repo / "lib").rglob("*.py"):
+            if "__pycache__" in py.parts:
+                continue
+            text = py.read_text()
+            if re.search(
+                    r"^\s*(import (tomli|tomllib)"
+                    r"|from (tomli|tomllib) import)", text, re.M):
+                found.add(str(py.relative_to(repo)))
+        assert found <= self.PINNED, (
+            f"tomli/tomllib imports outside the CI subset's pinned "
+            f"files: {sorted(found - self.PINNED)} — update PINNED here "
+            f"AND the version-sensitive subset in ci.yml"
+        )
+
+    def test_ci_subset_files_exist(self):
+        from conftest import get_install_dir
+        repo = get_install_dir()
+        for f in self.SUBSET_FILES:
+            file_part = f.split("::")[0]
+            assert (repo / file_part).is_file(), \
+                f"ci.yml subset file missing: {file_part}"
+        ci = (repo / ".github" / "workflows" / "ci.yml").read_text()
+        for f in self.SUBSET_FILES:
+            assert f in ci, f"ci.yml subset must name {f}"
+        assert "tomli" in ci or "version-sensitive" in ci, \
+            "ci.yml must document the version-sensitive rule"
