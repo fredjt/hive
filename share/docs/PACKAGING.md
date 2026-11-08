@@ -1,9 +1,12 @@
 # Packaging & Distribution
 
-Hive ships as a single `.tar.gz` archive (a few hundred KB — the build
-prints the full entry listing; that is the exact truth). Targets need
-only `bash`, `python3` (3.10+), `git`, `jq`, and `node` (for the
-dashboard).
+Hive ships as a single `.tar.gz` archive (a few hundred KB). The
+tarball carries its own bill of materials: `MANIFEST.txt` at the
+package root is the exact, sorted entry list — the build writes it
+into the staged package before tarring, and gate 4 of the cut verifies
+it from the tarball (required runtime entries present, runtime-state
+entries absent). Targets need only `bash`, `python3` (3.10+), `git`,
+`jq`, and `node` (for the dashboard).
 
 ## Build a release tarball
 
@@ -47,7 +50,9 @@ refuses any tree where the version-bearing surfaces disagree:
    if you want every gate without the tag, push, or publish. Gates, in
    order: 0 every version-bearing surface agrees (a mismatch fails,
    naming each stale file), 1 git state (clean tree, no existing tag),
-   2 the test suite green, 3 build-package, 4 tar listing, 5
+   2 the test suite green, 3 build-package, 4 the shipping manifest
+   (MANIFEST.txt extracted from the tarball — required runtime entries
+   present, runtime-state entries absent, each offender named), 5
    credential scan, 6 sha256 sidecar, 7 release notes — then
    `git tag v<version>`, push, and `gh release create` with the
    tarball + sha256 sidecar.

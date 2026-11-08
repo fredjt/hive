@@ -962,3 +962,228 @@ class TestTarballContentGuard:
         assert content[0] == digest, (
             "sidecar hash does not match the tarball bytes"
         )
+
+
+class TestShippingManifest:
+    """S1 (0.12) — the tarball carries its own bill of materials.
+
+    The build staged whole directories and gate 4 pinned only four
+    entries, so the shipped surface could drift from the public surface
+    with no guard firing (D.2's stale INSTALL / truncated LICENSE is the
+    proof). build-package.sh now writes MANIFEST.txt — the exact, sorted
+    entry list — into the staged package before tarring, and gate 4 of
+    cut-release.sh verifies the manifest FROM THE TARBALL: required
+    runtime paths present, runtime-state paths absent, each offending
+    entry named. A tree carrying .company/ live state, dist/ build
+    artifacts, and junk files must still produce a state-free manifest.
+    """
+
+    #: Required runtime entries (the four original gate-4 entries stay;
+    #: the list grows to the runtime core).
+    REQUIRED = (
+        "bin/hive",
+        "lib/core/agent-spawn.sh",
+        "lib/core/agent-harness.py",
+        "lib/hive_mcp/server.py",
+        "lib/dashboard/server.js",
+        "etc/config.defaults.toml",
+        "etc/config.template.toml",
+        "packaging/requirements.txt",
+    )
+
+    STATE_TOP = (".company", ".worktrees", "venv", "dist",
+                 "__pycache__", ".git")
+
+    @pytest.fixture()
+    def dirty_tree(self, tmp_path):
+        """A copy of the repo tree plus what a working checkout actually
+        contains: .company/ live state, dist/ build artifacts, and junk
+        files. No git — build-package.sh needs none of it."""
+        repo = _repo_root()
+        tree = tmp_path / "tree"
+        tree.mkdir()
+        tar = subprocess.run(
+            ["tar", "-cf", "-",
+             "--exclude=.git", "--exclude=unsloth-tmp", "--exclude=.local",
+             "--exclude=dist", "--exclude=__pycache__", "--exclude=*.pyc",
+             "."],
+            cwd=str(repo), capture_output=True, timeout=300,
+        )
+        assert tar.returncode == 0, tar.stderr.decode(errors="replace")
+        subprocess.run(["tar", "-xf", "-", "-C", str(tree)],
+                       input=tar.stdout, check=True, capture_output=True,
+                       timeout=300)
+        # The copy may already carry the repo's own live .company/ —
+        # exist_ok keeps the fixture idempotent either way.
+        (tree / ".company" / "tickets").mkdir(parents=True, exist_ok=True)
+        (tree / ".company" / "tickets" / "state.json").write_text("{}\n")
+        (tree / ".company" / "roster.json").write_text("{}\n")
+        (tree / ".worktrees" / "junk-ticket").mkdir(parents=True, exist_ok=True)
+        (tree / ".worktrees" / "junk-ticket" / "file.txt").write_text("x")
+        (tree / "dist" / "old").mkdir(parents=True, exist_ok=True)
+        (tree / "dist" / "old" / "hive-0.0.1.tar.gz").write_bytes(b"old")
+        (tree / "junk.txt").write_text("junk\n")
+        (tree / "notes.tmp").write_text("scratch\n")
+        return tree
+
+    def _build(self, tree: Path, out_dir: Path) -> Path:
+        out_dir.mkdir(parents=True, exist_ok=True)
+        result = subprocess.run(
+            ["bash", str(tree / "packaging" / "build-package.sh"),
+             "--out-dir", str(out_dir)],
+            capture_output=True, text=True, timeout=300,
+            cwd=str(tree),
+        )
+        assert result.returncode == 0, (
+            f"build-package.sh failed:\n{result.stdout}\n{result.stderr}"
+        )
+        tarballs = sorted(out_dir.glob("hive-*.tar.gz"))
+        assert len(tarballs) == 1, (
+            f"expected exactly one tarball in {out_dir}, got "
+            f"{[t.name for t in tarballs]}"
+        )
+        return tarballs[0]
+
+    @staticmethod
+    def _manifest_from_tarball(tarball: Path) -> tuple[list[str], list[str]]:
+        """Return (manifest entries, tar FILE entries) read FROM the
+        tarball — the same surface gate 4 sees. Directory members are
+        filtered out (tarfile names carry no trailing slash, unlike
+        `tar -tzf`)."""
+        import tarfile
+        with tarfile.open(tarball) as tf:
+            members = tf.getmembers()
+            files = [m.name for m in members if m.isfile()]
+            member = next((m for m in members
+                           if m.name.endswith("/MANIFEST.txt")
+                           and m.isfile()), None)
+            entries = []
+            if member is not None:
+                data = tf.extractfile(member)
+                entries = data.read().decode().splitlines()
+        return entries, files
+
+    @staticmethod
+    def _state_offenders(entries: list[str]) -> list[str]:
+        offenders = []
+        for e in entries:
+            top = e.split("/", 1)[0]
+            if top in TestShippingManifest.STATE_TOP:
+                offenders.append(e)
+            elif any(f"/{s}" in e for s in
+                     (".company", ".worktrees", "/venv", "/dist",
+                      "__pycache__", ".git")):
+                offenders.append(e)
+        return offenders
+
+    def test_manifest_ships_and_is_state_free(self, dirty_tree, tmp_path):
+        tarball = self._build(dirty_tree, tmp_path / "dist")
+        entries, listing = self._manifest_from_tarball(tarball)
+        assert entries, (
+            "the tarball must carry MANIFEST.txt with the entry list "
+            f"(listing has {len(listing)} entries)"
+        )
+        # sorted, no duplicates — the manifest is the exact entry set
+        assert entries == sorted(entries), "manifest must be sorted"
+        assert len(entries) == len(set(entries)), \
+            "manifest must not duplicate entries"
+        missing = [e for e in self.REQUIRED if e not in entries]
+        assert not missing, (
+            f"manifest is missing required runtime entries: {missing}"
+        )
+        # the dashboard frontend ships as a directory of static files:
+        # at least one entry under lib/dashboard/static/
+        assert any(e.startswith("lib/dashboard/static/") for e in entries), \
+            "manifest carries no lib/dashboard/static/ entries"
+        offenders = self._state_offenders(entries)
+        assert not offenders, (
+            f"manifest carries runtime-state entries: {offenders}"
+        )
+
+    def test_manifest_matches_the_tar_listing(self, dirty_tree, tmp_path):
+        """The manifest is the EXACT entry list: every file in the
+        tarball (minus the top-level dir prefix) is in the manifest and
+        vice versa — drift in either direction is a shipping bug."""
+        tarball = self._build(dirty_tree, tmp_path / "dist")
+        entries, listing = self._manifest_from_tarball(tarball)
+        assert entries, "the tarball must carry MANIFEST.txt"
+        prefix = tarball.name[: -len(".tar.gz")] + "/"
+        files = [line[len(prefix):] for line in listing
+                 if line.startswith(prefix)]
+        assert sorted(files) == sorted(entries), (
+            "manifest does not match the tarball's file entries "
+            f"(tar has {len(files)}, manifest has {len(entries)})"
+        )
+
+    def test_gate4_fails_naming_missing_required_entry(self, dirty_tree,
+                                                       tmp_path):
+        """Removing one required entry from the staged tree makes the
+        build's manifest lack it and gate 4 (via the cut) fail naming
+        it — the demonstrated-once red→green proof, pinned permanently."""
+        victim = dirty_tree / "lib" / "hive_mcp" / "server.py"
+        victim.unlink()
+        env = {**os.environ, **TestCutReleaseScript._GIT_IDENTITY}
+        for args in (["git", "init", "-q", "-b", "main"],
+                     ["git", "add", "-A"],
+                     ["git", "commit", "-qm", "missing-entry"]):
+            subprocess.run(args, cwd=str(dirty_tree), env=env, check=True,
+                           timeout=120)
+        r = subprocess.run(
+            ["bash", str(dirty_tree / "packaging" / "cut-release.sh"),
+             "--dry-run", "--out-dir", str(tmp_path / "dist"),
+             "--suite", "python -m pytest tests/test_json_structures.py -q"],
+            capture_output=True, text=True, timeout=600, cwd=str(dirty_tree),
+        )
+        assert r.returncode != 0, (
+            "gate 4 must fail when a required entry is missing from the "
+            "manifest; the cut went green:\n" + r.stdout[-3000:]
+        )
+        out = r.stdout + r.stderr
+        assert "lib/hive_mcp/server.py" in out, (
+            "gate 4 must NAME the missing entry; got:\n" + out[-3000:]
+        )
+
+    def test_gate4_fails_naming_state_entry_in_manifest(self, dirty_tree,
+                                                         tmp_path):
+        """A runtime-state entry that makes it into the manifest fails
+        gate 4 naming it (the D.2 class of drift, now guarded)."""
+        env = {**os.environ, **TestCutReleaseScript._GIT_IDENTITY}
+        for args in (["git", "init", "-q", "-b", "main"],
+                     ["git", "add", "-A"],
+                     ["git", "commit", "-qm", "state-entry"]):
+            subprocess.run(args, cwd=str(dirty_tree), env=env, check=True,
+                           timeout=120)
+        # Simulate the drift the manifest guards against: the staging
+        # list and the prune list are two hand-maintained lists, and the
+        # class of bug is one drifting from the other — stage .company/
+        # AND let the prune list forget it.
+        build = dirty_tree / "packaging" / "build-package.sh"
+        text = build.read_text()
+        stage_needle = 'for d in bin lib etc share packaging VERSION; do'
+        prune_needle = ("find \"$STAGE/$PKG_NAME\" -type d -name "
+                        "'.company' -prune -exec rm -rf {} +")
+        assert stage_needle in text and prune_needle in text, \
+            "build-package.sh staging/prune shape moved — update this test"
+        text = text.replace(
+            stage_needle,
+            'for d in bin lib etc share packaging VERSION .company; do')
+        text = text.replace(prune_needle, ":  # pruned away by the drift")
+        build.write_text(text)
+        for args in (["git", "add", "packaging/build-package.sh"],
+                     ["git", "commit", "-qm", "stage-state"]):
+            subprocess.run(args, cwd=str(dirty_tree), env=env, check=True,
+                           timeout=60)
+        r = subprocess.run(
+            ["bash", str(dirty_tree / "packaging" / "cut-release.sh"),
+             "--dry-run", "--out-dir", str(tmp_path / "dist"),
+             "--suite", "python -m pytest tests/test_json_structures.py -q"],
+            capture_output=True, text=True, timeout=600, cwd=str(dirty_tree),
+        )
+        assert r.returncode != 0, (
+            "gate 4 must fail when the manifest carries a runtime-state "
+            "entry; the cut went green:\n" + r.stdout[-3000:]
+        )
+        out = r.stdout + r.stderr
+        assert ".company" in out, (
+            "gate 4 must NAME the offending state entry; got:\n" + out[-3000:]
+        )

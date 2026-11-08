@@ -110,6 +110,21 @@ chmod +x "$STAGE/$PKG_NAME/lib/core/"*.sh
 chmod +x "$STAGE/$PKG_NAME/lib/tools/"*.sh
 chmod +x "$STAGE/$PKG_NAME/packaging/"*.sh
 
+# The shipping manifest (S1, 0.12): the EXACT entry list of the staged
+# package, written into the package itself before tarring, so the
+# tarball carries its own bill of materials. The staging list above is
+# hand-maintained and D.2 proved the shipped surface can drift from the
+# public surface with no guard firing; gate 4 of packaging/cut-release.sh
+# now verifies THIS list from the tarball (required runtime entries
+# present, runtime-state entries absent). MANIFEST.txt lists itself —
+# the entry set is everything the tarball contains.
+(
+  cd "$STAGE/$PKG_NAME"
+  { find . -type f ! -path './MANIFEST.txt' | sed 's|^\./||'; \
+    echo 'MANIFEST.txt'; } | LC_ALL=C sort > MANIFEST.txt
+)
+echo "Manifest: $(wc -l < "$STAGE/$PKG_NAME/MANIFEST.txt") entries → $PKG_NAME/MANIFEST.txt"
+
 # Build deterministic tarball (sorted file list, owner/group zeroed, mtimes
 # pinned to a STABLE per-release anchor). Anchoring to the VERSION file's
 # mtime was broken: cutting a release edits VERSION, which changes the mtime,

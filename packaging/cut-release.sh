@@ -60,7 +60,9 @@ The release cut, as a command (E1). Gates, in order:
   1  git state (repo, clean tree, no existing tag, on a branch)
   2  test suite green (default: python -m pytest tests/ -q -x)
   3  build-package
-  4  tar listing check (E2's required entries)
+  4  shipping manifest (S1): MANIFEST.txt extracted from the tarball —
+     required runtime entries present, runtime-state entries absent,
+     each offending entry named
   5  credential-pattern scan of every tarball entry (scan report)
   6  sha256 sidecar verifies
   7  release notes extracted from the CHANGELOG section
@@ -201,22 +203,77 @@ TARBALL="$OUT_DIR/hive-$VERSION.tar.gz"
 CHECKSUM="$OUT_DIR/hive-$VERSION.sha256"
 [ -f "$TARBALL" ] || { echo "FAIL: tarball not produced" >&2; exit 1; }
 
-# ---- Gate 4: tar listing (E2's guard, as a step) -----------------------------
-echo "==> Gate 4: tar listing"
+# ---- Gate 4: shipping manifest (S1, 0.12) ------------------------------------
+# The tarball carries its own bill of materials (packaging/build-package.sh
+# writes MANIFEST.txt into the staged package). Gate 4 verifies the
+# manifest FROM THE TARBALL — the staging dir is not trusted:
+#   (a) required runtime paths present — the four original required
+#       entries plus the runtime core; a required path missing fails the
+#       gate naming it
+#   (b) runtime-state paths ABSENT — .company, .worktrees, venv, dist,
+#       __pycache__, .git; a state path present fails the gate naming
+#       each offending entry
+# D.2 proved the shipped surface can drift from the public surface with
+# no guard firing; this is the guard.
+echo "==> Gate 4: shipping manifest"
 LISTING="$(tar -tzf "$TARBALL")"
+if ! echo "$LISTING" | grep -q "MANIFEST\.txt$"; then
+  echo "FAIL: tarball does not carry MANIFEST.txt — build-package.sh must" >&2
+  echo "      write the shipping manifest into the staged package before tarring" >&2
+  exit 1
+fi
+MSTAGE="$(mktemp -d -t hive-cut-manifest-XXXXXX)"
+tar -xzf "$TARBALL" -C "$MSTAGE" "hive-$VERSION/MANIFEST.txt" || {
+  echo "FAIL: cannot extract MANIFEST.txt from the tarball" >&2
+  rm -rf "$MSTAGE"; exit 1
+}
+MANIFEST="$MSTAGE/hive-$VERSION/MANIFEST.txt"
+
 MISSING=""
-for ENTRY in bin/hive etc/config.template.toml etc/config.defaults.toml \
+for ENTRY in bin/hive lib/core/agent-spawn.sh lib/core/agent-harness.py \
+             lib/hive_mcp/server.py lib/dashboard/server.js \
+             etc/config.defaults.toml etc/config.template.toml \
              packaging/requirements.txt; do
-  # the tar prefixes every entry with the pkg dir, so match the tail
-  if ! echo "$LISTING" | grep -q "/$ENTRY$"; then
+  # the manifest lists entries relative to the package root
+  if ! grep -qxF "$ENTRY" "$MANIFEST"; then
     MISSING="$MISSING $ENTRY"
   fi
 done
-if [ -n "$MISSING" ]; then
-  echo "FAIL: tarball is missing install-runtime entries:$MISSING" >&2
-  exit 1
+# the dashboard frontend ships as a directory of static files: require
+# at least one entry under lib/dashboard/static/
+if ! grep -q '^lib/dashboard/static/' "$MANIFEST"; then
+  MISSING="$MISSING lib/dashboard/static/"
 fi
-echo "    listing complete"
+if [ -n "$MISSING" ]; then
+  echo "FAIL: manifest is missing required runtime entries:$MISSING" >&2
+  rm -rf "$MSTAGE"; exit 1
+fi
+
+STATE=""
+# Runtime-state entries: the six state paths at the package root or
+# nested anywhere (a staging entry is a path relative to the package
+# root; the prune list in build-package.sh is a second hand-maintained
+# list, and the manifest is what pins the two together).
+is_state_entry() {
+  case "$1" in
+    .company|.company/*|.worktrees|.worktrees/*) return 0 ;;
+    venv|venv/*|dist|dist/*|__pycache__|__pycache__/*) return 0 ;;
+    .git|.git/*) return 0 ;;
+    */.company|*/.company/*|*/.worktrees|*/.worktrees/*) return 0 ;;
+    */venv|*/venv/*|*/dist|*/dist/*|*/__pycache__|*/__pycache__/*) return 0 ;;
+    */.git|*/.git/*) return 0 ;;
+  esac
+  return 1
+}
+while IFS= read -r E; do
+  if is_state_entry "$E"; then STATE="$STATE $E"; fi
+done < "$MANIFEST"
+if [ -n "$STATE" ]; then
+  echo "FAIL: manifest carries runtime-state entries:$STATE" >&2
+  rm -rf "$MSTAGE"; exit 1
+fi
+rm -rf "$MSTAGE"
+echo "    manifest verified: required set present, state-free"
 
 # ---- Gate 5: credential-pattern scan of every tarball entry ------------------
 echo "==> Gate 5: credential scan"
