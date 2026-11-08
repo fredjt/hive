@@ -66,7 +66,9 @@ The release cut, as a command (E1). Gates, in order:
   5  credential-pattern scan of every tarball entry (scan report)
   6  sha256 sidecar verifies
   7  release notes extracted from the CHANGELOG section
-  then: git tag, push branch, push tag, gh release create (assets + notes)
+  then: git tag, push branch, push tag, gh release create (tarball +
+  sha256 sidecar + notes), then the S3 cut receipt is written and
+  uploaded as the third asset (--clobber-safe on re-run)
 
 --dry-run runs gates 0-7 and stops before the tag; the tarball, sha256,
 scan report, and notes all land in --out-dir.
@@ -81,6 +83,13 @@ EOF
  done
 
 echo "==> Hive release cut"
+
+# Gate results (S3): recorded as each gate passes; written into the cut
+# receipt after the publish step. Defined before gate 0 — the first
+# record_gate call is in the surface check, above the cd.
+GATE_RESULTS=""
+record_gate() { GATE_RESULTS="$GATE_RESULTS
+$1"; }
 
 # ---- Gate 0: version sanity — every version-bearing surface -------------
 # The cut commit must move ALL version-bearing surfaces together:
@@ -154,6 +163,7 @@ if [ -n "$STALE" ]; then
   exit 1
 fi
 echo "    all version-bearing surfaces agree on v$VERSION"
+record_gate "gate-0: PASS (all version-bearing surfaces agree on v$VERSION)"
 
 if [ "$CHECK_SURFACE" = 1 ]; then
   echo ""
@@ -163,6 +173,8 @@ if [ "$CHECK_SURFACE" = 1 ]; then
 fi
 
 cd "$SOURCE_DIR"
+[ -n "$OUT_DIR" ] || OUT_DIR="$SOURCE_DIR/dist"
+mkdir -p "$OUT_DIR"
 
 # ---- Gate 1: git state -------------------------------------------------------
 git rev-parse --git-dir >/dev/null 2>&1 || {
@@ -182,19 +194,26 @@ if git tag -l "v$VERSION" | grep -q .; then
 fi
 BRANCH="$(git branch --show-current)"
 [ -n "$BRANCH" ] || { echo "FAIL: detached HEAD" >&2; exit 1; }
+record_gate "gate-1: PASS (clean tree, no existing tag, on branch $BRANCH)"
 
 # ---- Gate 2: the suite must be green -----------------------------------------
 echo "==> Gate 2: test suite"
+SUITE_LOG="$OUT_DIR/hive-$VERSION.suite-log"
 # shellcheck disable=SC2086  # SUITE is a command line, splitting is the point
-if ! $SUITE; then
-  echo "FAIL: test suite is not green — the release is refused" >&2
+if ! $SUITE > "$SUITE_LOG" 2>&1; then
+  tail -25 "$SUITE_LOG" >&2
+  echo "FAIL: test suite is not green — the release is refused (log: $SUITE_LOG)" >&2
   echo "Resume: re-run after fixing: bash packaging/cut-release.sh --version $VERSION" >&2
   exit 1
 fi
-echo "    suite green"
+# The receipt (S3) carries the suite summary line (pytest's final count,
+# e.g. "1285 passed, 7 skipped in 746.92s").
+SUITE_SUMMARY="$(grep -E '^[0-9]+ (passed|failed)' "$SUITE_LOG" | tail -1)"
+[ -n "$SUITE_SUMMARY" ] || SUITE_SUMMARY="$(tail -1 "$SUITE_LOG")"
+echo "    suite green ($SUITE_SUMMARY)"
+record_gate "gate-2: PASS (suite: $SUITE_SUMMARY)"
 
 # ---- Gate 3: build -----------------------------------------------------------
-[ -n "$OUT_DIR" ] || OUT_DIR="$SOURCE_DIR/dist"
 echo "==> Gate 3: build-package"
 bash "$SOURCE_DIR/packaging/build-package.sh" \
   --version "$VERSION" --out-dir "$OUT_DIR"
@@ -202,6 +221,7 @@ bash "$SOURCE_DIR/packaging/build-package.sh" \
 TARBALL="$OUT_DIR/hive-$VERSION.tar.gz"
 CHECKSUM="$OUT_DIR/hive-$VERSION.sha256"
 [ -f "$TARBALL" ] || { echo "FAIL: tarball not produced" >&2; exit 1; }
+record_gate "gate-3: PASS (build-package produced $TARBALL)"
 
 # ---- Gate 4: shipping manifest (S1, 0.12) ------------------------------------
 # The tarball carries its own bill of materials (packaging/build-package.sh
@@ -274,6 +294,7 @@ if [ -n "$STATE" ]; then
 fi
 rm -rf "$MSTAGE"
 echo "    manifest verified: required set present, state-free"
+record_gate "gate-4: PASS (shipping manifest verified from the tarball)"
 
 # ---- Gate 5: credential-pattern scan of every tarball entry ------------------
 echo "==> Gate 5: credential scan"
@@ -307,6 +328,7 @@ if [ -n "$HITS" ]; then
   exit 1
 fi
 echo "    scan clean — report: $SCAN_REPORT"
+record_gate "gate-5: PASS (credential scan clean)"
 
 # ---- Gate 6: sha256 sidecar ---------------------------------------------------
 echo "==> Gate 6: sha256"
@@ -315,6 +337,7 @@ echo "==> Gate 6: sha256"
   echo "FAIL: sha256 sidecar does not verify" >&2
   exit 1
 }
+record_gate "gate-6: PASS (sha256 sidecar verifies)"
 
 # ---- Gate 7: release notes from the CHANGELOG section -------------------------
 echo "==> Gate 7: release notes"
@@ -336,6 +359,7 @@ fi
 FIRST_LINE="$(grep -v '^#' "$NOTES" | grep -v '^\s*$' | sed -n 1p)"
 TITLE="Hive $VERSION"
 [ -n "$FIRST_LINE" ] && TITLE="Hive $VERSION — $(echo "$FIRST_LINE" | sed 's/\s\{2,\}/ /g')"
+record_gate "gate-7: PASS (release notes extracted: $TITLE)"
 
 if [ "$DRY_RUN" = 1 ]; then
   echo ""
@@ -346,6 +370,8 @@ if [ "$DRY_RUN" = 1 ]; then
   echo "      git push origin v$VERSION"
   echo "      gh release create v$VERSION --title \"$TITLE\" \\"
   echo "          --notes-file $NOTES \"$TARBALL\" \"$CHECKSUM\""
+  echo "      write $OUT_DIR/hive-$VERSION.receipt.txt (the S3 cut"
+  echo "      receipt), then: gh release upload v$VERSION --clobber <receipt>"
   echo "    artifacts in $OUT_DIR:"
   echo "      $(basename "$TARBALL")"
   echo "      $(basename "$CHECKSUM")"
@@ -383,6 +409,40 @@ else
     "$TARBALL" "$CHECKSUM" || {
     echo "FAIL: gh release create failed" >&2; echo "$PUBLISH_RESUME" >&2; exit 1; }
 fi
+
+echo "==> Writing the cut receipt (S3)"
+COMMIT="$(git rev-parse HEAD)"
+RELEASE_URL="$(gh release view "v$VERSION" --json url --jq .url 2>/dev/null || true)"
+if [ -z "$RELEASE_URL" ]; then
+  ORIGIN_URL="$(git remote get-url origin 2>/dev/null || true)"
+  case "$ORIGIN_URL" in
+    https://github.com/*) RELEASE_URL="${ORIGIN_URL%.git}/releases/tag/v$VERSION" ;;
+    *) RELEASE_URL="(unavailable — run: gh release view v$VERSION)" ;;
+  esac
+fi
+RECEIPT="$OUT_DIR/hive-$VERSION.receipt.txt"
+MANIFEST_SHA="$(tar -xzf "$TARBALL" -O "hive-$VERSION/MANIFEST.txt" | sha256sum | awk '{print $1}')"
+TAR_SHA="$(awk '{print $1}' "$CHECKSUM")"
+SIDE_SHA="$(sha256sum "$CHECKSUM" | awk '{print $1}')"
+{
+  echo "receipt: hive-$VERSION"
+  echo "version: $VERSION"
+  echo "branch: $BRANCH"
+  echo "commit: $COMMIT"
+  echo "tag: v$VERSION"
+  printf '%s\n' "$GATE_RESULTS" | sed '/^$/d'
+  echo "asset: hive-$VERSION.tar.gz sha256=$TAR_SHA"
+  echo "asset: hive-$VERSION.sha256 sha256=$SIDE_SHA"
+  echo "manifest: MANIFEST.txt sha256=$MANIFEST_SHA"
+  echo "release: $RELEASE_URL"
+  echo "timestamp: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+} > "$RECEIPT"
+gh release upload "v$VERSION" --clobber "$RECEIPT" || {
+  echo "FAIL: gh release upload (receipt) failed" >&2
+  echo "Resume: upload it (gh release upload v$VERSION --clobber $RECEIPT) or remove the tag (git tag -d v$VERSION && git push origin :refs/tags/v$VERSION), then re-run: bash packaging/cut-release.sh --version $VERSION" >&2
+  exit 1
+}
+echo "    receipt written + uploaded: $RECEIPT"
 
 echo ""
 echo "==> Done: v$VERSION tagged, pushed, and published."

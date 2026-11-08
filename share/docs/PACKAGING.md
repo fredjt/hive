@@ -55,7 +55,11 @@ refuses any tree where the version-bearing surfaces disagree:
    present, runtime-state entries absent, each offender named), 5
    credential scan, 6 sha256 sidecar, 7 release notes — then
    `git tag v<version>`, push, and `gh release create` with the
-   tarball + sha256 sidecar.
+   tarball + sha256 sidecar, then the S3 cut receipt
+   (`hive-X.Y.Z.receipt.txt` — version, branch + commit, tag, gate
+   0-7 results, asset + manifest sha256, release URL, timestamp)
+   is written and uploaded as the third asset, `--clobber`-safe on
+   re-run (the gate-2 line carries the suite's final summary line).
 
 Hand-taged cuts (tagging and publishing by hand, outside the script)
 are **not a path**. The 0.10.0 cut was done that way and left both

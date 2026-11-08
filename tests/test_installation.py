@@ -1496,3 +1496,181 @@ class TestInstallOnlineUrlResolution:
         r = self._run(tmp_path, {"FAKE_CURL_FAIL": "1"})
         assert r.returncode != 0, "a failed VERSION fetch must fail"
         assert "ERROR" in r.stderr
+
+
+class TestCutReceipt:
+    """S3 (0.12) — every release carries a machine-verifiable cut
+    receipt.
+
+    After the publish step, cut-release.sh writes
+    hive-X.Y.Z.receipt.txt (version, branch + commit, tag, gate 0-7
+    results, asset names + sha256, manifest digest, release URL,
+    timestamp) and uploads it as the THIRD release asset, clobber-safe
+    on re-run. Exercised hermetically: a fake gh on PATH captures the
+    publish calls, and a local bare repo stands in for the GitHub
+    remote so the tag/push steps run for real, locally.
+    """
+
+    GIT_IDENTITY = {
+        "GIT_AUTHOR_NAME": "receipt-test",
+        "GIT_AUTHOR_EMAIL": "receipt-test@example.com",
+        "GIT_COMMITTER_NAME": "receipt-test",
+        "GIT_COMMITTER_EMAIL": "receipt-test@example.com",
+    }
+
+    FAKE_GH = """#!/bin/sh
+{ echo "gh $*"; } >> "${FAKE_GH_LOG:-/dev/null}"
+for a in "$@"; do
+  if [ "$a" = "--json" ]; then
+    printf '%s\\n' "${FAKE_GH_URL:-https://github.com/fake/repo/releases/tag/v0.0.0}"
+    exit 0
+  fi
+done
+if [ "$1" = "release" ] && [ "$2" = "view" ]; then
+  [ -n "${FAKE_GH_RELEASE_EXISTS:-}" ] && exit 0
+  exit 1
+fi
+exit 0
+"""
+
+    @pytest.fixture()
+    def receipt_env(self, tmp_path):
+        """Scratch git tree + a bare origin + a fake gh on PATH."""
+        repo = _repo_root()
+        tree = tmp_path / "tree"
+        tree.mkdir()
+        tar = subprocess.run(
+            ["tar", "-cf", "-",
+             "--exclude=.git", "--exclude=unsloth-tmp", "--exclude=.local",
+             "--exclude=dist", "--exclude=__pycache__", "--exclude=*.pyc",
+             "."],
+            cwd=str(repo), capture_output=True, timeout=300)
+        assert tar.returncode == 0, tar.stderr.decode(errors="replace")
+        subprocess.run(["tar", "-xf", "-", "-C", str(tree)],
+                       input=tar.stdout, check=True, capture_output=True,
+                       timeout=300)
+        env = {**os.environ, **self.GIT_IDENTITY}
+        for args in (["git", "init", "-q", "-b", "main"],
+                     ["git", "add", "-A"],
+                     ["git", "commit", "-qm", "receipt-base"]):
+            subprocess.run(args, cwd=str(tree), env=env, check=True,
+                           timeout=120)
+        bare = tmp_path / "origin.git"
+        subprocess.run(["git", "init", "-q", "--bare", str(bare)],
+                       check=True, timeout=60)
+        subprocess.run(["git", "remote", "add", "origin", str(bare)],
+                       cwd=str(tree), check=True, timeout=30)
+        fakebin = tmp_path / "fakegh"
+        fakebin.mkdir()
+        gh = fakebin / "gh"
+        gh.write_text(self.FAKE_GH)
+        gh.chmod(0o755)
+        log = tmp_path / "gh.log"
+        return {
+            "tree": tree,
+            "env": {**os.environ, **self.GIT_IDENTITY,
+                    "PATH": f"{fakebin}:{os.environ['PATH']}",
+                    "FAKE_GH_LOG": str(log)},
+            "gh_log": log,
+        }
+
+    def _cut(self, tree, gh_env, out_dir):
+        return subprocess.run(
+            ["bash", str(tree / "packaging" / "cut-release.sh"),
+             "--out-dir", str(out_dir),
+             "--suite", "python -m pytest tests/test_json_structures.py -q"],
+            capture_output=True, text=True, timeout=600,
+            cwd=str(tree), env=gh_env,
+        )
+
+    def test_receipt_written_uploaded_and_verifies(self, receipt_env, tmp_path):
+        import hashlib
+        import tarfile
+        version = (receipt_env["tree"] / "VERSION").read_text().strip()
+        r = self._cut(receipt_env["tree"], receipt_env["env"],
+                      tmp_path / "dist")
+        assert r.returncode == 0, r.stdout + "\n" + r.stderr
+        receipt = tmp_path / "dist" / f"hive-{version}.receipt.txt"
+        assert receipt.is_file(), \
+            "the cut must write hive-X.Y.Z.receipt.txt after the publish"
+        lines = receipt.read_text().strip().splitlines()
+        for line in lines:
+            assert line[:1].isalpha() and ": " in line, \
+                f"the receipt must parse as 'key: value' lines: {line!r}"
+        kv = [l.split(": ", 1) for l in lines]
+        by_key = {k: v for k, v in kv if k != "asset"}
+        assets = [v for k, v in kv if k == "asset"]
+        # commit field equals the tag's target
+        target = subprocess.run(["git", "rev-parse", f"v{version}"],
+                                cwd=str(receipt_env["tree"]),
+                                capture_output=True, text=True, timeout=30)
+        assert target.returncode == 0, "the cut must tag v%s" % version
+        assert by_key.get("commit") == target.stdout.strip(), \
+            "the receipt's commit field must equal the tag's target"
+        assert by_key.get("tag") == f"v{version}"
+        assert by_key.get("version") == version
+        assert by_key.get("release", "").startswith("https://"), \
+            "the receipt must carry the release URL"
+        # gate 2's line carries the suite summary
+        g2 = by_key.get("gate-2", "")
+        assert g2.startswith("PASS") and "passed" in g2, \
+            f"gate-2 must be PASS with the suite summary line: {g2!r}"
+        # every gate 0-7 is recorded
+        for i in range(8):
+            assert f"gate-{i}" in by_key, f"receipt misses gate-{i}"
+        # the tarball's sha256 matches the sidecar
+        sidecar = (tmp_path / "dist" / f"hive-{version}.sha256") \
+            .read_text().strip().split()
+        tar_asset = next((a for a in assets
+                          if a.startswith(f"hive-{version}.tar.gz")), None)
+        assert tar_asset, f"no tarball asset line in the receipt: {assets}"
+        assert tar_asset.split("sha256=", 1)[1] == sidecar[0], \
+            "the receipt's tarball sha256 must match the sidecar"
+        # the manifest digest matches the manifest inside the tarball
+        tball = tmp_path / "dist" / f"hive-{version}.tar.gz"
+        with tarfile.open(tball) as tf:
+            m = next(mm for mm in tf.getmembers()
+                     if mm.name.endswith("/MANIFEST.txt"))
+            msha = hashlib.sha256(tf.extractfile(m).read()).hexdigest()
+        assert by_key.get("manifest", "").split("sha256=", 1)[1] == msha, \
+            "the receipt's manifest digest must match the tarball's manifest"
+        # the fake gh saw: create (two assets) + a clobber upload of the
+        # receipt (the third asset)
+        calls = receipt_env["gh_log"].read_text()
+        assert "release create" in calls
+        assert "release upload" in calls and "--clobber" in calls
+        assert f"hive-{version}.receipt.txt" in calls, \
+            "the receipt must be uploaded as a release asset"
+
+    def test_rerun_clobbers_the_receipt(self, receipt_env, tmp_path):
+        version = (receipt_env["tree"] / "VERSION").read_text().strip()
+        r1 = self._cut(receipt_env["tree"], receipt_env["env"],
+                       tmp_path / "dist1")
+        assert r1.returncode == 0, r1.stdout + "\n" + r1.stderr
+        assert (tmp_path / "dist1" / f"hive-{version}.receipt.txt").is_file()
+        # Re-publish: the release already exists (the fake gh reports it),
+        # and the local tag is gone (gate 1 requires it absent; the
+        # remote copy stays — exactly the real re-publish state).
+        subprocess.run(["git", "tag", "-d", f"v{version}"],
+                       cwd=str(receipt_env["tree"]), check=True, timeout=30)
+        env2 = {**receipt_env["env"], "FAKE_GH_RELEASE_EXISTS": "1"}
+        r2 = self._cut(receipt_env["tree"], env2, tmp_path / "dist2")
+        assert r2.returncode == 0, (
+            "the re-run publish must succeed idempotently:\n"
+            + r2.stdout[-2000:] + r2.stderr[-1000:]
+        )
+        receipt2 = tmp_path / "dist2" / f"hive-{version}.receipt.txt"
+        assert receipt2.is_file(), \
+            "the re-run must write a fresh receipt"
+        calls = receipt_env["gh_log"].read_text()
+        assert "release edit" in calls, \
+            "the re-run must take the existing-release branch (edit)"
+        receipt_uploads = [
+            l for l in calls.splitlines()
+            if "release upload" in l
+            and f"hive-{version}.receipt.txt" in l]
+        assert len(receipt_uploads) == 2, (
+            "the receipt must be re-uploaded with --clobber on re-run; "
+            f"uploads: {receipt_uploads}"
+        )
+        assert "--clobber" in receipt_uploads[-1]
