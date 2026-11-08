@@ -6,10 +6,14 @@ import os
 import re
 import subprocess
 import sys
-try:
-    import tomllib  # Python 3.11+
-except ImportError:
-    import tomli as tomllib  # Python 3.10 backport
+# T1 (0.13) throwaway red demo — DO NOT MERGE: breaks the TOML parser
+# import (the version-sensitive tomli-fallback class) to prove on CI
+# that EVERY matrix row catches it via TestConfigSetUpsert (full on
+# 3.12, subset on 3.10 + 3.13) without running the full suite on the
+# subset rows.
+raise ImportError(
+    "T1 red demo: the tomli fallback is broken (throwaway PR — do not "
+    "merge)")
 from pathlib import Path
 
 
