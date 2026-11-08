@@ -2,7 +2,14 @@
 # Runs on every push to main and on every pull request.
 #
 # Jobs:
-#   1. **Python tests** — full pytest suite with verbose output
+#   1. **Python tests** — matrix split by risk (S4, 0.12): ONE version
+#      (3.12) carries the full suite; every supported version (3.10,
+#      3.13) carries its version-sensitive paths — the config-load /
+#      tomli-fallback tests + an import smoke + a quick CLI smoke.
+#      RULE: the version-sensitive surface is PINNED by
+#      tests/test_integration.py::TestTomliSurfaceGuard — a new
+#      `import tomli` / `tomllib` outside the pinned files fails the
+#      guard until the subset below is updated with it.
 #   2. **Bash syntax check** — `bash -n` on every .sh file in lib/tools/ and lib/core/
 #   3. **Python linting** — ruff check (warn-only for existing style issues)
 #   4. **Node.js dashboard** — basic syntax validation of server.js
@@ -23,12 +30,18 @@ jobs:
   # 1. Python test suite
   # ──────────────────────────────────────────────
   tests:
-    name: Tests (Python ${{ matrix.python }})
+    name: Tests (Python ${{ matrix.python }} — ${{ matrix.suite }})
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        python: ['3.10', '3.12']
+        include:
+          - python: '3.12'
+            suite: full
+          - python: '3.10'
+            suite: version-sensitive
+          - python: '3.13'
+            suite: version-sensitive
     steps:
       - uses: actions/checkout@v4
 
@@ -53,7 +66,30 @@ jobs:
 
       - name: Run test suite
         run: |
-          PYTHONPATH=lib pytest tests/ -n auto -v --tb=short
+          if [ "${{ matrix.suite }}" = "full" ]; then
+            # 3.12 carries the full suite (S4)
+            PYTHONPATH=lib pytest tests/ -n auto -v --tb=short
+          else
+            # Version-sensitive subset (S4): config-load through the
+            # pinned tomli/tomllib parser chain (test_json_structures),
+            # [llm] section loads (test_llm_providers), CLI smoke
+            # (test_cli), plus an import smoke over the runtime surface.
+            PYTHONPATH=lib python -c \
+              "import hive_cli.main, hive_mcp.server, hive_config, core.llm_providers"
+            # The four pinned parser chains are exercised here: hive_config
+            # + llm_providers (test_llm_providers loads [llm] through the
+            # canonical chain), commands/config.py (TestConfigSetUpsert),
+            # commands/doctor.py (TestConfigIntegrity's doctor checks);
+            # test_json_structures parses the config TOML (its own
+            # tomllib/tomli fallback) and test_cli is the CLI smoke.
+            PYTHONPATH=lib pytest \
+              tests/test_json_structures.py \
+              tests/test_llm_providers.py \
+              tests/test_cli.py \
+              tests/test_commands.py::TestConfigSetUpsert \
+              tests/test_commands.py::TestConfigIntegrity \
+              -v --tb=short
+          fi
 
   # ──────────────────────────────────────────────
   # 2. Bash syntax validation
