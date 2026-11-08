@@ -129,10 +129,16 @@ chmod +x "$STAGE/$PKG_NAME/packaging/"*.sh
 # now verifies THIS list from the tarball (required runtime entries
 # present, runtime-state entries absent). MANIFEST.txt lists itself —
 # the entry set is everything the tarball contains.
+# Published atomically (T1, 0.13): tmp name + rename, so the final
+# name appears complete or not at all — the 2026-11-08 CI flake (run
+# 42520823326) observed the manifest present at write time and absent
+# at tar time with no tar warning; no in-place window is left for it.
 (
   cd "$STAGE/$PKG_NAME"
-  { find . -type f ! -path './MANIFEST.txt' | sed 's|^\./||'; \
-    echo 'MANIFEST.txt'; } | LC_ALL=C sort > MANIFEST.txt
+  { find . -type f ! -path './MANIFEST.txt' ! -path './MANIFEST.txt.tmp' \
+      | sed 's|^\./||'; \
+    echo 'MANIFEST.txt'; } | LC_ALL=C sort > MANIFEST.txt.tmp
+  mv MANIFEST.txt.tmp MANIFEST.txt
 )
 echo "Manifest: $(wc -l < "$STAGE/$PKG_NAME/MANIFEST.txt") entries → $PKG_NAME/MANIFEST.txt"
 
@@ -169,6 +175,48 @@ tar --create --gzip \
   --mtime="@$MTIME_ANCHOR" \
   -f "$TARBALL" \
   -C "$STAGE" "$PKG_NAME"
+
+# Self-verify the S1 invariant FROM THE TARBALL (T1, 0.13). The 2026-11-08
+# CI flake (run 42520823326, 3.12 full row): the staged MANIFEST.txt was
+# read back (215 entries) and then the tarball carried it not — the
+# failure surfaced only at gate 4 on the cut path, with no forensics and
+# no producer-side check to name it. The producer now verifies its own
+# output; a miss fails the build and dumps the staging-vs-tarball diff
+# so the next occurrence is explained, not guessed. Gate 4 still re-
+# verifies on the cut path (the defense in depth, not the first line).
+# Capture the listing BEFORE checking it: `tar | grep -q` dies by
+# SIGPIPE under set -o pipefail the moment grep exits on the match
+# (tar gets 141 on its next write, the pipeline fails, a healthy
+# tarball is reported missing its manifest) — the same class gate 7's
+# sed-not-head note pins for the release notes. Gate 4 above uses this
+# exact capture-then-check shape for the same reason.
+TARBALL_LISTING="$(tar -tzf "$TARBALL" 2>/dev/null)" || {
+  echo "FAIL: cannot list the tarball (tar exited non-zero) — the" >&2
+  echo "      archive is corrupt or incomplete; not shipping it." >&2
+  exit 1
+}
+case "$TARBALL_LISTING" in
+  *"/MANIFEST.txt"*) : ;;
+  *)
+    {
+      echo "FAIL: the tarball does not carry MANIFEST.txt — the staged"
+      echo "      package carried it a moment ago; the tar dropped it."
+      echo "      Forensics (the diff below names what the tar missed):"
+      echo "      --- staged files (find) ---"
+      ( cd "$STAGE/$PKG_NAME" 2>/dev/null && \
+        find . -type f | sed 's|^\./||' | LC_ALL=C sort ) || \
+        echo "      (staged package gone: $STAGE/$PKG_NAME)"
+      echo "      --- staged MANIFEST.txt ---"
+      cat "$STAGE/$PKG_NAME/MANIFEST.txt" 2>/dev/null || \
+        echo "      (staged MANIFEST.txt gone)"
+      echo "      --- tarball listing ---"
+      printf '%s\n' "$TARBALL_LISTING" | LC_ALL=C sort
+      echo "      --- sibling stages (mktemp peers) ---"
+      ls -d /tmp/hive-build-* 2>/dev/null || echo "      (none)"
+    } >&2
+    exit 1
+    ;;
+esac
 
 # Checksum
 ( cd "$OUT_DIR" && sha256sum "${PKG_NAME}.tar.gz" > "${PKG_NAME}.sha256" )

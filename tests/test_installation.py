@@ -1227,6 +1227,94 @@ class TestShippingManifest:
         )
 
 
+class TestBuildManifestSelfVerify:
+    """T1 (0.13) — build-package.sh self-verifies the S1 invariant.
+
+    The 2026-11-08 CI flake (run 42520823326, 3.12 full row): gate 4
+    failed with "tarball does not carry MANIFEST.txt" although
+    build-package.sh had just read 215 entries back from the staged
+    MANIFEST.txt — no tar warning, and nothing in the script touches
+    the stage between the manifest write and the tar. The invariant
+    (the tarball carries its own bill of materials) was verified only
+    by gate 4 on the cut path; the producer declared success without
+    looking at its own output, so the failure surfaced one gate later,
+    on one path, with no forensics. build-package.sh now (a) publishes
+    MANIFEST.txt atomically (tmp + mv — the final name appears complete
+    or not at all) and (b) verifies the MANIFEST.txt member FROM THE
+    TARBALL after tarring; a miss fails the build naming the entry and
+    dumps the staging-vs-tarball diff so the next occurrence is
+    explained, not guessed.
+    """
+
+    def _build(self, tree: Path, out_dir: Path) -> subprocess.CompletedProcess:
+        out_dir.mkdir(parents=True, exist_ok=True)
+        return subprocess.run(
+            ["bash", str(tree / "packaging" / "build-package.sh"),
+             "--out-dir", str(out_dir)],
+            capture_output=True, text=True, timeout=300,
+            cwd=str(tree),
+        )
+
+    def test_manifest_raced_away_fails_loudly_named(self, dirty_tree,
+                                                    tmp_path):
+        """Deterministic replay of the flake: MANIFEST.txt is deleted
+        from the stage right before the tar (present at write time,
+        gone at tar time). The build must fail non-zero and name the
+        missing entry — before the fix it "succeeded", shipping a
+        broken tarball that only the cut's gate 4 would have caught."""
+        import re as _re
+        script = dirty_tree / "packaging" / "build-package.sh"
+        text = script.read_text()
+        m = _re.search(r'^echo "Creating tarball\.\.\.', text, _re.M)
+        assert m, ("build-package.sh layout moved (no 'Creating tarball' "
+                   "line) — update the race injection")
+        raced = text[:m.start()] + \
+            'rm -f "$STAGE/$PKG_NAME/MANIFEST.txt"\n' + text[m.start():]
+        script.write_text(raced)
+        r = self._build(dirty_tree, tmp_path / "dist")
+        assert r.returncode != 0, (
+            "a tarball missing MANIFEST.txt must not be declared a build"
+            f" success:\n{r.stdout}\n{r.stderr}"
+        )
+        out = r.stdout + r.stderr
+        assert "FAIL" in out and "MANIFEST.txt" in out, (
+            "the self-verify failure must name the missing entry:\n"
+            + out[-3000:]
+        )
+
+    def test_manifest_published_atomically(self, dirty_tree):
+        """The staged MANIFEST.txt is written to a tmp name and renamed
+        into place — no window in which the final name exists while its
+        content is still settling (the flake's missing mechanism, closed
+        by construction)."""
+        import re as _re
+        text = (dirty_tree / "packaging" / "build-package.sh").read_text()
+        assert _re.search(
+            r"mv\s+MANIFEST\.txt\.tmp\s+MANIFEST\.txt\b", text), (
+            "build-package.sh must publish MANIFEST.txt atomically "
+            "(tmp + mv): the 2026-11-08 CI flake observed the manifest "
+            "present at write time and absent at tar time"
+        )
+
+    def test_healthy_build_still_carries_the_manifest(self, dirty_tree,
+                                                      tmp_path):
+        """The self-verify is a gate, not a change: an uncontested
+        build still succeeds and the tarball still carries the exact
+        manifest (the S1 invariant the verify protects)."""
+        r = self._build(dirty_tree, tmp_path / "dist")
+        assert r.returncode == 0, (
+            f"build-package.sh failed:\n{r.stdout}\n{r.stderr}"
+        )
+        import tarfile
+        tballs = sorted((tmp_path / "dist").glob("hive-*.tar.gz"))
+        assert len(tballs) == 1, f"expected one tarball: {tballs}"
+        with tarfile.open(tballs[0]) as tf:
+            names = [mm.name for mm in tf.getmembers()]
+        assert any(n.endswith("/MANIFEST.txt") for n in names), (
+            "the healthy build's tarball must carry MANIFEST.txt"
+        )
+
+
 class TestInstallCopyToEntrySet:
     """S2 (0.12) — install the entry set, not the tree.
 
