@@ -10,6 +10,16 @@
 #      tests/test_integration.py::TestTomliSurfaceGuard — a new
 #      `import tomli` / `tomllib` outside the pinned files fails the
 #      guard until the subset below is updated with it.
+#
+# Per-push wall time (T1, 0.13 — the figure lives in the repo, not in
+# prose). First matrix push, run 42520823326 (432c2b8): pipeline 3m5s;
+# suite steps — 3.12 full 165.5s (1,311 tests), 3.10 subset 44.6s
+# (147), 3.13 subset 42.3s (147); total suite time 252.4s. Old 2x full
+# matrix, run 42421662322 (pre-matrix): pipeline ~4m; suite steps —
+# 3.12 full 205.3s, 3.10 full 210.7s (1,292 tests each); total 415.9s.
+# So per-push: the full row is 165.5s vs the slower old row's 210.7s
+# (the new run also carried +19 tests), the subset rows add ~1m of
+# PARALLEL wall, and the 3.13 row's coverage costs no full-suite time.
 #   2. **Bash syntax check** — `bash -n` on every .sh file in lib/tools/ and lib/core/
 #   3. **Python linting** — ruff check (warn-only for existing style issues)
 #   4. **Node.js dashboard** — basic syntax validation of server.js
