@@ -1,5 +1,108 @@
 # Changelog
 
+## 0.12.0
+
+The installable-and-verifiable release.
+
+0.11 closed the trust holes in the suite and the cut; 0.12 closes
+the gap between what the repo contains and what an install actually
+gets — and gives every release a machine-verifiable audit trail.
+The tarball now carries its own bill of materials (S1), the
+installer installs exactly that set instead of whatever the tree
+happens to hold (S2), every release carries a cut receipt with the
+gate results and every published digest (S3), and the CI matrix
+splits by risk so every supported interpreter keeps carrying its
+version-sensitive paths (S4). Plus a dev loop that is parallel by
+default (S5). No new features, no new agent roles, no lifecycle
+reordering.
+
+### Shipping manifest (S1, a1fed13)
+- `packaging/build-package.sh` writes a `MANIFEST.txt` into the
+  tarball: the exact top-level staged entries, state-free. Gate 4 of
+  `packaging/cut-release.sh` verifies it against a required set
+  (the runtime + the public surface) and fails the cut if any
+  runtime-state entry (`.company/`, `.worktrees/`, `dist/`,
+  unsloth litter) leaks into the shipped set — the state-entry and
+  missing-entry drifts are each pinned by a red-tested simulation.
+
+### Installer parity (S2, dcc38d3)
+- The staged set is defined ONCE in `packaging/entries.list`
+  (`packaging/entries.sh` is the shared parser): `build-package.sh`
+  stages from it and `install.sh --copy-to` stages the SAME set into
+  the install dir — never the whole tree. Runtime state, build
+  artifacts, local junk, and unreadable unrelated paths can no
+  longer reach an install — and an unreadable path can no longer
+  abort one (the whole-tree rsync exit-23 hard-fail observed during
+  the 0.11.0 scratch validation is now pinned by test). A source
+  missing a REQUIRED entry fails the install, naming the entry;
+  missing OPTIONAL public docs warn and install.
+- `packaging/install-online.sh` resolves the tarball source:
+  `HIVE_PKG_URL` > `HIVE_PKG_FILE` > the repo's default GitHub
+  release — `VERSION` is fetched from the raw branch, so the
+  documented one-liner works with no env vars and always points at
+  the newest release:
+  `curl -fsSL https://raw.githubusercontent.com/fredjt/hive/main/packaging/install-online.sh | sh`
+  `HIVE_PRINT_URL` is the resolve-only seam (the hermetic test
+  surface; verified live against GitHub main).
+
+### Cut receipts (S3, cf14c61)
+- After the publish step, `cut-release.sh` records each gate's
+  result (gate-2 carries the suite's final summary line) and writes
+  `hive-X.Y.Z.receipt.txt` — version, branch, commit, tag, gates
+  0-7, both asset sha256s, the manifest digest, the release URL,
+  the timestamp — then uploads it as the THIRD release asset with
+  `--clobber`; a re-run of the publish cleanly re-clobbers the
+  receipt. Verified hermetically (fake `gh` + a local bare
+  origin): the receipt parses as `key: value`, `commit` equals
+  `git rev-parse v$VERSION`, the asset sha256 equals the published
+  sidecar, and the manifest digest equals the tarball's
+  `MANIFEST.txt` member.
+
+### CI matrix split by risk (S4, f2c40c9 / f4bb20d)
+- The RULE: one version (3.12) carries the full suite; every
+  supported version (3.10, and a NEW 3.13 row) carries its
+  version-sensitive paths — the config-load/tomli-fallback tests
+  (`test_json_structures`, `test_llm_providers`,
+  `test_commands::TestConfigSetUpsert`,
+  `test_commands::TestConfigIntegrity`) + a CLI smoke
+  (`test_cli`) + an import smoke. The rule is pinned in the
+  `ci.yml` header and the root `AGENTS.md` CI section.
+- The version-sensitive surface (`import tomli` / `tomllib`) is
+  pinned by `tests/test_integration.py::TestTomliSurfaceGuard`: a
+  new parser import outside the four pinned files
+  (`hive_config.py`, `commands/config.py`, `commands/doctor.py`,
+  `core/llm_providers.py`) fails the guard until the `ci.yml`
+  subset is updated with it. Demonstrated red: forcing the
+  pre-3.11 parser path and breaking the tomli branch of
+  `commands/config.py` fails all 11 `TestConfigSetUpsert` tests —
+  the class on the 3.10/3.13 subset rows.
+- Note: the `ci.yml` commit (f4bb20d) landed on the `s4-ci-yml`
+  branch — this repository's OAuth git credential lacks workflow
+  scope, and GitHub refuses pushes from OAuth app tokens that touch
+  `.github/workflows/`. It merges when a credential with workflow
+  scope is available; the guard and the documented rule are on
+  main in the meantime.
+
+### Dev loop on the fast path (S5, 06cb1ab)
+- The root `AGENTS.md` quickstart now recommends the parallel run
+  (`python -m pytest tests/ -n 8`) as the PRIMARY loop — serial is
+  the debug mode. Per-host measured numbers stay out of the tracked
+  docs (R3: the docs carry the compute command, not the figure).
+- `test_installation.py`: the `dirty_tree` fixture now builds its
+  base ONCE per session (a single tar round-trip); each test does a
+  local `copytree` of that base. Per-file wall time, serial, same
+  host (before / after): `test_sprint_lifecycle.py` 296.3s /
+  296.2s (untouched — its spawns are the orchestrator under test),
+  `test_installation.py` 158.6s / 156.4s (−2.2s, the fixture
+  change), `test_commands.py` 83.5s / 83.0s (untouched — every
+  spawn there is a CLI invocation the test asserts on; the 0.11.0
+  consolidation pass already removed the state-only spawns).
+- The one structural lever left in the top-3 (hardlinked
+  `lib/` copies in the lifecycle tests) was rejected: the tests
+  rewrite `agent-spawn.sh` in place, and hardlinks share inodes —
+  a write-through would corrupt the shared base (xdist worker
+  contract: no shared mutable state).
+
 ## 0.11.0
 
 The trust release.
