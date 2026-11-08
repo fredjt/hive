@@ -160,12 +160,16 @@ node lib/dashboard/server.js --dir .company --port 3456
 # From the repo root
 cd hive
 
-# Run the full test suite (serial)
-python -m pytest tests/ -v
-
-# Run the full test suite in parallel (needs pytest-xdist; the speedup
-# is host-dependent — see the "xdist worker contract" section below)
+# Run the full test suite — PRIMARY loop: parallel (needs pytest-xdist;
+# the speedup is host-dependent — see the "xdist worker contract"
+# section below). The suite is xdist-safe by construction, so this is
+# the recommended dev loop; measure the split on your host with:
+#   time python -m pytest tests/ -q -n 8   vs   time python -m pytest tests/ -q
 python -m pytest tests/ -n 8
+
+# Debug mode: serial, verbose — single-worker runs while writing a
+# regression test or reproducing a worker-specific failure
+python -m pytest tests/ -v
 
 # Run a subset
 python -m pytest tests/test_bash_scripts.py -v

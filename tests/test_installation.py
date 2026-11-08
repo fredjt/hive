@@ -964,17 +964,15 @@ class TestTarballContentGuard:
         )
 
 
-@pytest.fixture()
-def dirty_tree(tmp_path, request):
-    """A copy of the repo tree plus what a working checkout actually
-    contains: .company/ live state, dist/ build artifacts, junk files,
-    and an unreadable unrelated dir (the rsync exit 23 hard-fail
-    observed during the 0.11.0 scratch validation). No git — neither
-    build-package.sh nor install.sh --copy-to needs it. Shared by the
-    S1 (shipping manifest) and S2 (installer parity) test classes."""
+@pytest.fixture(scope="session")
+def _dirty_base(tmp_path_factory):
+    """S5: the dirty base is built ONCE per session (a single tar
+    round-trip of the repo). Each dirty_tree test then does a local
+    copytree of this base instead of paying the tar round-trip again.
+    The base's locked/ stays readable — the per-test fixture chmods its
+    copy after the copy (a 000 dir cannot be copytree'd)."""
     repo = _repo_root()
-    tree = tmp_path / "tree"
-    tree.mkdir()
+    base = tmp_path_factory.mktemp("dirty-base")
     tar = subprocess.run(
         ["tar", "-cf", "-",
          "--exclude=.git", "--exclude=unsloth-tmp", "--exclude=.local",
@@ -983,9 +981,27 @@ def dirty_tree(tmp_path, request):
         cwd=str(repo), capture_output=True, timeout=300,
     )
     assert tar.returncode == 0, tar.stderr.decode(errors="replace")
-    subprocess.run(["tar", "-xf", "-", "-C", str(tree)],
+    subprocess.run(["tar", "-xf", "-", "-C", str(base)],
                    input=tar.stdout, check=True, capture_output=True,
                    timeout=300)
+    locked = base / "locked"
+    locked.mkdir(exist_ok=True)
+    (locked / "secret.txt").write_text("secret\n")
+    return base
+
+
+@pytest.fixture()
+def dirty_tree(tmp_path, request, _dirty_base):
+    """A copy of the repo tree plus what a working checkout actually
+    contains: .company/ live state, dist/ build artifacts, junk files,
+    and an unreadable unrelated dir (the rsync exit 23 hard-fail
+    observed during the 0.11.0 scratch validation). No git — neither
+    build-package.sh nor install.sh --copy-to needs it. Shared by the
+    S1 (shipping manifest) and S2 (installer parity) test classes.
+    The base copy comes from the session-scoped _dirty_base (S5)."""
+    import shutil as _shutil
+    tree = tmp_path / "tree"
+    _shutil.copytree(_dirty_base, tree)
     # The copy may already carry the repo's own live .company/ —
     # exist_ok keeps the fixture idempotent either way.
     (tree / ".company" / "tickets").mkdir(parents=True, exist_ok=True)
@@ -999,12 +1015,10 @@ def dirty_tree(tmp_path, request):
     (tree / "notes.tmp").write_text("scratch\n")
     # Unreadable unrelated dir (outside every entry set): a whole-tree
     # copy aborts on it (rsync exit 23 under set -e); an entry-set copy
-    # never touches it.
-    locked = tree / "locked"
-    locked.mkdir()
-    (locked / "secret.txt").write_text("secret\n")
-    locked.chmod(0o000)
-    request.addfinalizer(lambda: _try_chmod(locked, 0o700))
+    # never touches it. The dir arrives readable from the base; lock it
+    # here, on this test's copy.
+    (tree / "locked").chmod(0o000)
+    request.addfinalizer(lambda: _try_chmod(tree / "locked", 0o700))
     return tree
 
 
