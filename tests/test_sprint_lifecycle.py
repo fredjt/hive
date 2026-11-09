@@ -10,9 +10,12 @@ release test suite) runs for real.
 """
 import json
 import os
+import re
 import shutil
 import subprocess
 from pathlib import Path
+
+import pytest
 
 
 INSTALL_DIR = Path(__file__).resolve().parent.parent
@@ -22,6 +25,74 @@ DEPT = "backend"          # dynamic (non-admin) dept -> full code gates
 TICKET = "TICK-1"
 TITLE = "ALPHATITLE distinctive title marker"
 DESC = "ALPHADESC distinctive description marker"
+
+# T2 (0.13): the lib/ copy is hardlinked, not byte-copied.
+#
+# The session-scoped _t2_lib_base fixture hardlinks the repo's lib/ ONCE
+# per worker (read-only shared pages); each test's hive copy then
+# hardlinks FROM the base, and the small WRITE_TARGET_DENYLIST of files
+# the test rewrites IN PLACE is copied as real files — a write can never
+# write through a shared inode into the base (or, via the base, the repo
+# itself). Everything else is read-only, so sharing pages across tests
+# and workers is safe; the per-test destination stays per-test (the xdist
+# worker contract is untouched).
+#
+# WRITE_TARGET_DENYLIST: every path the test module touches under the
+# per-test lib copy must appear here (TestHardlinkBaseContract scans the
+# module source and fails on any new one — a new in-place write target
+# must join the denylist or the guard fails). Paths are relative to the
+# copy root (the dir that contains lib/).
+WRITE_TARGET_DENYLIST = (
+    "lib/core/agent-spawn.sh",
+)
+
+_T2_LIB_BASE = None  # set by the session fixture, below
+
+
+def _t2_hl_copy(src, dst):
+    """copy_function for the session base: hardlink when the filesystem
+    allows, plain byte copy otherwise (cross-device)."""
+    try:
+        os.link(src, dst)
+    except OSError:
+        shutil.copy2(src, dst)
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _t2_lib_base(tmp_path_factory):
+    """The hardlink base of lib/ (T2, 0.13): built ONCE per session
+    (per xdist worker). __pycache__ is excluded — a hardlinked .pyc that
+    python rewrites on import would write through the shared inode into
+    the base and the repo; a fresh pycache is created in the copy
+    instead."""
+    global _T2_LIB_BASE
+    if _T2_LIB_BASE is None:
+        base = tmp_path_factory.mktemp("t2-lib-base") / "lib"
+        shutil.copytree(
+            INSTALL_DIR / "lib", base,
+            copy_function=_t2_hl_copy,
+            ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
+        _T2_LIB_BASE = base
+    return _T2_LIB_BASE
+
+
+def _t2_copy_lib(base_lib, dest):
+    """Per-test lib/: hardlinks from the session base; the
+    WRITE_TARGET_DENYLIST entries are real copies (the test rewrites them
+    IN PLACE — a write through a hardlink would corrupt the shared base
+    and, via the base, the repo's own file)."""
+    # Denylist paths are relative to the COPY ROOT (the dir containing
+    # lib/) — base_lib IS the lib dir, so rel() from its PARENT.
+    root = os.path.dirname(os.path.abspath(base_lib))
+    def _c(src, dst):
+        rel = os.path.relpath(src, root)
+        if rel in WRITE_TARGET_DENYLIST:
+            shutil.copy2(src, dst)
+        else:
+            _t2_hl_copy(src, dst)
+    shutil.copytree(
+        base_lib, dest, copy_function=_c,
+        ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
 
 STUB_AGENT_SPAWN = r'''#!/usr/bin/env bash
 # Test stub for agent-spawn.sh: records each spawn (env + prompt + the
@@ -281,7 +352,12 @@ class LifecycleHarness:
                   cwd=wt)
 
     def _build_hive_copy(self):
-        shutil.copytree(INSTALL_DIR / "lib", self.hive / "lib")
+        # T2 (0.13): hardlink from the session base instead of a full
+        # byte copy (WRITE_TARGET_DENYLIST entries arrive as real files).
+        if _T2_LIB_BASE is not None:
+            _t2_copy_lib(_T2_LIB_BASE, self.hive / "lib")
+        else:  # pragma: no cover - only if the session fixture was skipped
+            shutil.copytree(INSTALL_DIR / "lib", self.hive / "lib")
         stub = self.hive / "lib" / "core" / "agent-spawn.sh"
         stub.write_text(STUB_AGENT_SPAWN)
         stub.chmod(0o755)
@@ -1283,3 +1359,79 @@ def test_round_entries_record_success_not_failure(tmp_path):
                         f"{[(e['id'], e['kind']) for e in failed]}")
     ceo = [e for e in closed if e["kind"] == "plan-ceo"]
     assert ceo and all(e["status"] == "done" for e in ceo), ceo
+
+
+class TestHardlinkBaseContract:
+    """T2 (0.13) — the hardlink base is safe BY CONSTRUCTION.
+
+    A hardlink shares its inode with the repo's own file: an in-place
+    write through it corrupts the base AND the repo. The design therefore
+    (a) copies the WRITE_TARGET_DENYLIST entries as real files and (b)
+    pins that denylist against the module's source — any new path the
+    test module touches under the per-test lib copy must join the
+    denylist or this guard fails (a new write target can never sneak a
+    shared inode past the test). The behavioral test proves the stub
+    rewrite lands in the per-test copy and nowhere else.
+    """
+
+    #: Every Path chain in the module source that starts at the harness
+    #: hive copy and descends under its lib/ dir; capture the components
+    #: after the "lib" one. (The pattern literal lives here, not in any
+    #: prose, so this class cannot trip its own scan.)
+    _CHAIN = re.compile(r'self\.hive\s*/\s*"lib"\s*((?:/\s*"[^"]+")*)')
+
+    def _chains(self):
+        src = Path(__file__).read_text()
+        out = []
+        for m in self._CHAIN.finditer(src):
+            parts = re.findall(r'"([^"]+)"', m.group(1))
+            if parts:
+                out.append("/".join(parts))
+        return out
+
+    def test_denylist_entries_exist_in_the_repo(self):
+        for entry in WRITE_TARGET_DENYLIST:
+            assert (INSTALL_DIR / entry).is_file(), (
+                f"WRITE_TARGET_DENYLIST names a path that is not a file "
+                f"in the repo: {entry}")
+
+    def test_every_hive_lib_path_touch_is_denylisted(self):
+        """Every 2+-component path the module builds under the per-test
+        lib copy is a denylist entry (or a prefix of one). A new touch —
+        read or write — fails here until it joins WRITE_TARGET_DENYLIST,
+        so a new in-place write target can never ride a shared inode."""
+        bad = []
+        for chain in self._chains():
+            full = "lib/" + chain
+            if not any(full == d or full.startswith(d.rsplit("/", 1)[0] + "/")
+                       or d == full or d.startswith(full + "/")
+                       for d in WRITE_TARGET_DENYLIST):
+                bad.append(full)
+        assert not bad, (
+            "paths touched under the per-test lib copy are not in "
+            "WRITE_TARGET_DENYLIST — add them (a new in-place write "
+            f"target must be a real copy, never a shared inode): {bad}")
+
+    def test_stub_rewrite_does_not_corrupt_the_shared_base(self, tmp_path,
+                                                           _t2_lib_base):
+        """The stub rewrite lands in the per-test copy only: the base
+        (hardlinked to the repo's own file — same inode) never carries
+        the stub after a harness build, and the per-test copy does.
+
+        The oracle is 'not the stub', not 'equals git HEAD': the base
+        IS the repo's working-tree file, which legitimately carries
+        uncommitted edits (the HEAD comparison went red on the T3
+        stream-fix edit before its commit). The stub text never exists
+        in the repo, so any propagation of the stub write through the
+        shared inode turns the base into the stub and fails here."""
+        h = LifecycleHarness(tmp_path)
+        stub_bytes = STUB_AGENT_SPAWN.encode()
+        base_file = _t2_lib_base / "core" / "agent-spawn.sh"
+        assert base_file.read_bytes() != stub_bytes, (
+            "the base's agent-spawn.sh IS the test stub — a write went "
+            "through a shared inode into the base (and the repo)")
+        stubbed = (h.hive / "lib" / "core" / "agent-spawn.sh").read_bytes()
+        assert stubbed == stub_bytes, (
+            "the per-test copy was not stubbed — the denylist copy of "
+            "agent-spawn.sh is missing (the stub write would then hit "
+            "the shared inode)")

@@ -1491,8 +1491,63 @@ class TestDoctorProcessesJsonCorrupt:
         assert "CORRUPT" not in r.stdout + r.stderr
 
 
+#: T2 (0.13): the doctor-probe scratch installs share a session-scoped
+#: venv base (built once per worker) instead of a per-test venv build.
+_PROBE_VENV_BASES: dict = {}
+
+
+def _build_probe_root(root: Path, with_system_site: bool) -> bool:
+    """The ONE venv build site for the probe family (T2, 0.13).
+
+    A scratch install root: the real harness sources plus a REAL venv
+    (the 0.8.3 scenario, but in the venv where agent-spawn.sh actually
+    runs the harness, not on the CLI's own interpreter).
+
+    with_system_site=False: a plain venv — fresh site-packages, so the
+    venv python lacks httpx (a dead spawn path) even when the CLI's
+    interpreter has it.
+    with_system_site=True: a --system-site-packages venv — the venv
+    python inherits the base env's httpx (a healthy spawn path when the
+    base env has it). Returns False if the venv cannot be created."""
+    repo = Path(__file__).resolve().parent.parent
+    core = root / "lib" / "core"
+    core.mkdir(parents=True, exist_ok=True)
+    for name in ("agent-harness.py", "llm_providers.py", "mcp_http.py"):
+        shutil.copy(repo / "lib" / "core" / name, core / name)
+    args = [sys.executable, "-m", "venv", str(root / "venv")]
+    if with_system_site:
+        args.append("--system-site-packages")
+    r = subprocess.run(args, capture_output=True, text=True, timeout=180)
+    return r.returncode == 0
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _probe_venv_bases(tmp_path_factory):
+    """T2 (0.13): the probe family's scratch installs, built ONCE per
+    session (per xdist worker): a plain venv (no httpx — the dead spawn
+    path) and a --system-site-packages venv (the healthy path). The
+    doctor probe is READ-ONLY against the install root (the only runtime
+    writes are throwaway .pyc files in fresh __pycache__ dirs — new
+    inodes, never an in-place write through a shared one), so the
+    probes share the base directly. A test that ever needs a WRITABLE
+    install root must copy the base locally first (shutil.copytree).
+    A base that fails to build is absent from _PROBE_VENV_BASES and the
+    dependent test skips (the pre-T2 per-test skip semantics)."""
+    base_dir = tmp_path_factory.mktemp("probe-venv-base")
+    for key in (False, True):
+        if _build_probe_root(base_dir / ("plain" if not key else "sys"),
+                             with_system_site=key):
+            _PROBE_VENV_BASES[key] = base_dir / ("plain" if not key else "sys")
+    return _PROBE_VENV_BASES
+
+
 class TestDoctorHarnessProbe:
-    """A3 (0.9.0): doctor runs the A2 spawn path probe."""
+    """A3 (0.9.0): doctor runs the A2 spawn path probe.
+
+    T2 (0.13): the probe's scratch installs share the session-scoped
+    venv base (_probe_venv_bases) — a per-test `python -m venv` build
+    (~2.6s each here, more on CI runners) dominated this family; the
+    probe is read-only against the root, so no copy is needed."""
 
     @staticmethod
     def _cli_has_httpx() -> bool:
@@ -1501,29 +1556,13 @@ class TestDoctorHarnessProbe:
         return r.returncode == 0
 
     @staticmethod
-    def _scratch_install(root: Path, with_system_site: bool) -> Path:
-        """A scratch install root: the real harness sources plus a REAL
-        venv (the 0.8.3 scenario, but in the venv where agent-spawn.sh
-        actually runs the harness, not on the CLI's own interpreter).
-
-        with_system_site=False: a plain venv — fresh site-packages, so
-        the venv python lacks httpx (a dead spawn path) even when the
-        CLI's interpreter has it.
-        with_system_site=True: a --system-site-packages venv — the venv
-        python inherits the base env's httpx (a healthy spawn path when
-        the base env has it)."""
-        repo = Path(__file__).resolve().parent.parent
-        core = root / "lib" / "core"
-        core.mkdir(parents=True)
-        for name in ("agent-harness.py", "llm_providers.py", "mcp_http.py"):
-            shutil.copy(repo / "lib" / "core" / name, core / name)
-        args = [sys.executable, "-m", "venv", str(root / "venv")]
-        if with_system_site:
-            args.append("--system-site-packages")
-        r = subprocess.run(args, capture_output=True, text=True, timeout=180)
-        if r.returncode != 0:
-            pytest.skip("cannot create a scratch venv for the probe test: "
-                        + (r.stderr.strip().splitlines() or ["no stderr"])[-1])
+    def _probe_root(with_system_site: bool) -> Path:
+        """The shared session base install root for this probe flavour.
+        Skips (pre-T2 semantics) if the session build failed."""
+        root = _PROBE_VENV_BASES.get(with_system_site)
+        if root is None:
+            pytest.skip("cannot create a scratch venv for the probe test "
+                        "(session base build failed)")
         return root
 
     @staticmethod
@@ -1558,8 +1597,7 @@ class TestDoctorHarnessProbe:
         if not self._cli_has_httpx():
             pytest.skip("CLI python lacks httpx — the broken-venv probe "
                         "case is indistinguishable from a broken CLI")
-        root = self._scratch_install(tmp_path / "install",
-                                     with_system_site=False)
+        root = self._probe_root(with_system_site=False)
         r = self._run_at(tmp_path, root)
         out = r.stdout + r.stderr
         assert "FAIL import httpx" in out, (
@@ -1575,8 +1613,7 @@ class TestDoctorHarnessProbe:
         if not self._cli_has_httpx():
             pytest.skip("CLI python lacks httpx — the 'healthy' --system-"
                         "site-packages venv would lack it too")
-        root = self._scratch_install(tmp_path / "install",
-                                     with_system_site=True)
+        root = self._probe_root(with_system_site=True)
         r = self._run_at(tmp_path, root)
         out = r.stdout + r.stderr
         assert "SELFTEST: OK" in out, out[-800:]
@@ -1635,3 +1672,46 @@ class TestLlmTestEmptyReply:
         finally:
             os.environ.clear()
             os.environ.update(old)
+
+
+class TestProbeVenvBaseContract:
+    """T2 (0.13) — the probe family's venv is session-scoped by
+    construction, not per-test.
+
+    A per-test `python -m venv` build (~2.6s each here, more on CI
+    runners) dominated this family's wall time. The contract: EXACTLY
+    ONE venv build site, module-level (the _build_probe_root helper the
+    session fixture calls twice — plain + system-site), and NONE inside
+    the probe class (a class-level build is reachable per test). Red
+    against the pre-T2 module, where the build sat in the class's
+    _scratch_install and every test paid for a fresh venv.
+    """
+
+    #: Assembled from parts so this guard's own source does not carry
+    #: the contiguous literal it counts (the repo's credential-pattern
+    #: guards use the same trick).
+    _MARKER = '"-m"' + ", " + '"venv"'
+
+    def test_single_module_level_venv_build_site(self):
+        import inspect
+        mod_src = inspect.getsource(sys.modules[__name__])
+        n = mod_src.count(self._MARKER)
+        assert n == 1, (
+            f"the probe family must have exactly one venv build site "
+            f"(the session base helper); found {n} — a per-test venv "
+            "build has crept back in")
+        cls_src = inspect.getsource(TestDoctorHarnessProbe)
+        assert self._MARKER not in cls_src, (
+            "a venv build inside the probe class is a per-test build — "
+            "it must live in the module-level session base helper")
+
+    def test_base_fixture_is_session_scoped(self):
+        fx = _probe_venv_bases
+        # pytest 8 spells the marker _pytestfixturefunction, pytest 9
+        # _fixture_function_marker — accept both.
+        meta = (getattr(fx, "_fixture_function_marker", None)
+                or getattr(fx, "_pytestfixturefunction", None))
+        assert meta is not None, "_probe_venv_bases must be a fixture"
+        assert getattr(meta, "scope", None) == "session", (
+            "the venv base must be session-scoped (built once per "
+            f"worker); it is '{getattr(meta, 'scope', None)}'-scoped")
