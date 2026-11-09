@@ -1,5 +1,115 @@
 # Changelog
 
+## 0.14.0
+
+The reproducibility release.
+0.12 built the trust surface and 0.13 wired its consumers; 0.14
+makes the surface REPRODUCIBLE and the confidence RECURRING: the
+install's Python environment stops being "whatever PyPI serves today"
+(T1), the one-off 3.13 confidence datum becomes a scheduled row (T2),
+teardown mirrors setup so an uninstall removes what an install
+created (T3), the workspace reclaims its own scratch instead of
+compounding it (T4), and the docs stop telling operators to place LLM
+config where doctor's D1 check says it was retired (T5).
+
+### The venv lock — the Python environment is a reproducible artifact (T1, bfa94ac)
+- `packaging/requirements.lock.txt` pins EXACT versions for every
+  name in `requirements.txt` (marker-aware: the `tomli` line is
+  conditional on `python_version < "3.11"`). requirements.txt keeps
+  its floors; the lock is the released environment.
+- `install.sh` installs FROM the lock when it ships with the release
+  (pre-0.14 releases carry no lock and fall back to the floor pins
+  with a note).
+- `build-package.sh` self-verifies the lock BEFORE staging anything
+  — the producer looks at its own output: the lock exists, every
+  name in requirements.txt has a pin that satisfies the floor, and a
+  venv built from the lock imports the runtime set (a miss fails the
+  build, naming the entry). `HIVE_LOCK_VENV` lets the test suite
+  point at a session-built venv instead of paying the network
+  install per build.
+- `hive doctor` gains the "venv lock" check: it cross-checks the
+  installed venv's resolved versions against the installed lock — a
+  drifted package is named (locked version vs installed version); an
+  install without a lock (pre-0.14) reports the resolved versions
+  WITHOUT a FAIL.
+- The refresh path: `bash packaging/refresh-venv-lock.sh` re-resolves
+  requirements.txt into a throwaway venv and writes the exact pins
+  back. The lock joins the required-set constant (it ships in every
+  install and every tarball).
+- No new cut gate — the receipt schema and the gate-0..7 keys stay
+  untouched.
+- While T1 was landing, a latent xdist worker leak was fixed: an
+  in-process `doctor.handle(json=True)` left `_RUN["json"]` set and
+  suppressed the pretty output of later in-process check calls on the
+  same worker; `handle()` now resets `_RUN` in a `finally`.
+
+### The scheduled 3.13 full row (T2, 316a54f, b8246b2)
+- `.github/workflows/scheduled.yml` — a `full-313` job running the
+  FULL suite on Python 3.13, triggered weekly (cron) and manually
+  (`gh workflow run scheduled.yml`). The push matrix (ci.yml) is
+  unchanged.
+- First dispatch run (recorded in PACKAGING.md): run 42566985025,
+  2026-11-09, 1,346 passed / 3 skipped in 272.78s. Skip list
+  re-audited against the 0.13 skip-reason contract — every skip
+  names its condition.
+
+### Teardown mirrors setup (T3, d4d90f7)
+- `install.sh --copy-to` writes the `.hive-install` marker (version,
+  timestamp, mode) into the install root.
+- `uninstall.sh` removes the WHOLE install tree only on that marker:
+  no tree, no venv, no symlink — a scratch install is fully
+  re-created by a fresh install, and the stale launcher symlink that
+  pointed at nothing after a manual tree removal is history.
+- In-place installs (git checkout / the operator's own tree) write
+  no marker and keep their tree, as before — the discriminator is
+  the marker, not `.git`. `--keep-tree` is the escape hatch
+  (symlink + venv only).
+- The marker is neutral to the doctor installed-set check (it is a
+  root file written at install time — outside the entry set, never in
+  the tarball, never in the manifest); a regression test pins it.
+
+### Scratch hygiene — the workspace reclaims its own scratch (T4, 776608e)
+- `packaging/clean-scratch.sh`: the operator tool. Basetemp
+  generations (pytest-of-<user>/pytest-<N>, xdist workers' dirs ride
+  with their generation) kept back to the newest 3; mktemp-shaped
+  litter (tmp.*/hive-*/pip-unpack-* direct children of $TMPDIR)
+  reaped past a min age (3 days default), open-file gated (lsof,
+  best-effort). --dry-run names the targets first; fresh/live paths
+  are never touched, and the workspace root is out of scope by
+  construction even when $TMPDIR sits inside it.
+- The suite reaps itself: a session hook in tests/conftest.py
+  (`_basetemp_retention`) applies the same basetemp policy per
+  session (fresh-mtime gated, so a running suite — including its
+  concurrent xdist workers — is never touched).
+- `tests/test_xdist_contract.py::TestScratchSnowballGuard` pins the
+  module-level mktemp call sites in the suite: a new per-test mktemp
+  call fails the guard until deliberately pinned — the snowball is
+  bounded both ways (the reaper reaps the old, the guard stops the
+  new).
+
+### One canonical LLM layer — the docs and doctor agree (T5, 82a4bb4)
+- The root AGENTS.md Configuration section and
+  `share/docs/LLM-PROVIDERS.md` were rewritten on one line:
+  config.toml [llm] is canonical (every resolver reads it); HIVE_*
+  env vars are the one-shot layer (shell export); env.sh is for
+  shell-level daemon env only (PATH, GITHUB_TOKEN) and must NOT
+  carry LLM settings (D1's retired vars — doctor warns on them).
+- `hive doctor`'s unconfigured-provider diagnostic now
+  cross-references D1: when the provider is unconfigured AND env.sh
+  still exports retired LLM vars, the diagnostic says so in one line
+  ("env.sh still exports … (retired) — move them to [llm] in
+  config.toml") — the actual remedy for the actual situation.
+- A static guard (TestLlmDocEnvShConsistency) reads D1's retired-var
+  list from doctor.py and fails on any doc (AGENTS.md,
+  share/docs/**) that directs a retired var into env.sh — including
+  code blocks introduced by an env.sh line.
+
+### The 0.14.0 cut (T6)
+- The cut's gate-2 default (the S5 primary loop) verifies T1's lock
+  self-verify and T3's marker/uninstall parity against the live
+  release; the scheduled 3.13 row (T2) re-runs the full suite on
+  3.13 against the cut.
+
 ## 0.13.0
 
 The loop-closer release.
