@@ -215,13 +215,38 @@ class TestReleaseSchema:
             assert release["phase"] in valid_phases
 
 
+def _shipped_json_files():
+    """Every .json under the SHIPPED source set — entries.list is the
+    single source of truth for what ships (S2, 0.12), so the validity
+    check covers exactly the release surface.
+
+    (0.13 T5 skip audit: the old parametrize globbed Path("hive") —
+    the pre-flat-repo nested layout. Zero matches there is a SILENT
+    auto-skip ("got empty parameter set"), so this test shipped zero
+    coverage for a release: a skip that outlived its reason. The
+    tests/ fixtures are deliberately out of scope —
+    company-degenerate/processes.json is corrupted ON PURPOSE by the
+    degenerate-state tests.)
+    """
+    root = Path(__file__).resolve().parent.parent
+    found = set()
+    for line in (root / "packaging" / "entries.list").read_text().splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        src = root / line.split(" as ")[0].strip()
+        if src.is_dir():
+            found.update(q for q in src.rglob("*.json")
+                         if "node_modules" not in q.parts)
+        elif src.is_file() and src.suffix == ".json":
+            found.add(src)
+    return sorted(found)
+
+
 class TestJSONFilesValid:
     """Test that existing JSON files in the hive source are valid."""
 
-    @pytest.mark.parametrize("json_file", [
-        str(p) for p in Path("hive").rglob("*.json")
-        if "node_modules" not in str(p) and ".venv" not in str(p)
-    ])
+    @pytest.mark.parametrize("json_file", [str(p) for p in _shipped_json_files()])
     def test_json_file_is_valid(self, json_file):
         """Every .json file should parse without errors."""
         try:
