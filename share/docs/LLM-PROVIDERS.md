@@ -73,7 +73,9 @@ model     = "your-model-id"
 api_key   = "sk-..."
 ```
 
-Equivalently via env (e.g. in `~/.config/hive/env.sh` for daemons):
+Equivalently via env — for ONE-SHOT runs, export them in your
+interactive shell (the exports cover that shell and its children
+only):
 
 ```bash
 export HIVE_PROVIDER=unsloth
@@ -82,6 +84,12 @@ export HIVE_API_BASE=https://your-unsloth-endpoint.example
 export HIVE_MODEL=your-model-id
 export UNSLOTH_API_KEY=sk-...          # HIVE_API_KEY also works
 ```
+
+`~/.config/hive/env.sh` is for shell-level daemon env only (PATH
+additions, GITHUB_TOKEN). Do not place LLM settings there: every
+resolver reads [llm] from config.toml, and doctor's D1 check
+warns when a retired LLM var sits in env.sh (the
+unconfigured-provider diagnostic cross-references it).
 
 If `api_style` is missing or invalid, the harness warns and the resolved
 style is left to detection — set it explicitly.

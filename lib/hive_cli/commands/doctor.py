@@ -111,19 +111,24 @@ _ENV_FILE_RETIRED_VARS = {
 }
 
 
-def _env_file_check() -> bool:
-    """D1: warn (never fail) when the daemon env file still exports
-    retired variable names. The line names every offender and the
-    [llm] key it belongs in: 'env.sh is for PATH/GITHUB_TOKEN — LLM
-    settings go in [llm] of config.toml'."""
-    env_file = Path(os.environ.get("HIVE_ENV_FILE")
-                    or (Path.home() / ".config" / "hive" / "env.sh"))
+def _env_file_path() -> Path:
+    """D1: the daemon env file (HIVE_ENV_FILE override, else
+    ~/.config/hive/env.sh)."""
+    return Path(os.environ.get("HIVE_ENV_FILE")
+                or (Path.home() / ".config" / "hive" / "env.sh"))
+
+
+def _env_file_retired_names(env_file: Path) -> list:
+    """D1: the retired-list var names the env file exports (first
+    occurrence order, deduped) — shared by the D1 check and the
+    unconfigured-provider diagnostic (T5: the diagnostic
+    cross-references D1)."""
     if not env_file.is_file():
-        return True
+        return []
     try:
         text = env_file.read_text()
     except OSError:
-        return True
+        return []
     found = []
     for line in text.splitlines():
         s = line.strip()
@@ -132,12 +137,22 @@ def _env_file_check() -> bool:
         name = s.split("=", 1)[0].strip()
         if name.startswith("export"):
             name = name.split(None, 1)[1].strip() if " " in name else ""
-        if name in _ENV_FILE_RETIRED_VARS:
-            found.append((name, _ENV_FILE_RETIRED_VARS[name]))
+        if name in _ENV_FILE_RETIRED_VARS and name not in found:
+            found.append(name)
+    return found
+
+
+def _env_file_check() -> bool:
+    """D1: warn (never fail) when the daemon env file still exports
+    retired variable names. The line names every offender and the
+    [llm] key it belongs in: 'env.sh is for PATH/GITHUB_TOKEN — LLM
+    settings go in [llm] of config.toml'."""
+    env_file = _env_file_path()
+    found = _env_file_retired_names(env_file)
     if not found:
         return _check("env.sh (daemon env file)", True,
                       "no retired LLM vars")
-    names = ", ".join(n for n, _ in found)
+    names = ", ".join(found)
     detail = (f"WARN: retired LLM var(s) {names} — move to [llm] in "
               "config.toml (hive config edit); env.sh is for "
               "PATH/GITHUB_TOKEN only")
@@ -638,8 +653,17 @@ def _run_checks(args) -> bool:
         else:
             # C4: name the exact file (the hint lives in llm_providers so
             # `hive llm test` — B1 — reuses the very same message).
-            all_ok &= _check("LLM provider configured", False,
-                             unconfigured_hint(hive_root=HIVE_ROOT))
+            detail = unconfigured_hint(hive_root=HIVE_ROOT)
+            # T5 (0.14): cross-reference D1 — unconfigured provider
+            # AND retired LLM vars still exported from env.sh (the
+            # placement the stale docs directed): the one-line fix for
+            # the actual situation, not the generic two-line hint.
+            retired = _env_file_retired_names(_env_file_path())
+            if retired:
+                detail += ("; env.sh still exports " + ", ".join(retired)
+                           + " (retired) — move them to [llm] in "
+                           "config.toml (hive config edit)")
+            all_ok &= _check("LLM provider configured", False, detail)
         for w in llm_res.warnings:
             if _RUN.get("warnings") is not None:
                 _RUN["warnings"].append(w)

@@ -142,11 +142,17 @@ node lib/dashboard/server.js --dir .company --port 3456
 ## Configuration
 
 - Defaults: `etc/config.defaults.toml`
-- Overrides: `~/.config/hive/config.toml`
-- Environment (for daemons): `~/.config/hive/env.sh` — set the LLM
-  endpoint config there (`HIVE_API_BASE`, `HIVE_API_KEY`, `HIVE_MODEL`)
-  so daemons spawned via nohup/systemd inherit it without depending on
-  interactive shell rc files.
+- Overrides: `~/.config/hive/config.toml` — the `[llm]` section is the
+  canonical LLM layer; every resolver reads it.
+- One-shot runs: export the LLM env vars (`HIVE_*`) in your
+  interactive shell — they override the config for that shell's
+  processes only (see `share/docs/LLM-PROVIDERS.md`).
+- Environment (for daemons): `~/.config/hive/env.sh` — shell-level
+  daemon env only (PATH additions, GITHUB_TOKEN for publishers that
+  don't use `gh auth login`), so daemons spawned via nohup/systemd
+  inherit it without interactive shell rc files. It must NOT carry LLM
+  settings — doctor's D1 check warns on them; they live in `[llm]`
+  in `config.toml`.
 
 ## Python dependencies
 

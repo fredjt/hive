@@ -2028,3 +2028,146 @@ class TestDoctorVenvLock:
         pins = TestDoctorVenvLock._lock_pins()
         assert f"mcp={pins['mcp']}" in c["detail"], \
             "the pre-lock report must carry the resolved versions"
+
+
+class TestDoctorUnconfiguredCrossReference:
+    """T5 (0.14): the unconfigured-provider diagnostic cross-references
+    D1's retired vars.
+
+    An unconfigured provider and env.sh still exporting retired LLM
+    vars is the exact situation the stale docs produced (they sent the
+    operator to env.sh; doctor's D1 check tells them it was retired).
+    The diagnostic carries the one-line fix for the actual situation
+    — and D1's own warning still fires (behavior unchanged). Red
+    before the cross-reference existed (the diagnostic was the
+    generic two-way hint and ignored env.sh)."""
+
+    install_dir = Path(__file__).resolve().parent.parent
+
+    @classmethod
+    def _run(cls, tmp_path):
+        env = {k: v for k, v in os.environ.items()
+               if k not in ("HIVE_CONFIG", "HIVE_PROVIDER", "HIVE_MODEL",
+                            "HIVE_API_BASE", "HIVE_API_KEY", "HIVE_ENV_FILE")}
+        env.update({
+            "HOME": str(tmp_path),
+            "HIVE_ROOT": str(cls.install_dir),
+            "HIVE_INSTALL_DIR": str(cls.install_dir),
+            "PYTHONPATH": str(cls.install_dir / "lib"),
+        })
+        return subprocess.run(
+            [sys.executable, "-m", "hive_cli.main", "doctor"],
+            capture_output=True, text=True, timeout=180, env=env,
+            cwd=str(cls.install_dir))
+
+    def test_unconfigured_with_retired_env_sh_vars_cross_references(self,
+                                                                   tmp_path):
+        envsh = tmp_path / ".config" / "hive" / "env.sh"
+        envsh.parent.mkdir(parents=True)
+        envsh.write_text("export HIVE_API_BASE=http://old.example\n"
+                         "export HIVE_API_KEY=sk-old\n")
+        r = self._run(tmp_path)
+        assert r.returncode == 1, r.stdout  # unconfigured: expected fail
+        assert ("env.sh still exports HIVE_API_BASE, HIVE_API_KEY "
+                "(retired)") in r.stdout, r.stdout
+        assert "[llm] in config.toml" in r.stdout, r.stdout
+        # D1's own warning line still fires (behavior unchanged)
+        assert "WARN: retired LLM var(s)" in r.stdout, r.stdout
+
+    def test_unconfigured_without_env_sh_vars_gets_generic_hint(self,
+                                                               tmp_path):
+        r = self._run(tmp_path)
+        assert r.returncode == 1, r.stdout
+        assert "unconfigured" in r.stdout
+        assert "env.sh still exports" not in r.stdout, r.stdout
+
+
+class TestLlmDocEnvShConsistency:
+    """T5 (0.14): one canonical LLM layer, and the docs agree with
+    doctor's D1 check.
+
+    config.toml's [llm] section is the canonical layer (every resolver
+    reads it); the HIVE_* env vars are the one-shot override (shell
+    export); env.sh carries daemon SHELL env (PATH, GITHUB_TOKEN) —
+    NO LLM vars: D1 (pinned by TestDoctorEnvFile) declares the LLM
+    var names in env.sh retired. The guard: no doc (AGENTS.md,
+    share/docs/**) directs placing a name from D1's retired list into
+    env.sh. The retired list is read from doctor.py — the single
+    source. A fenced code block belongs to the line introducing it
+    (the stale docs' pattern: the env.sh line above the export
+    block). Red: the stale sentence fails the guard, naming the file."""
+
+    install_dir = Path(__file__).resolve().parent.parent
+
+    @classmethod
+    def _docs(cls):
+        docs = [cls.install_dir / "AGENTS.md"]
+        docs.extend(sorted((cls.install_dir / "share" / "docs")
+                           .glob("*.md")))
+        return [d for d in docs if d.is_file()]
+
+    @staticmethod
+    def _blocks(text):
+        """Paragraph blocks: contiguous non-blank lines; a fenced
+        code block merges into the block introduced by the line
+        immediately before it (blank lines in between allowed)."""
+        raw_blocks, cur = [], []
+        for line in text.splitlines():
+            if line.strip() == "":
+                if cur:
+                    raw_blocks.append("\n".join(cur))
+                    cur = []
+            else:
+                cur.append(line)
+        if cur:
+            raw_blocks.append("\n".join(cur))
+        blocks, i, n = [], 0, len(raw_blocks)
+        while i < n:
+            b = raw_blocks[i]
+            if (b.lstrip().startswith("```") and i > 0
+                    and not raw_blocks[i - 1].lstrip().startswith("```")):
+                blocks.append(raw_blocks[i - 1] + "\n" + b)
+                i += 1
+            else:
+                blocks.append(b)
+                i += 1
+        return blocks
+
+    @classmethod
+    def _offenders(cls, text):
+        from lib.hive_cli.commands.doctor import _ENV_FILE_RETIRED_VARS
+        found = set()
+        for block in cls._blocks(text):
+            if "env.sh" not in block:
+                continue
+            for name in _ENV_FILE_RETIRED_VARS:
+                if re.search(r"\b" + re.escape(name) + r"\b", block):
+                    found.add(name)
+        return sorted(found)
+
+    def test_no_doc_directs_retired_vars_into_env_sh(self):
+        bad = {}
+        for d in self._docs():
+            offs = self._offenders(d.read_text())
+            if offs:
+                bad[d.name] = offs
+        assert not bad, (
+            "docs direct D1's retired LLM vars into env.sh (doctor's "
+            "D1 check warns on exactly these placements): " +
+            "; ".join(f"{f}: {', '.join(n)}" for f, n in sorted(bad.items())))
+
+    def test_guard_catches_the_stale_sentence(self):
+        # Red test: the pre-0.14 AGENTS.md sentence is an offender —
+        # every retired var it places in env.sh is named.
+        stale = ("Environment (for daemons): `~/.config/hive/env.sh` — set the LLM\n"
+                 "endpoint config there (`HIVE_API_BASE`, `HIVE_API_KEY`, `HIVE_MODEL`)")
+        assert self._offenders(stale) == [
+            "HIVE_API_BASE", "HIVE_API_KEY", "HIVE_MODEL"]
+        # ...and the stale LLM-PROVIDERS.md pattern (env.sh line above
+        # the export fence) is caught by the fence-merge rule.
+        stale2 = ("Equivalently via env (e.g. in `~/.config/hive/env.sh` for daemons):\n"
+                  "\n"
+                  "```bash\n"
+                  "export HIVE_API_BASE=http://old.example\n"
+                  "```")
+        assert "HIVE_API_BASE" in self._offenders(stale2)
