@@ -601,6 +601,23 @@ class TestCutReleaseScript:
             capture_output=True, text=True, timeout=600, cwd=str(tree),
         )
 
+    def test_gate2_default_suite_is_the_s5_primary_loop(self, scratch_tree):
+        """T6 (0.13): gate 2's DEFAULT must be the S5 primary loop
+        (-n 8). The 0.12 cut had to pass --suite explicitly to get it
+        (~11 min of serial gate-2 wall instead of ~3 min on the 0.12
+        reference box) — a flag the cut should not have to remember.
+        Serial stays available via --suite."""
+        src = (scratch_tree / "packaging" / "cut-release.sh").read_text()
+        line = next((l for l in src.splitlines() if l.startswith('SUITE="')),
+                    None)
+        assert line, "cut-release.sh must define a default SUITE command"
+        suite = line.split('"')[1]
+        assert "-n" in suite and "8" in suite, (
+            f"gate 2's default suite must be the S5 primary loop "
+            f"(-n 8); got: {suite!r} — serial remains available "
+            f"via --suite"
+        )
+
     def test_dry_run_produces_tarball_sha256_scan_report(self, scratch_tree, tmp_path):
         out = tmp_path / "dist"
         r = self._run(

@@ -22,7 +22,8 @@ set -euo pipefail
 #   --version  Version to cut (default: the VERSION file)
 #   --out-dir  Build output directory (default: dist/)
 #   --suite    Replace the test-suite command (default: full suite,
-#              stop at first failure). The gate itself never changes —
+#              S5 primary loop, -n 8; pass a serial command for the
+#              old behavior). The gate itself never changes —
 #              only what the suite runs is replaceable.
 #   --dry-run  Run every gate up to the tag: suite, build, listing
 #              check, credential scan, sha256, release notes — then
@@ -38,7 +39,12 @@ VERSION=""
 OUT_DIR=""
 DRY_RUN=0
 CHECK_SURFACE=0
-SUITE="python -m pytest tests/ -q -x"
+# T6 (0.13): the gate-2 default is the S5 primary loop (-n 8) — the
+# 0.12 cut had to pass --suite "... -n 8" explicitly to get it
+# (~11 min of serial gate-2 wall instead of ~3 min on the 0.12
+# reference box). Serial stays available: --suite "python -m pytest
+# tests/ -q -x".
+SUITE="python -m pytest tests/ -q -n 8"
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -58,7 +64,8 @@ The release cut, as a command (E1). Gates, in order:
      "Latest release" + tarball-name lines in README.md and
      share/docs/README.md; a mismatch fails naming each stale file)
   1  git state (repo, clean tree, no existing tag, on a branch)
-  2  test suite green (default: python -m pytest tests/ -q -x)
+  2  test suite green (default: python -m pytest tests/ -q -n 8 —
+     the S5 primary loop; --suite replaces it, serial included)
   3  build-package
   4  shipping manifest (S1): MANIFEST.txt extracted from the tarball —
      required runtime entries present, runtime-state entries absent,
