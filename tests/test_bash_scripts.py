@@ -2713,3 +2713,89 @@ exit 0
             "the release must exist after run 2"
         tags2 = self._git(proj, "tag", "-l").stdout.split()
         assert tags2 == [v], "run 2 must not create a duplicate tag"
+
+
+class TestCleanScratchScript:
+    """T4 (0.14) — the workspace reclaims its own scratch.
+
+    packaging/clean-scratch.sh applies the retention policy to the
+    scratch under TMPDIR: the pytest basetemp (pytest-of-<user>/)
+    keeps only the newest N generations, and the mktemp-shaped litter
+    (tmp.*/hive-*/pip-unpack-*) is reaped past a min age — always
+    dry-run-first, never touching fresh (live-session) paths."""
+
+    install_dir = Path(__file__).resolve().parent.parent
+    script = install_dir / "packaging" / "clean-scratch.sh"
+
+    def test_script_exists_and_executable(self):
+        assert self.script.is_file()
+        assert os.access(self.script, os.X_OK), \
+            "clean-scratch.sh must be executable"
+
+    def test_usage_help(self):
+        r = subprocess.run(
+            ["bash", str(self.script), "--help"],
+            capture_output=True, text=True, timeout=30)
+        assert r.returncode == 0
+        assert "Usage:" in r.stdout
+        assert "--dry-run" in r.stdout
+
+    @staticmethod
+    def _mock(tmp_path):
+        mock = tmp_path / "mocktmp"
+        base = mock / "pytest-of-t"
+        base.mkdir(parents=True)
+        gens = {}
+        for n in range(1, 7):
+            d = base / f"pytest-{n}"
+            d.mkdir()
+            gens[n] = d
+        gw = base / "pytest-5-gw0"
+        gw.mkdir()
+        (base / "pytest-current").write_text("link")
+        old = time.time() - 86400 * 10
+        for n in (1, 2, 3, 4, 5):
+            os.utime(gens[n], (old, old))
+        os.utime(gw, (old, old))
+        for name in ("tmp.old", "hive-old", "pip-unpack-old"):
+            d = mock / name
+            d.mkdir()
+            os.utime(d, (old, old))
+        fresh = mock / "hive-new"
+        fresh.mkdir()
+        return mock, gens, fresh
+
+    @staticmethod
+    def _run(mock, extra=None):
+        env = {**os.environ, "TMPDIR": str(mock)}
+        return subprocess.run(
+            ["bash", str(TestCleanScratchScript.script)] + (extra or []),
+            capture_output=True, text=True, timeout=120, env=env)
+
+    def test_dry_run_names_targets_removes_nothing(self, tmp_path):
+        mock, gens, fresh = self._mock(tmp_path)
+        r = self._run(mock, ["--dry-run"])
+        assert r.returncode == 0, r.stdout + r.stderr
+        assert "would remove" in r.stdout
+        for n in (1, 2, 3):
+            assert gens[n].exists(), f"dry-run must not remove pytest-{n}"
+        assert (mock / "tmp.old").exists()
+        assert "dry-run: 1" in r.stdout
+
+    def test_real_run_applies_the_policy(self, tmp_path):
+        mock, gens, fresh = self._mock(tmp_path)
+        r = self._run(mock)
+        assert r.returncode == 0, r.stdout + r.stderr
+        for n in (1, 2, 3):
+            assert not gens[n].exists(), \
+                f"old generation pytest-{n} must be reaped"
+        for n in (4, 5, 6):
+            assert gens[n].exists(), \
+                f"one of the newest 3 generations (pytest-{n}) must be kept"
+        assert (mock / "pytest-of-t" / "pytest-5-gw0").exists(), \
+            "an xdist worker dir rides with its generation (kept)"
+        assert (mock / "hive-new").exists(), "fresh litter must be kept"
+        for name in ("tmp.old", "hive-old", "pip-unpack-old"):
+            assert not (mock / name).exists(), f"old litter {name} must be reaped"
+        assert (mock / "pytest-of-t" / "pytest-current").exists(), \
+            "pytest-current is never touched"

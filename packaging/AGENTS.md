@@ -18,6 +18,7 @@ This directory contains the packaging artifacts: installers, the build script, a
 | `requirements.txt` | Floor-pinned Python dependencies: mcp, fastapi, uvicorn, httpx, tomli |
 | `requirements.lock.txt` | The venv lock (T1, 0.14) — EXACT pins per name in requirements.txt, marker-aware; install.sh installs from it, the build self-verifies it, doctor cross-checks the venv against it |
 | `refresh-venv-lock.sh` | Regenerates `requirements.lock.txt` from `requirements.txt` (fresh venv, PyPI resolution, exact pins written back) — run it when requirements.txt changes |
+| `clean-scratch.sh` | Reclaims the scratch under `$TMPDIR` (T4, 0.14) — basetemp generations kept back to the newest 3, mktemp litter (tmp.*/hive-*/pip-unpack-*) reaped past a min age, `--dry-run` first, never touches fresh/live paths |
 
 ## Key behaviors
 

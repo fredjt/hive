@@ -269,3 +269,48 @@ class TestSkipReasonContract:
             "being skipped, so the skip list stays auditable from the "
             "tree: " + "; ".join(offenders)
         )
+
+
+class TestScratchSnowballGuard:
+    """T4 (0.14) — the scratch must not snowball: per-TEST mktemp
+    litter is banned.
+
+    The mktemp-shaped scratch (tmp.*/hive-*/pip-unpack-*) and the
+    pytest basetemp are reclaimed by construction: the conftest
+    _basetemp_retention hook keeps only the newest 3 basetemp
+    generations per session, and packaging/clean-scratch.sh applies
+    the same policy to the mktemp litter (age + open-file gated).
+    This guard pins the existing module-level mktemp call SITES
+    (each creates ONE dir per module/session, all with the hive-*
+    prefix the reaper reaps): a new per-test mkdtemp/mkstemp call
+    fails the guard until the set is extended with a deliberate,
+    documented exception — the snowball is bounded both ways
+    (reaper reaps the old, this guard stops the new)."""
+
+    #: (file, line) of every mkdtemp/mkstemp call site in the suite
+    #: (module/session scope, hive-* prefixed). A NEW site fails the
+    #: guard; an intentional extension updates THIS set with a reason.
+    PINNED_SITES = {
+        ("conftest.py", "tempfile.mkdtemp(prefix=\"hive-test-\")"),
+        ("test_mcp_tools.py", "tempfile.mkdtemp(prefix=\"hive-poison-\")"),
+        ("test_verification_gates.py", "tempfile.mkdtemp(prefix=\"hive-gates-\""),
+    }
+
+    def test_no_new_per_test_mktemp_sites(self):
+        tests_dir = Path(__file__).resolve().parent
+        found = set()
+        for f in sorted(tests_dir.glob("*.py")):
+            if f.name == Path(__file__).name:
+                continue  # the guard's own source names the pattern
+            for line in f.read_text().splitlines():
+                s = line.strip()
+                if "mkdtemp" in s or "mkstemp" in s:
+                    found.add((f.name, s))
+        unknown = {k: v for (k, v) in found
+                   if not any(k == pf and q in v
+                              for pf, q in self.PINNED_SITES)}
+        assert not unknown, (
+            "new mktemp call sites — per-test mktemp litter snowballs "
+            "the scratch (T4). Use the tmp_path fixture, or extend "
+            "PINNED_SITES with a deliberate reason:\n"
+            + "\n".join(f"  {k}: {v}" for k, v in sorted(unknown)))

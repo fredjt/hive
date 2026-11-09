@@ -1,10 +1,12 @@
 """Shared fixtures for hive test suite."""
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 import pytest
@@ -73,6 +75,47 @@ def get_install_dir():
     """Return the hive install directory (absolute path)."""
     # The hive source is at the repo root, not in a subdirectory
     return Path(__file__).resolve().parent.parent
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _basetemp_retention(tmp_path_factory):
+    """T4 (0.14): the workspace reclaims its own scratch — basetemp
+    retention by construction.
+
+    pytest keeps every session's basetemp dir (pytest-of-<user>/pytest-<N>
+    and the xdist workers' dirs), and nothing reclaims them: the
+    scratch snowballs one generation per session. This hook runs once
+    per session, keeps the newest 3 basetemp generations under the
+    basetemp root, and removes older ones — under a fresh-mtime gate
+    (60 min): a running suite's own dirs, and any dir a concurrent
+    session or worker just created, are never touched (the xdist
+    workers each run this hook; the fresh-mtime gate makes the
+    concurrent rmtree no-ops, ignore_errors absorbs the race).
+    The operator-facing tool is the same policy:
+    packaging/clean-scratch.sh."""
+    root = tmp_path_factory.getbasetemp().parent
+    gens = {}
+    for d in root.iterdir():
+        try:
+            if not d.is_dir():
+                continue
+        except OSError:
+            continue
+        m = re.match(r"^pytest-(\d+)(?:-gw\d+)?$", d.name)
+        if m:
+            gens.setdefault(int(m.group(1)), []).append(d)
+    keep = set(sorted(gens, reverse=True)[:3])
+    for n, dirs in gens.items():
+        if n in keep:
+            continue
+        for d in dirs:
+            try:
+                if time.time() - d.stat().st_mtime < 60 * 60:
+                    continue  # fresh — a live session may own it
+                shutil.rmtree(d, ignore_errors=True)
+            except OSError:
+                continue
+    yield
 
 
 @pytest.fixture(scope="session", autouse=True)

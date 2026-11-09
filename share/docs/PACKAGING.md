@@ -228,6 +228,40 @@ depends on who created it:
 it keeps the tree and removes only the symlink + venv (the pre-0.14
 behavior). Project `.company/` directories are never touched.
 
+## Scratch hygiene (T4, 0.14)
+
+The pytest basetemp and the mktemp-shaped litter the suite leaves
+under `$TMPDIR` used to snowball: every session's basetemp dir
+(`pytest-of-<user>/pytest-<N>`, plus the xdist workers' dirs) and
+every `tmp.*` / `hive-*` / `pip-unpack-*` scratch dir were kept
+forever — the workspace compounded its own scratch instead of
+reclaiming it. The retention policy, applied by construction:
+
+- **the suite itself** — a session hook in `tests/conftest.py`
+  (`_basetemp_retention`) keeps only the NEWEST 3 basetemp
+generations under the basetemp root and reaps older ones (fresh-
+mtime gated, so a live session — including the xdist workers that
+each run the hook — is never touched).
+- **the operator tool** — `packaging/clean-scratch.sh` applies the
+  same policy to the mktemp litter: basetemp generations kept back
+to the newest 3, and `tmp.*`/`hive-*`/`pip-unpack-*` direct children
+of `$TMPDIR` reaped past a min age (3 days default, `--min-age`),
+open-file gated (`lsof`, best-effort). `--dry-run` names the targets
+without removing; it never touches fresh paths, and never touches
+anything that is not a direct child of `$TMPDIR` in one of the
+named scratch shapes — the workspace root itself is out of scope
+by construction even when `$TMPDIR` sits inside it.
+
+```bash
+bash ~/.local/share/hive/packaging/clean-scratch.sh --dry-run   # see what would go
+bash ~/.local/share/hive/packaging/clean-scratch.sh             # reap it
+```
+
+The snowball is bounded both ways: the reaper reaps what accumulated,
+and `tests/test_xdist_contract.py::TestScratchSnowballGuard` pins the
+module-level mktemp call sites in the suite, so a new per-test mktemp
+call fails the guard until it is deliberately pinned.
+
 ## CI — the scheduled 3.13 full row (T2, 0.14)
 
 The push matrix lives in `.github/workflows/ci.yml` (S4, 0.12: full on
