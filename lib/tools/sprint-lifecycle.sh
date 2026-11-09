@@ -314,7 +314,16 @@ llm_outage_halt() {
   # a fresh marker dead for the session (no restart, no budget burn);
   # 'hive start' clears it.
   mkdir -p "$COMPANY_DIR/rounds"
-  cat > "$COMPANY_DIR/rounds/halt" <<HALT
+  # Single commit point: the marker is written to a temp file and RENAMED
+  # into place (atomic on the same filesystem). `cat > halt` would create
+  # the file first and fill it after — an observer (the test suite's
+  # existence-poll, a dashboard, company-health on a fast box) can land
+  # between create and fill and read an empty/partial marker (CI flake
+  # 42570231285 — test_llm_outage_halt read the marker empty on the
+  # 3.12 full row). The blocker ticket above is committed BEFORE the
+  # marker, so an observer that sees the marker sees the ticket too.
+  local halt_tmp="$COMPANY_DIR/rounds/halt.tmp.$$"
+  cat > "$halt_tmp" <<HALT
 {
   "reason": "$halt_reason",
   "endpoint": "$endpoint",
@@ -325,6 +334,7 @@ llm_outage_halt() {
   "ts": "$ts"
 }
 HALT
+  mv -f "$halt_tmp" "$COMPANY_DIR/rounds/halt"
 
   log "HALT: $halt_reason"
   log "HALT: halt marker at .company/rounds/halt — the runner is exiting; 'hive start' clears the marker and re-arms"
