@@ -166,6 +166,27 @@ Removes the venv and the `~/.local/bin/hive` symlink. Source tree and any
 project `.company/` directories are left alone — delete them manually if you
 want a full purge.
 
+## Verifying a published release (one command)
+
+`packaging/verify-release.sh <tag>` fetches a release's three assets
+(tarball, sha256 sidecar, cut receipt) and verifies the release against
+its receipt:
+
+```
+bash packaging/verify-release.sh v0.12.0
+```
+
+Checks, each failure named: (1) the sidecar matches the downloaded
+tarball; (2) the receipt's tarball digest matches the recomputed one;
+(3) the receipt's manifest digest matches the tarball's `MANIFEST.txt`
+member; (4) the receipt parses as `key: value` lines carrying the
+required keys (receipt, version, tag, commit, gate-0..gate-7 all PASS,
+both assets, manifest, release). Exit 0/1. This is the S3 receipt's
+consumer — the audit trail 0.12 made machine-verifiable, verified in
+one command (T4). It is a packaging script, not a CLI command; it
+needs `gh` (for `gh release download`) and `sha256sum`/`tar`.
+Releases without a receipt (pre-0.12.0) are unverifiable by design.
+
 ## Hosting the tarball
 
 Anywhere that serves it as a binary file works:

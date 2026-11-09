@@ -40,6 +40,8 @@ curl -fsSL https://raw.githubusercontent.com/fredjt/hive/main/packaging/install-
    from the [releases page](https://github.com/fredjt/hive/releases).
 2. Verify the download before installing:
    `sha256sum -c hive-0.12.0.sha256` (the sidecar carries the expected hash).
+   A full audit is one command: `bash packaging/verify-release.sh v0.12.0`
+   (verifies the tarball against the release's cut receipt too).
 3. Extract and install:
 
    ```bash

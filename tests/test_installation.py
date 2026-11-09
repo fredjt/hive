@@ -1608,6 +1608,187 @@ class TestInstallOnlineUrlResolution:
         assert "ERROR" in r.stderr
 
 
+class TestVerifyRelease:
+    """T4 (0.13) — verify-release.sh verifies a published release
+    against its receipt, in one command.
+
+    Hermetic: a fake `gh` on PATH serves local fixture assets to
+    `gh release download --dir`; the fixture set (tarball with a
+    MANIFEST.txt member, sidecar, receipt) is built per test with
+    real, matching digests. Red simulations: a corrupted manifest
+    digest and a wrong sidecar fail and NAME the mismatch (the 0.12
+    S3 test style)."""
+
+    VERSION = "0.9.9"
+
+    @classmethod
+    def _build_assets(cls, root: Path):
+        ver = cls.VERSION
+        pkg = root / f"hive-{ver}"
+        (pkg / "MANIFEST.txt").parent.mkdir(parents=True)
+        (pkg / "MANIFEST.txt").write_text("bin/hive\nlib/core/agent-harness.py\n")
+        for entry in ("bin/hive", "lib/core/agent-harness.py"):
+            f = pkg / entry
+            f.parent.mkdir(parents=True, exist_ok=True)
+            f.write_text("#!/usr/bin/env bash\necho stub\n")
+        tarball = root / f"hive-{ver}.tar.gz"
+        subprocess.run(["tar", "-czf", str(tarball), "-C", str(root),
+                        pkg.name], check=True, capture_output=True)
+        tar_sha = subprocess.run(["sha256sum", str(tarball)],
+                                 capture_output=True, text=True).stdout.split()[0]
+        sidecar = root / f"hive-{ver}.sha256"
+        sidecar.write_text(f"{tar_sha}  hive-{ver}.tar.gz\n")
+        side_sha = subprocess.run(["sha256sum", str(sidecar)],
+                                  capture_output=True, text=True).stdout.split()[0]
+        man_sha = subprocess.run(["sha256sum", str(pkg / "MANIFEST.txt")],
+                                 capture_output=True, text=True).stdout.split()[0]
+        gates = "".join(f"gate-{n}: PASS (test gate {n})\n" for n in range(8))
+        receipt = root / f"hive-{ver}.receipt.txt"
+        receipt.write_text(
+            f"receipt: hive-{ver}\nversion: {ver}\nbranch: main\n"
+            "commit: 0123456789abcdef0123456789abcdef01234567\n"
+            f"tag: v{ver}\n{gates}"
+            f"asset: hive-{ver}.tar.gz sha256={tar_sha}\n"
+            f"asset: hive-{ver}.sha256 sha256={side_sha}\n"
+            f"manifest: MANIFEST.txt sha256={man_sha}\n"
+            f"release: https://github.com/fake/hive/releases/tag/v{ver}\n"
+            "timestamp: 2026-11-08T00:00:00Z\n")
+        return {"tarball": tarball, "sidecar": sidecar, "receipt": receipt}
+
+    @classmethod
+    def _fake_gh(cls, tmp_path: Path, assets_dir: Path) -> Path:
+        bindir = tmp_path / "ghbin"
+        bindir.mkdir()
+        gh = bindir / "gh"
+        gh.write_text(
+            "#!/bin/sh\n"
+            "dir=\n"
+            "prev=\n"
+            "for a in \"$@\"; do\n"
+            "  [ \"$prev\" = \"--dir\" ] && dir=\"$a\"\n"
+            "  prev=\"$a\"\n"
+            "done\n"
+            f"cp \"{assets_dir}\"/hive-{cls.VERSION}.* \"$dir\"/\n"
+            "exit 0\n")
+        gh.chmod(0o755)
+        return bindir
+
+    @classmethod
+    def _run(cls, tmp_path, assets_dir: Path):
+        bindir = cls._fake_gh(tmp_path, assets_dir)
+        return subprocess.run(
+            ["bash", str(_repo_root() / "packaging" / "verify-release.sh"),
+             f"v{cls.VERSION}"],
+            capture_output=True, text=True, timeout=120,
+            env={**os.environ,
+                 "PATH": f"{bindir}{os.pathsep}{os.environ['PATH']}"})
+
+    def test_green_release_verifies(self, tmp_path):
+        assets_dir = tmp_path / "assets"
+        assets_dir.mkdir()
+        self._build_assets(assets_dir)
+        r = self._run(tmp_path, assets_dir)
+        out = r.stdout + r.stderr
+        assert r.returncode == 0, out[-800:]
+        assert "OK —" in out, out[-400:]
+
+    def test_corrupted_manifest_digest_fails_and_names_it(self, tmp_path):
+        assets_dir = tmp_path / "assets"
+        assets_dir.mkdir()
+        assets = self._build_assets(assets_dir)
+        rec = assets["receipt"].read_text()
+        lines = rec.splitlines()
+        for i, l in enumerate(lines):
+            if l.startswith("manifest:"):
+                lines[i] = l[:-8] + "deadbeef"
+                break
+        assets["receipt"].write_text("\n".join(lines) + "\n")
+        r = self._run(tmp_path, assets_dir)
+        out = r.stdout + r.stderr
+        assert r.returncode == 1, out[-800:]
+        assert "3/4" in out and "manifest digest mismatch" in out, out[-800:]
+
+    def test_wrong_sidecar_fails_and_names_it(self, tmp_path):
+        assets_dir = tmp_path / "assets"
+        assets_dir.mkdir()
+        assets = self._build_assets(assets_dir)
+        assets["sidecar"].write_text("deadbeef" * 8 + "  hive-0.9.9.tar.gz\n")
+        r = self._run(tmp_path, assets_dir)
+        out = r.stdout + r.stderr
+        assert r.returncode == 1, out[-800:]
+        assert "1/4" in out and "sidecar mismatch" in out, out[-800:]
+
+    def test_missing_required_key_fails_and_names_it(self, tmp_path):
+        assets_dir = tmp_path / "assets"
+        assets_dir.mkdir()
+        assets = self._build_assets(assets_dir)
+        lines = [l for l in assets["receipt"].read_text().splitlines()
+                 if not l.startswith("gate-3:")]
+        assets["receipt"].write_text("\n".join(lines) + "\n")
+        r = self._run(tmp_path, assets_dir)
+        out = r.stdout + r.stderr
+        assert r.returncode == 1, out[-800:]
+        assert "gate-3-PASS" in out, out[-800:]
+
+    def test_gate_fail_line_fails_and_names_the_gate(self, tmp_path):
+        assets_dir = tmp_path / "assets"
+        assets_dir.mkdir()
+        assets = self._build_assets(assets_dir)
+        rec = assets["receipt"].read_text().replace(
+            "gate-2: PASS (test gate 2)", "gate-2: FAIL (test gate 2)")
+        assets["receipt"].write_text(rec)
+        r = self._run(tmp_path, assets_dir)
+        out = r.stdout + r.stderr
+        assert r.returncode == 1, out[-800:]
+        assert "gate-2-PASS" in out, out[-800:]
+
+    def test_unparseable_receipt_line_fails(self, tmp_path):
+        assets_dir = tmp_path / "assets"
+        assets_dir.mkdir()
+        assets = self._build_assets(assets_dir)
+        rec = assets["receipt"].read_text() + "this line has no key colon pair\n"
+        assets["receipt"].write_text(rec)
+        r = self._run(tmp_path, assets_dir)
+        out = r.stdout + r.stderr
+        assert r.returncode == 1, out[-800:]
+        assert "key: value" in out, out[-800:]
+
+    def test_live_0_12_0_assets_verify(self, tmp_path):
+        """The real 0.12.0 assets (the live release's) verify green
+        against their own receipt — the S3 trust surface, consumed."""
+        dist = _repo_root() / "dist"
+        ver = "0.12.0"
+        need = [f"hive-{ver}.tar.gz", f"hive-{ver}.sha256", f"hive-{ver}.receipt.txt"]
+        if not all((dist / n).is_file() for n in need):
+            pytest.skip(f"live 0.12.0 assets not present under {dist}")
+        assets_dir = tmp_path / "assets"
+        assets_dir.mkdir()
+        for n in need:
+            shutil.copy(dist / n, assets_dir / n)
+        bindir = tmp_path / "ghbin"
+        bindir.mkdir()
+        (bindir / "gh").write_text(
+            "#!/bin/sh\n"
+            "dir=\n"
+            "prev=\n"
+            'for a in "$@"; do\n'
+            '  [ "$prev" = "--dir" ] && dir="$a"\n'
+            '  prev="$a"\n'
+            "done\n"
+            f'cp "{assets_dir}"/hive-{ver}.* "$dir"/\n'
+            "exit 0\n")
+        (bindir / "gh").chmod(0o755)
+        r = subprocess.run(
+            ["bash", str(_repo_root() / "packaging" / "verify-release.sh"),
+             f"v{ver}"],
+            capture_output=True, text=True, timeout=120,
+            env={**os.environ,
+                 "PATH": f"{bindir}{os.pathsep}{os.environ['PATH']}"})
+        out = r.stdout + r.stderr
+        assert r.returncode == 0, out[-800:]
+        assert "OK —" in out, out[-400:]
+
+
 class TestCutReceipt:
     """S3 (0.12) — every release carries a machine-verifiable cut
     receipt.
