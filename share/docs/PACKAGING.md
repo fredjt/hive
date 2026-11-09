@@ -228,8 +228,16 @@ Python 3.13, triggered by
 - **schedule** — weekly cron (`23 4 * * 1`, Mondays 04:23 UTC)
 - **workflow_dispatch** — manual: `gh workflow run scheduled.yml`
 
-First dispatch run (recorded per R3 — the figure lives in the tree,
-not in prose): see below.
+**First dispatch run** (recorded per R3 — the figure lives in the
+tree, not in prose): run [42566985025](https://github.com/fredjt/hive/actions/runs/42566985025),
+2026-11-09, against commit `316a54f` (T2, on top of T1):
+**1,346 passed, 3 skipped in 272.78s** (full suite, Python 3.13,
+`-n auto`, GitHub ubuntu-latest). Skip list re-audited against the
+T5 (0.13) skip-reason contract — every skip names its condition:
+`test_python_surface_is_ruff_clean` (ruff not installed in the job),
+`test_full_install_touches_no_settings` (opt-in full-install round-
+trip, `HIVE_FULL_INSTALL_TEST=1`), `test_live_0_12_0_assets_verify`
+(live 0.12.0 assets not present in the CI checkout's dist/).
 
 ## Verifying a published release (one command)
 
