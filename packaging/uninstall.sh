@@ -9,6 +9,30 @@ set -euo pipefail
 INSTALL_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 BIN_LINK="${HOME}/.local/bin/hive"
 
+# T3 (0.14): --keep-tree — remove only the symlink + venv (the pre-0.14
+# behavior), even on a staged install that carries the install marker.
+KEEP_TREE=0
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --keep-tree) KEEP_TREE=1; shift ;;
+    -h|--help)
+      cat <<'EOF'
+Usage: uninstall.sh [--keep-tree]
+
+Removes the hive launcher symlink and the venv, runs the one-time
+legacy hook cleanup, and — when the install dir carries the
+.hive-install marker written by `install.sh --copy-to` (T3, 0.14) —
+removes the install tree itself (teardown mirrors setup: an
+uninstall removes what an install created). In-place installs (a git
+checkout, the operator's own tree) carry no marker and keep the
+tree, as before. --keep-tree forces the old behavior on a marked
+install (symlink + venv only).
+EOF
+      exit 0 ;;
+    *) echo "Unknown option: $1" >&2; exit 1 ;;
+  esac
+done
+
 [ -L "$BIN_LINK" ] && rm "$BIN_LINK" && echo "Removed $BIN_LINK"
 [ -d "$INSTALL_DIR/venv" ] && rm -rf "$INSTALL_DIR/venv" && echo "Removed venv"
 
@@ -86,8 +110,32 @@ hive_legacy_hook_cleanup() {
 
 hive_legacy_hook_cleanup
 
-echo ""
-echo "Hive uninstalled. The source tree at $INSTALL_DIR is untouched — delete it"
-echo "manually if you want to fully remove Hive."
-echo ""
-echo "Per-project .company/ workspaces are also untouched."
+# T3 (0.14): teardown mirrors setup. install.sh --copy-to wrote the
+# .hive-install marker into the install root — the dir is a staged
+# COPY the install created, so the uninstall removes the whole tree
+# (no symlink, no venv, no tree — a scratch install is fully
+# re-created by a fresh install). In-place installs (a git checkout,
+# the operator's own tree) carry no marker: the tree is the
+# operator's work and is kept, as before. --keep-tree forces the old
+# behavior on a marked install.
+MARKER="$INSTALL_DIR/.hive-install"
+if [ "$KEEP_TREE" = "1" ]; then
+  echo ""
+  echo "Hive uninstalled (symlink + venv removed; install tree kept per --keep-tree)."
+  echo "Per-project .company/ workspaces are also untouched."
+elif [ -f "$MARKER" ]; then
+  echo ""
+  echo "Staged install (marker: $MARKER) — removing the install tree the"
+  echo "install created: $INSTALL_DIR"
+  # The script is reading from this tree — exec a fresh shell so the rm
+  # does not race the running script's own file (bash reads its script
+  # incrementally). The caller sees rm's exit status as uninstall's.
+  exec sh -c 'rm -rf -- "$1"' _ "$INSTALL_DIR"
+else
+  echo ""
+  echo "Hive uninstalled. The source tree at $INSTALL_DIR is untouched (in-place"
+  echo "install — no install marker; the tree is the operator's work) — delete it"
+  echo "manually if you want to fully remove Hive."
+  echo ""
+  echo "Per-project .company/ workspaces are also untouched."
+fi

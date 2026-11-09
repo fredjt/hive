@@ -205,15 +205,28 @@ gets a WARN, not a FAIL).
 - `.company/`, `.worktrees/` (per-project test artifacts)
 - `node_modules/` (dashboard has zero npm deps anyway)
 
-## Uninstall
+## Uninstall (T3, 0.14 — teardown mirrors setup)
 
 ```bash
 bash ~/.local/share/hive/packaging/uninstall.sh
 ```
 
-Removes the venv and the `~/.local/bin/hive` symlink. Source tree and any
-project `.company/` directories are left alone — delete them manually if you
-want a full purge.
+Removes the venv and the `~/.local/bin/hive` symlink, and runs the
+one-time legacy hook cleanup. What happens to the install tree
+depends on who created it:
+
+- **Staged install** (`install.sh --copy-to` — the dir carries the
+  `.hive-install` marker the installer wrote): the uninstall removes
+  the WHOLE install tree — no tree, no venv, no symlink. The scratch
+  install is fully re-created by a fresh install.
+- **In-place install** (a git checkout / the operator's own tree — no
+  marker): the tree is the operator's work and is kept, as before —
+  delete it manually if you want to fully remove Hive. The
+  discriminator is the marker, not `.git`.
+
+`uninstall.sh --keep-tree` is the escape hatch: on a marked install
+it keeps the tree and removes only the symlink + venv (the pre-0.14
+behavior). Project `.company/` directories are never touched.
 
 ## CI — the scheduled 3.13 full row (T2, 0.14)
 

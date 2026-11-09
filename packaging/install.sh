@@ -84,6 +84,22 @@ if [ "$INSTALL_DIR" != "$SOURCE_DIR" ]; then
       exit 1
     fi
   done < <(required_entries "$SOURCE_DIR/packaging/required-entries.list" REQUIRED)
+
+  # T3 (0.14): the install marker. This dir is a STAGED COPY made by
+  # this install — teardown mirrors setup: uninstall.sh removes the
+  # install dir itself ONLY on this marker (an uninstall removes what
+  # an install created). In-place installs (a git checkout, the
+  # operator's own tree) write no marker: the tree is the operator's
+  # work, and removing it would destroy it. The marker is a root FILE
+  # written at install time — not part of the entry set, never in the
+  # tarball, and neutral to the doctor installed-set check (pinned by
+  # a regression test).
+  {
+    echo "version=$(tr -d '[:space:]' < "$SOURCE_DIR/VERSION" 2>/dev/null || echo unknown)"
+    echo "installed_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    echo "mode=copy-to"
+  } > "$INSTALL_DIR/.hive-install"
+  echo "  Install marker written: $INSTALL_DIR/.hive-install"
 fi
 
 echo "Installing Hive at $INSTALL_DIR"

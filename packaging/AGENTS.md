@@ -13,7 +13,7 @@ This directory contains the packaging artifacts: installers, the build script, a
 | `install.sh` | Main installer — creates Python venv (uv or stdlib), installs deps, chmods scripts, symlinks `hive` onto PATH. Does NOT touch agent settings (0.6.0: the built-in harness is the agent runtime) |
 | `install-online.sh` | Remote one-liner installer (`curl | sh`) — downloads a tarball, verifies checksum, delegates to `install.sh` |
 | `build-package.sh` | Produces a redistributable `dist/hive-<version>.tar.gz` + `.sha256` from the source tree |
-| `uninstall.sh` | Removes the `hive` symlink and venv and runs the one-time legacy cleanup of stale agent hook registrations; leaves source tree and `.company/` workspaces untouched |
+| `uninstall.sh` | Removes the `hive` symlink and venv and runs the one-time legacy cleanup of stale agent hook registrations; on a staged install (the `.hive-install` marker from `install.sh --copy-to`, T3 0.14) it also removes the install tree — in-place installs keep their tree; `--keep-tree` forces the old behavior; `.company/` workspaces are never touched |
 | `pyproject.toml` | Python project metadata (setuptools) — defines `hive-os` package, entry point `hive → hive_cli.main:main` |
 | `requirements.txt` | Floor-pinned Python dependencies: mcp, fastapi, uvicorn, httpx, tomli |
 | `requirements.lock.txt` | The venv lock (T1, 0.14) — EXACT pins per name in requirements.txt, marker-aware; install.sh installs from it, the build self-verifies it, doctor cross-checks the venv against it |

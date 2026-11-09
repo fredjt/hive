@@ -1853,6 +1853,21 @@ class TestDoctorInstalledSet:
         c = self._installed_check(tmp_path, root)
         assert c["ok"], f"dev install (no manifest) must not fail: {c}"
 
+    def test_install_marker_is_neutral_to_the_check(self, tmp_path):
+        """(f) T3 (0.14): the .hive-install marker (written by
+        install.sh --copy-to at the install root) must not affect the
+        installed-set check — it is a root FILE outside the entry set
+        and the manifest, and the state-free rule checks STATE dirs,
+        never the marker."""
+        entries = list(self.REQUIRED) + ["MANIFEST.txt"]
+        root = self._install(tmp_path / "install", entries)
+        (root / ".hive-install").write_text(
+            "version=0.13.0\ninstalled_at=2026-11-09T00:00:00Z\n"
+            "mode=copy-to\n")
+        c = self._installed_check(tmp_path, root)
+        assert c["ok"], f"the install marker must not fail the check: {c}"
+        assert ".hive-install" not in c["detail"], c
+
 
 @pytest.fixture(scope="session")
 def _venv_lock_base(tmp_path_factory):

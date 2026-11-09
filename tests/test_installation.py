@@ -1479,6 +1479,9 @@ class TestInstallCopyToEntrySet:
         "bin", "lib", "etc", "share", "packaging", "VERSION",
         "README.md", "INSTALL", "LICENSE", "CHANGELOG.md",
         "CONTRIBUTING.md", "SECURITY.md", "venv",
+        # T3 (0.14): the install marker (install.sh --copy-to writes it
+        # at the install root; uninstall.sh removes the tree on it).
+        ".hive-install",
     }
 
     @staticmethod
@@ -2216,3 +2219,151 @@ class TestRequiredEntriesConstant:
             "the tarball does not ship "
             "packaging/required-entries.list — the doctor installed-set "
             "check could not run from an install")
+
+
+class TestUninstallParity:
+    """T3 (0.14) — teardown mirrors setup: an uninstall removes what
+    an install created.
+
+    install.sh --copy-to writes a .hive-install marker into the
+    install root (the dir is a staged COPY the install created);
+    uninstall.sh removes the whole install tree ONLY on that marker
+    (no tree, no venv, no symlink). In-place installs (a git
+    checkout, the operator's own tree) write no marker and keep the
+    tree — the marker, not .git, is the discriminator. --keep-tree
+    is the escape hatch (symlink + venv only, the pre-0.14
+    behavior). Venvs are stubbed (the install.sh reuse path runs a
+    no-op pip) — the marker and the teardown are what these tests
+    assert on, no network.
+    """
+
+    @staticmethod
+    def _stub_venv(install_dir: Path) -> None:
+        vbin = install_dir / "venv" / "bin"
+        vbin.mkdir(parents=True)
+        for tool in ("pip", "python"):
+            p = vbin / tool
+            p.write_text("#!/bin/sh\nexit 0\n")
+            p.chmod(0o755)
+
+    @classmethod
+    def _copy_to_install(cls, tree: Path, install_dir: Path,
+                         home: Path) -> subprocess.CompletedProcess:
+        cls._stub_venv(install_dir)
+        return subprocess.run(
+            ["bash", str(tree / "packaging" / "install.sh"),
+             "--copy-to", str(install_dir),
+             "--bin-link", str(home / ".local" / "bin" / "hive")],
+            capture_output=True, text=True, timeout=600,
+            cwd=str(tree), env={**os.environ, "HOME": str(home)})
+
+    @classmethod
+    def _in_place_install(cls, tree: Path,
+                          home: Path) -> subprocess.CompletedProcess:
+        cls._stub_venv(tree)
+        return subprocess.run(
+            ["bash", str(tree / "packaging" / "install.sh"),
+             "--bin-link", str(home / ".local" / "bin" / "hive")],
+            capture_output=True, text=True, timeout=600,
+            cwd=str(tree), env={**os.environ, "HOME": str(home)})
+
+    @staticmethod
+    def _uninstall(install_dir: Path, home: Path,
+                   extra=None) -> subprocess.CompletedProcess:
+        # cwd OUTSIDE the install dir: on a marked install the uninstall
+        # execs an rm of the tree it is running from. HOME is the TEST
+        # home — the symlink the install created lives there (an
+        # inherited HOME would point the symlink removal at the
+        # operator's real ~/.local/bin).
+        return subprocess.run(
+            ["bash", str(install_dir / "packaging" / "uninstall.sh")]
+            + (extra or []),
+            capture_output=True, text=True, timeout=300,
+            cwd=str(install_dir.parent),
+            env={**os.environ, "HOME": str(home)})
+
+    def test_marker_written_on_copy_to_install(self, dirty_tree, tmp_path):
+        home = tmp_path / "home"
+        home.mkdir()
+        install_dir = tmp_path / "install"
+        r = self._copy_to_install(dirty_tree, install_dir, home)
+        assert r.returncode == 0, r.stdout + "\n" + r.stderr
+        marker = install_dir / ".hive-install"
+        assert marker.is_file(), "the staged install must carry the marker"
+        text = marker.read_text()
+        assert "mode=copy-to" in text, text
+        assert f"version={(dirty_tree / 'VERSION').read_text().strip()}" in text, text
+
+    def test_marker_absent_on_in_place_install(self, dirty_tree, tmp_path):
+        home = tmp_path / "home"
+        home.mkdir()
+        r = self._in_place_install(dirty_tree, home)
+        assert r.returncode == 0, r.stdout + "\n" + r.stderr
+        assert not (dirty_tree / ".hive-install").exists(), (
+            "an in-place install must not write the marker — the tree "
+            "is the operator's work")
+
+    def test_copy_to_uninstall_removes_everything(self, dirty_tree,
+                                                  tmp_path):
+        """Scratch --copy-to install + uninstall leaves NOTHING: no
+        tree, no venv, no symlink."""
+        home = tmp_path / "home"
+        home.mkdir()
+        install_dir = tmp_path / "install"
+        r = self._copy_to_install(dirty_tree, install_dir, home)
+        assert r.returncode == 0, r.stdout + "\n" + r.stderr
+        assert (install_dir / ".hive-install").is_file()
+        ru = self._uninstall(install_dir, home)
+        assert ru.returncode == 0, ru.stdout + "\n" + ru.stderr
+        assert not install_dir.exists(), \
+            "the staged install tree must be removed by the uninstall"
+        link = home / ".local" / "bin" / "hive"
+        assert not link.exists() and not link.is_symlink(), \
+            "the launcher symlink must be gone"
+        assert not (install_dir / "venv").exists()
+
+    def test_in_place_git_tree_is_kept(self, dirty_tree, tmp_path):
+        """An in-place install in a GIT tree (a working checkout) keeps
+        the tree on uninstall (no marker → nothing to remove)."""
+        (dirty_tree / ".git").mkdir(exist_ok=True)
+        home = tmp_path / "home"
+        home.mkdir()
+        r = self._in_place_install(dirty_tree, home)
+        assert r.returncode == 0, r.stdout + "\n" + r.stderr
+        ru = self._uninstall(dirty_tree, home)
+        assert ru.returncode == 0, ru.stdout + "\n" + ru.stderr
+        assert dirty_tree.is_dir() and (dirty_tree / "bin" / "hive").is_file(), \
+            "the in-place (git) tree must survive the uninstall"
+        assert not (dirty_tree / "venv").exists(), \
+            "the venv must still be removed"
+        assert "install tree at" in ru.stdout or "untouched" in ru.stdout
+
+    def test_in_place_non_git_dir_is_kept(self, dirty_tree, tmp_path):
+        """The marker — NOT .git — is the discriminator: an in-place
+        install in a plain (non-git) dir also keeps the tree."""
+        home = tmp_path / "home"
+        home.mkdir()
+        r = self._in_place_install(dirty_tree, home)
+        assert r.returncode == 0, r.stdout + "\n" + r.stderr
+        ru = self._uninstall(dirty_tree, home)
+        assert ru.returncode == 0, ru.stdout + "\n" + ru.stderr
+        assert dirty_tree.is_dir() and (dirty_tree / "bin" / "hive").is_file(), \
+            "the in-place (non-git) tree must survive the uninstall"
+        assert not (dirty_tree / ".hive-install").exists()
+
+    def test_keep_tree_escape_hatch(self, dirty_tree, tmp_path):
+        """--keep-tree on a marked (staged) install keeps the tree —
+        the pre-0.14 behavior — and still removes symlink + venv."""
+        home = tmp_path / "home"
+        home.mkdir()
+        install_dir = tmp_path / "install"
+        r = self._copy_to_install(dirty_tree, install_dir, home)
+        assert r.returncode == 0, r.stdout + "\n" + r.stderr
+        ru = self._uninstall(install_dir, home, ["--keep-tree"])
+        assert ru.returncode == 0, ru.stdout + "\n" + ru.stderr
+        assert install_dir.is_dir() and \
+            (install_dir / ".hive-install").is_file(), \
+            "--keep-tree must keep the install tree (marker included)"
+        assert not (install_dir / "venv").exists()
+        link = home / ".local" / "bin" / "hive"
+        assert not link.exists() and not link.is_symlink()
