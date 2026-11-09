@@ -188,6 +188,15 @@ echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) $SPAWN_ID agent=$HIVE_AGENT role=${HIVE_ROL
 # `hive doctor` — which checks the venv interpreter — reports all green.
 # (INSTALL_DIR was already resolved + exported in the D2 block above:
 # HIVE_INSTALL_DIR if set, else this script's own install location.)
+# G4 stream exclusion: the harness's sandbox attributes any .company
+# mutation during a command to that command — including the tee below
+# appending this spawn's own stream events to $STREAM_FILE between the
+# harness's before/after snapshots (race: the flake that turned
+# test_spawn_env red on CI, 2026-11-08 — a spawn "failing" on its own
+# telemetry). Tell the harness which stream file is its own so it can
+# exclude it from the mutation diff.
+export HIVE_STREAM_FILE="$STREAM_FILE"
+
 HARNESS_PY="python3"
 if [ -x "$INSTALL_DIR/venv/bin/python" ]; then
   HARNESS_PY="$INSTALL_DIR/venv/bin/python"

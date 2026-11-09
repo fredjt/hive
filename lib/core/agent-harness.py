@@ -318,6 +318,23 @@ def run_shell_command(cmd_line: str, cwd: str | None = None,
     # G4 backstop: a killed/timed-out command may still have written.
     if before is not None:
         mutated = _company_diff(before, _snapshot_company(company))
+        # The spawn wrapper (agent-spawn.sh) tees this harness's stdout
+        # into .company/logs/streams/<id>.jsonl. tee's appends of the
+        # harness's OWN stream events (the tool_use line printed just
+        # before the command, flushed between the two snapshots) land in
+        # the diff and get attributed to the agent's command — a race
+        # (2026-11-08 CI flake: test_spawn_env failed with its own
+        # stream file "modified", exit 1 on clean spawns). The current
+        # spawn's own stream file is harness telemetry, not a command
+        # mutation: exclude exactly that path (HIVE_STREAM_FILE, set by
+        # agent-spawn.sh).
+        own_stream = os.environ.get("HIVE_STREAM_FILE")
+        if own_stream and company:
+            try:
+                rel = os.path.relpath(own_stream, company)
+                mutated = [m for m in mutated if m != rel]
+            except ValueError:
+                pass  # different drive (Windows) — cannot relativize
         if mutated:
             out["company_mutated"] = mutated
     return out

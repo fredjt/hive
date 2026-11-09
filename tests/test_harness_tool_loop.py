@@ -17,6 +17,7 @@ import re
 import socket
 import subprocess
 import sys
+import shlex
 import tempfile
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -423,3 +424,98 @@ def test_round_trip_without_mcp_sdk_installed(mcp_http_server, tmp_path):
     finally:
         llm_server.shutdown()
         llm_server.server_close()
+
+
+def _load_harness_module():
+    """Import lib/core/agent-harness.py in-process (dash-safe module
+    name; lib/core is on sys.path so its sibling imports resolve)."""
+    import importlib.util
+    core = REPO / "lib" / "core"
+    if str(core) not in sys.path:
+        sys.path.insert(0, str(core))
+    spec = importlib.util.spec_from_file_location(
+        "agent_harness_under_test", core / "agent-harness.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+class TestOwnStreamFileExcludedFromSandboxDiff:
+    """Follow-up to the T1 CI flake (0.13): the harness's OWN stream
+    file must never be attributed to the agent's command by the G4
+    mutation backstop.
+
+    agent-spawn.sh TEES the harness stdout into
+    .company/logs/streams/<id>.jsonl; the harness's own event lines
+    (assistant/tool_use, flushed by tee between the command's before/
+    after snapshots) used to land in the diff and flag the command
+    with a sandbox violation — the 2026-11-08 CI flake turned
+    test_spawn_env red (spawn exit 1 on its own telemetry, twice on
+    consecutive 3.12 full rows). The spawn wrapper now exports
+    HIVE_STREAM_FILE; run_shell_command excludes exactly that file
+    from company_mutated (writes to any OTHER .company path are still
+    flagged — the exclusion is precise, not blanket).
+    """
+
+    def test_command_write_to_own_stream_file_not_flagged(self, tmp_path,
+                                                          monkeypatch):
+        company = tmp_path / ".company"
+        company.mkdir()
+        stream = company / "logs" / "streams" / "spawn-t-1.jsonl"
+        stream.parent.mkdir(parents=True)
+        monkeypatch.setenv("HIVE_STREAM_FILE", str(stream))
+        h = _load_harness_module()
+        r = h.run_shell_command("echo own-event >> " + shlex.quote(str(stream)),
+                                cwd=str(tmp_path),
+                                company_dir=str(company))
+        assert r["ok"], r
+        assert r.get("company_mutated") in (None, []), (
+            "the spawn's own stream file was flagged as a command "
+            f"mutation: {r.get('company_mutated')}")
+
+    def test_command_write_to_other_state_still_flagged(self, tmp_path,
+                                                        monkeypatch):
+        company = tmp_path / ".company"
+        (company / "tickets").mkdir(parents=True)
+        stream = company / "logs" / "streams" / "spawn-t-1.jsonl"
+        stream.parent.mkdir(parents=True)
+        monkeypatch.setenv("HIVE_STREAM_FILE", str(stream))
+        h = _load_harness_module()
+        other = company / "tickets" / "rogue.json"
+        r = h.run_shell_command("echo state >> " + shlex.quote(str(other)),
+                                cwd=str(tmp_path),
+                                company_dir=str(company))
+        assert r["ok"], r
+        assert r.get("company_mutated") == ["tickets/rogue.json"], (
+            "a real state write must still be flagged even with "
+            f"HIVE_STREAM_FILE set: {r.get('company_mutated')}")
+
+    def test_externally_flushed_own_stream_not_flagged(self, tmp_path,
+                                                       monkeypatch):
+        """Deterministic shape of the race: an EXTERNAL writer (the tee
+        process) appends to the own stream file while the command is
+        running — inside the snapshot window, exactly as tee does."""
+        company = tmp_path / ".company"
+        company.mkdir()
+        stream = company / "logs" / "streams" / "spawn-t-1.jsonl"
+        stream.parent.mkdir(parents=True)
+        monkeypatch.setenv("HIVE_STREAM_FILE", str(stream))
+        h = _load_harness_module()
+        import threading
+
+        def _tee_writer():
+            time.sleep(0.1)
+            with open(stream, "a") as f:
+                f.write('{"type": "tool_use", "tool": "bash"}\n')
+
+        t = threading.Thread(target=_tee_writer, daemon=True)
+        t.start()
+        r = h.run_shell_command("sleep 0.4", cwd=str(tmp_path),
+                                company_dir=str(company))
+        t.join()
+        assert r["ok"], r
+        assert "logs/streams/spawn-t-1.jsonl" not in \
+            (r.get("company_mutated") or []), (
+            "the own stream file appeared in the mutation diff — the "
+            "tee-append race is back: "
+            f"{r.get('company_mutated')}")
