@@ -1,5 +1,86 @@
 # Changelog
 
+## 0.13.0
+
+The loop-closer release.
+0.12 built the trust surface — manifest, entry set, receipt — and
+0.13 wires its consumers: the CI matrix that was designed but could
+not be pushed (T1), the structural pass 0.12 could only start (T2),
+a doctor check that re-verifies the installed set at runtime (T3),
+one-command verification of any published release (T4), and 3.13
+confidence plus the skip audit (T5). No new features, no new agent
+roles, no lifecycle reordering.
+
+### CI matrix landed (T1, 432c2b8, 8480c47)
+- The 0.12 S4 matrix — full suite on 3.12, version-sensitive subset
+  on 3.10 and 3.13 — is on main and green: three test rows per push.
+  The subset rows carry the config-load/tomli-fallback surface, the
+  CLI smoke, and an import smoke; the tomli-fallback break was
+demonstrated ON CI in a throwaway PR (all three rows red, closed
+  unmerged), proving a subset row catches a version-sensitive break
+  without the full suite.
+- Per-push wall time vs the pre-matrix 2x-full runs: the 3.12 full
+  row is 165.5s (1,311 tests) against the old slower row's 210.7s,
+  and the two subset rows add ~1m of parallel wall. The figure lives
+  in the commit (R3), not in prose.
+- Two CI-flake fixes landed as T1 follow-ups: `build-package.sh`
+  self-verifies the `MANIFEST.txt` member from its own tarball
+  before declaring success (e0a43a0), and the harness G4 sandbox no
+  longer flags the spawn's own stream file when a telemetry line
+  lands inside a command's snapshot window (4fcd11b).
+
+### The structural pass, finished (T2, 287ae69)
+- `test_sprint_lifecycle` now copies `lib/` from a session-scoped
+  HARDLINK base (once per xdist worker); the one file a test
+  rewrites in place (`lib/core/agent-spawn.sh`) comes from a
+  write-target denylist as a real copy, so a write can never go
+  through a shared inode into the base. The denylist is pinned by a
+  static contract test.
+- `test_commands`' doctor-probe family builds its venv ONCE per
+  worker (session base) instead of per test; probes are read-only
+  against the install root. Pinned by a static contract test.
+- No test's intent changed: setup cost moved, assertions did not.
+
+### Installed-set integrity (T3, c905915)
+- `hive doctor` (and `--json`) re-verifies the INSTALLED set at
+  runtime — not just at install time: the installed `MANIFEST.txt`
+  (S1's bill of materials) is present, every entry of the required
+  set is present at the install root, and no runtime-state entry is
+  present (the state-free rule of gate 4). Failures name each
+  missing or foreign entry. The required set and the state-free rule
+  come from ONE constant shared by cut gate 4, `install.sh`'s
+  post-stage check, and this check — "one list, four consumers".
+
+### Receipt consumer (T4, 5a5bc58)
+- `packaging/verify-release.sh <tag>` verifies a PUBLISHED release
+  in one command: it fetches the receipt, tarball, and sha256
+  sidecar from the release; checks the sidecar against the
+  downloaded tarball; the receipt's tarball sha256 line; the
+  receipt's manifest digest against the tarball's `MANIFEST.txt`
+  member; and that the receipt parses as `key: value` lines carrying
+  every required key. Exit 0/1, naming each failure, and it prints
+  the commit + release URL for the human. It stays in `packaging/`
+  (not a CLI command — 0.13 is feature-light).
+
+### 3.13 confidence + skip audit (T5, ceeede2)
+- One full-suite run on Python 3.13 on the 0.13 reference box:
+  1334 passed, 6 skipped (-n 8). A confidence datum, not a CI row —
+  the subset row stays the 3.13 CI design.
+- Skip-reason contract guard: every `pytest.skip` /
+  `@pytest.mark.skip` / `@pytest.mark.skipif` in `tests/` must carry
+  a static, non-trivial reason naming the condition, so the skip
+  list stays auditable from the tree.
+- The audit found and fixed one silent hole: the "every shipped JSON
+  is valid" test had been auto-skipping every run (its parametrize
+  globbed the pre-flat-repo nested layout — zero matches). It now
+  parametrizes over the shipped set from `packaging/entries.list`.
+
+### The cut's gate-2 default (T6, efbb807)
+- `cut-release.sh`'s gate-2 suite default is now the S5 primary loop
+  (`python -m pytest tests/ -q -n 8`); the 0.12 cut had to pass the
+  flag explicitly or pay ~11 min of serial gate-2 wall. Serial stays
+  available via `--suite`.
+
 ## 0.12.0
 
 The installable-and-verifiable release.
