@@ -57,7 +57,186 @@ mkdir -p "$OUT_DIR"
 
 # Build a clean copy in a temp dir so we can prune without disturbing the source
 STAGE="$(mktemp -d -t hive-build-XXXXXX)"
-trap 'rm -rf "$STAGE"' EXIT
+CLEANUP_PATHS=("$STAGE")
+trap 'rm -rf "${CLEANUP_PATHS[@]}"' EXIT
+
+# ---------------------------------------------------------------------------
+# T1 (0.14): self-verify the venv lock (packaging/requirements.lock.txt).
+# The lock is the released Python environment — the part of the install
+# the operator actually RUNS. requirements.txt carries floors only, so
+# an install on a different date resolves a different set; the manifest
+# covers the FILES, the receipt the digests, the doctor installed-set
+# check presence — this is the check the RESOLVED versions had before.
+# The PRODUCER looks at its own output (the e0a43a0 lesson, applied):
+#   (1) the lock exists
+#   (2) every name in requirements.txt has a pin in the lock and the pin
+#       satisfies the floor — a miss fails the build, naming the entry
+#   (3) a venv built from the lock imports the runtime set (the
+#       selftest probe). The producer (the cut, a hand build) builds the
+#       venv FRESH; HIVE_LOCK_VENV may point at a venv the caller already
+#       built from the lock (the test-suite session builds one) — then
+#       the build verifies THAT venv's resolved versions against the
+#       lock instead of paying the network install per build.
+# No new cut gate — the receipt schema and the gate-0..7 keys stay
+# untouched; this is the build verifying itself before it ships.
+# ---------------------------------------------------------------------------
+LOCK="$SOURCE_DIR/packaging/requirements.lock.txt"
+REQUIREMENTS="$SOURCE_DIR/packaging/requirements.txt"
+RUNTIME_IMPORT_PROBE="import mcp; import fastapi; import httpx; import sys; (__import__('tomllib') if sys.version_info >= (3,11) else __import__('tomli'))"
+
+echo "Verifying the venv lock (packaging/requirements.lock.txt) ..."
+if [ ! -f "$LOCK" ]; then
+  { echo "FAIL: packaging/requirements.lock.txt is missing — the install's"
+    echo "      Python environment must be a reproducible artifact (T1, 0.14)."
+    echo "      Regenerate: bash packaging/refresh-venv-lock.sh"
+  } >&2
+  exit 1
+fi
+
+LOCK_FAIL="$(python3 - "$REQUIREMENTS" "$LOCK" <<'PYEOF'
+import re
+import sys
+
+
+def parse_reqs(path):
+    out = []
+    for raw in open(path):
+        line = raw.split("#", 1)[0].strip()
+        if not line:
+            continue
+        req, _, _marker = line.partition(";")
+        m = re.match(r"^([A-Za-z0-9._-]+)(\[[^\]]*\])?\s*>=\s*([0-9][0-9.]*)",
+                     req.strip())
+        out.append((m.group(1), m.group(3)) if m else (None, req))
+    return out
+
+
+def parse_lock(path):
+    out = {}
+    for raw in open(path):
+        line = raw.split("#", 1)[0].strip()
+        m = re.match(r"^([A-Za-z0-9._-]+)(\[[^\]]*\])?==([0-9][0-9.]*)",
+                     line)
+        if m:
+            out[m.group(1).lower()] = (m.group(3), line)
+    return out
+
+
+def vtuple(v):
+    return tuple(int(x) for x in re.findall(r"\d+", v)[:4])
+
+
+reqs = parse_reqs(sys.argv[1])
+lock = parse_lock(sys.argv[2])
+for name, floor in reqs:
+    if name is None:
+        print(f"{floor}: requirements.txt line is not a name>=floor pin")
+        continue
+    if name.lower() not in lock:
+        print(f"{name}: no pin in the lock (requirements.txt wants {name}>="
+              f"{floor})")
+        continue
+    pinned, line = lock[name.lower()]
+    if vtuple(pinned) < vtuple(floor):
+        print(f"{name}: lock pin {pinned} is below the requirements.txt "
+              f"floor >={floor} ({line})")
+PYEOF
+)"
+if [ -n "$LOCK_FAIL" ]; then
+  { echo "FAIL: the venv lock no longer covers requirements.txt:"
+    printf '%s\n' "$LOCK_FAIL" | sed 's/^/      /'
+    echo "      Refresh: bash packaging/refresh-venv-lock.sh"
+  } >&2
+  exit 1
+fi
+echo "    lock covers requirements.txt (every name pinned above its floor)"
+
+if [ -n "${HIVE_LOCK_VENV:-}" ]; then
+  LPY="$HIVE_LOCK_VENV/bin/python"
+  if [ ! -x "$LPY" ]; then
+    { echo "FAIL: HIVE_LOCK_VENV=$HIVE_LOCK_VENV has no executable"
+      echo "      bin/python — the caller promised a venv built from the lock"
+    } >&2
+    exit 1
+  fi
+  MISMATCHES="$("$LPY" - "$LOCK" <<'PYEOF'
+import re
+import sys
+import importlib.metadata as meta
+
+for raw in open(sys.argv[1]):
+    line = raw.split("#", 1)[0].strip()
+    m = re.match(r"^([A-Za-z0-9._-]+)(\[[^\]]*\])?==([0-9][0-9.]*)"
+                 r"\s*(?:;\s*(.*))?$", line)
+    if not m:
+        continue
+    name, pinned, marker = m.group(1), m.group(3), (m.group(4) or "").strip()
+    # A conditional pin whose marker does not apply to THIS interpreter
+    # (tomli on 3.11+) is not installed here — the lock line's marker
+    # is the reason; skip it.
+    if marker:
+        mm = re.match(r'python_version\s*([<>=!]+)\s*"?([0-9.]+)"?', marker)
+        if mm:
+            op = mm.group(1)
+            ver = tuple(int(x) for x in mm.group(2).split("."))
+            vi = sys.version_info[:len(ver)]
+            applies = {"<": vi < ver, "<=": vi <= ver, ">": vi > ver,
+                       ">=": vi >= ver, "==": vi == ver,
+                       "!=": vi != ver}.get(op, True)
+            if not applies:
+                continue
+    try:
+        inst = meta.version(name)
+    except meta.PackageNotFoundError:
+        print(f"{name}: not installed in the lock venv (the lock pins "
+              f"{pinned})")
+        continue
+    if inst != pinned:
+        print(f"{name}: the lock venv resolved {inst}, the lock pins "
+              f"{pinned}")
+PYEOF
+)"
+  if [ -n "$MISMATCHES" ]; then
+    { echo "FAIL: $HIVE_LOCK_VENV does not match the lock — the venv"
+      echo "      was not built from packaging/requirements.lock.txt:"
+      printf '%s\n' "$MISMATCHES" | sed 's/^/      /'
+    } >&2
+    exit 1
+  fi
+  if ! "$LPY" -c "$RUNTIME_IMPORT_PROBE"; then
+    { echo "FAIL: the lock venv ($HIVE_LOCK_VENV) does not import the"
+      echo "      runtime set (mcp, fastapi, httpx, tomllib/tomli)"
+    } >&2
+    exit 1
+  fi
+  echo "    lock venv matches the lock; the runtime set imports"
+else
+  LOCK_VENV_DIR="$(mktemp -d -t hive-lock-venv-XXXXXX)"
+  CLEANUP_PATHS+=("$LOCK_VENV_DIR")
+  echo "  Building a FRESH venv from the lock (selftest probe) ..."
+  if ! python3 -m venv "$LOCK_VENV_DIR"; then
+    { echo "FAIL: could not create the lock-verification venv (python3"
+      echo "      without the 'venv' module? on Debian/Ubuntu: sudo apt"
+      echo "      install python3-venv)"
+    } >&2
+    exit 1
+  fi
+  "$LOCK_VENV_DIR/bin/python" -m ensurepip --quiet 2>/dev/null || true
+  if ! "$LOCK_VENV_DIR/bin/pip" install --quiet -r "$LOCK"; then
+    { echo "FAIL: a fresh venv could not install the lock ("
+      echo "      packaging/requirements.lock.txt) — a pin no longer"
+      echo "      resolves. Refresh: bash packaging/refresh-venv-lock.sh"
+    } >&2
+    exit 1
+  fi
+  if ! "$LOCK_VENV_DIR/bin/python" -c "$RUNTIME_IMPORT_PROBE"; then
+    { echo "FAIL: a fresh venv built from the lock does not import the"
+      echo "      runtime set (mcp, fastapi, httpx, tomllib/tomli)"
+    } >&2
+    exit 1
+  fi
+  echo "    fresh venv from the lock imports the runtime set"
+fi
 
 echo "Staging Hive $VERSION → $STAGE/$PKG_NAME"
 mkdir -p "$STAGE/$PKG_NAME"

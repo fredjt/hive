@@ -15,7 +15,9 @@ This directory contains the packaging artifacts: installers, the build script, a
 | `build-package.sh` | Produces a redistributable `dist/hive-<version>.tar.gz` + `.sha256` from the source tree |
 | `uninstall.sh` | Removes the `hive` symlink and venv and runs the one-time legacy cleanup of stale agent hook registrations; leaves source tree and `.company/` workspaces untouched |
 | `pyproject.toml` | Python project metadata (setuptools) — defines `hive-os` package, entry point `hive → hive_cli.main:main` |
-| `requirements.txt` | Pinned minimum Python dependencies: mcp, fastapi, uvicorn, httpx, tomli |
+| `requirements.txt` | Floor-pinned Python dependencies: mcp, fastapi, uvicorn, httpx, tomli |
+| `requirements.lock.txt` | The venv lock (T1, 0.14) — EXACT pins per name in requirements.txt, marker-aware; install.sh installs from it, the build self-verifies it, doctor cross-checks the venv against it |
+| `refresh-venv-lock.sh` | Regenerates `requirements.lock.txt` from `requirements.txt` (fresh venv, PyPI resolution, exact pins written back) — run it when requirements.txt changes |
 
 ## Key behaviors
 
@@ -31,6 +33,7 @@ This directory contains the packaging artifacts: installers, the build script, a
 
 - Produces a deterministic tarball: sorted file list, zeroed owner/group, mtimes pinned to a stable per-release anchor (`SOURCE_DATE_EPOCH` > last commit touching `VERSION` > HEAD date > epoch 0).
 - Stages a clean copy in a temp dir, copies `bin lib etc share packaging VERSION`, adds README/LICENSE/INSTALL, then prunes `__pycache__`, `.git`, `venv`, `dist`, `.company`, `.worktrees`, `node_modules`, `.pyc`, `.DS_Store`, `.swp`.
+- Self-verifies the venv lock BEFORE staging (T1, 0.14): the lock exists, every name in requirements.txt has a pin satisfying its floor, and a venv built from the lock imports the runtime set (fresh for the producer; `HIVE_LOCK_VENV` points at a session-built venv — the test suite's path). A miss fails the build, naming the entry.
 - Reads version from the top-level `VERSION` file; override with `--version X.Y.Z`.
 - Output goes to `dist/hive-<version>.tar.gz` + `dist/hive-<version>.sha256`.
 
@@ -70,6 +73,9 @@ curl -fsSL <url-to-install-online.sh> | HIVE_PKG_URL=<tarball-url> sh
 
 # Uninstall
 bash packaging/uninstall.sh
+
+# Refresh the venv lock after a requirements.txt change (T1, 0.14)
+bash packaging/refresh-venv-lock.sh
 ```
 
 ## See also

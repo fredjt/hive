@@ -1074,6 +1074,10 @@ class TestShippingManifest:
         # T3 (0.13): the shared required-set constant ships too (the
         # doctor installed-set check reads it from the install).
         "packaging/required-entries.list",
+        # T1 (0.14): the venv lock — the install's Python environment
+        # is a reproducible artifact (install.sh installs from it;
+        # doctor's venv-lock check cross-checks the venv against it).
+        "packaging/requirements.lock.txt",
     )
 
     STATE_TOP = (".company", ".worktrees", "venv", "dist",
@@ -1333,6 +1337,125 @@ class TestBuildManifestSelfVerify:
         assert any(n.endswith("/MANIFEST.txt") for n in names), (
             "the healthy build's tarball must carry MANIFEST.txt"
         )
+
+
+@pytest.fixture(scope="session")
+def _fresh_lock_build(_dirty_base, tmp_path_factory):
+    """T1 (0.14): the producer's own FRESH-venv lock selftest, once
+    per session.
+
+    build-package.sh without HIVE_LOCK_VENV builds a real venv from
+    the lock and imports the runtime set — the check the cut runs.
+    The other build tests reuse the session lock venv (the conftest
+    fixture) so the suite pays the network install once; this fixture
+    is the dedicated coverage for the fresh path (it runs on exactly
+    one session — the test using it is distributed to one worker).
+    The tree and the venv are hive-* named scratch: T4's clean-scratch
+    reaps them."""
+    import shutil as _shutil
+    base = tmp_path_factory.mktemp("hive-fresh-lock")
+    tree = base / "tree"
+    _shutil.copytree(_dirty_base, tree)
+    r = subprocess.run(
+        ["bash", str(tree / "packaging" / "build-package.sh"),
+         "--out-dir", str(base / "dist")],
+        capture_output=True, text=True, timeout=1800,
+        cwd=str(tree),
+        env={k: v for k, v in os.environ.items()
+             if k != "HIVE_LOCK_VENV"},
+    )
+    return r
+
+
+class TestBuildLockVerify:
+    """T1 (0.14) — the build self-verifies the venv lock.
+
+    packaging/requirements.lock.txt is the released Python environment:
+    an exact pin for every name in requirements.txt. build-package.sh
+    verifies it BEFORE staging anything (the producer looks at its own
+    output — the e0a43a0 lesson applied to the runtime): (1) the lock
+    exists, (2) every name in requirements.txt has a pin in the lock
+    that satisfies the floor, (3) a venv built from the lock imports
+    the runtime set. A miss fails the build, naming the entry.
+    Red against the pre-T1 build, which never looked at the lock at
+    all (a drift in the venv's resolved versions was undetectable).
+    """
+
+    @staticmethod
+    def _build(tree: Path, out_dir: Path):
+        out_dir.mkdir(parents=True, exist_ok=True)
+        return subprocess.run(
+            ["bash", str(tree / "packaging" / "build-package.sh"),
+             "--out-dir", str(out_dir)],
+            capture_output=True, text=True, timeout=600,
+            cwd=str(tree),
+        )
+
+    def test_missing_lock_fails_naming_it(self, dirty_tree, tmp_path):
+        """(1) no lock file: the build fails naming the lock — the
+        install's Python environment must be a reproducible artifact."""
+        (dirty_tree / "packaging" / "requirements.lock.txt").unlink()
+        r = self._build(dirty_tree, tmp_path / "dist")
+        assert r.returncode != 0, (
+            "a build without the venv lock must fail:\n"
+            + r.stdout + "\n" + r.stderr)
+        out = r.stdout + r.stderr
+        assert "requirements.lock.txt" in out, (
+            "the failure must name the missing lock:\n" + out[-2000:])
+
+    def test_lock_missing_a_name_fails_naming_it(self, dirty_tree,
+                                                 tmp_path):
+        """(2a) a name in requirements.txt with no pin in the lock:
+        the build fails naming THAT name."""
+        lock = dirty_tree / "packaging" / "requirements.lock.txt"
+        lines = [l for l in lock.read_text().splitlines()
+                 if not l.lower().startswith("fastapi")]
+        assert len(lines) < lock.read_text().count("\n"), \
+            "the lock lost its fastapi line — update this test"
+        lock.write_text("\n".join(lines) + "\n")
+        r = self._build(dirty_tree, tmp_path / "dist")
+        assert r.returncode != 0, (
+            "a lock missing a required name must fail the build:\n"
+            + r.stdout + "\n" + r.stderr)
+        out = r.stdout + r.stderr
+        assert "fastapi" in out, (
+            "the failure must name the missing pin (fastapi):\n"
+            + out[-2000:])
+
+    def test_pin_below_the_floor_fails_naming_it(self, dirty_tree,
+                                                 tmp_path):
+        """(2b) a lock pin below the requirements.txt floor: the build
+        fails naming the name — a 'reproducible' env that drops below
+        the declared floor is not the released env."""
+        import re as _re
+        lock = dirty_tree / "packaging" / "requirements.lock.txt"
+        text = lock.read_text()
+        m = _re.search(r"^mcp==\S+", text, _re.M)
+        assert m, "the lock lost its mcp pin — update this test"
+        # mcp's floor is >=1.0 (requirements.txt); 0.9.0 sits below it.
+        lock.write_text(text.replace(m.group(0), "mcp==0.9.0", 1))
+        r = self._build(dirty_tree, tmp_path / "dist")
+        assert r.returncode != 0, (
+            "a lock pin below the floor must fail the build:\n"
+            + r.stdout + "\n" + r.stderr)
+        out = r.stdout + r.stderr
+        assert "mcp" in out and "floor" in out.lower(), (
+            "the failure must name mcp and the floor violation:\n"
+            + out[-2000:])
+
+    def test_fresh_venv_from_lock_imports_runtime_set(self,
+                                                      _fresh_lock_build):
+        """(3) the producer's own path: a FRESH venv built from the
+        lock imports the runtime set — no HIVE_LOCK_VENV, the network
+        install for real, once per session (the cut runs exactly this)."""
+        r = _fresh_lock_build
+        assert r.returncode == 0, (
+            "the producer's fresh-venv lock selftest must pass:\n"
+            + r.stdout[-3000:] + "\n" + r.stderr[-3000:])
+        out = r.stdout + r.stderr
+        assert "fresh venv from the lock imports the runtime set" in out, (
+            "the fresh-venv probe did not run (HIVE_LOCK_VENV leaked in?)"
+            ":\n" + out[-2000:])
 
 
 class TestInstallCopyToEntrySet:

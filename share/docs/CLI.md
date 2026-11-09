@@ -187,3 +187,11 @@ constant `packaging/required-entries.list`, and fails naming each
 missing required entry or foreign runtime-state entry. A dev install
 (from a git checkout, where the build generates the manifest) gets a
 WARN, not a FAIL.
+
+…and the **venv lock** (T1, 0.14): the installed venv must resolve to
+the versions the release locked (`packaging/requirements.lock.txt` — the
+reproducible Python environment). A drifted package is named with the
+locked and the installed version; an install without a lock (pre-0.14)
+reports the resolved versions without a FAIL. Refresh the lock when
+`requirements.txt` changes: `bash packaging/refresh-venv-lock.sh`
+(see PACKAGING.md, "The venv lock").

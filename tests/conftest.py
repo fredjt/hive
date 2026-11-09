@@ -2,6 +2,7 @@
 import json
 import os
 import shutil
+import subprocess
 import sys
 import tempfile
 from pathlib import Path
@@ -72,6 +73,51 @@ def get_install_dir():
     """Return the hive install directory (absolute path)."""
     # The hive source is at the repo root, not in a subdirectory
     return Path(__file__).resolve().parent.parent
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _venv_lock_env(tmp_path_factory):
+    """T1 (0.14): one venv per session, built from the repo's venv lock,
+    for every build-package.sh spawn.
+
+    build-package.sh self-verifies the lock (T1): the producer (the cut)
+    builds a FRESH venv from the lock and imports the runtime set — a
+    network install. The suite pays that cost ONCE per session: this
+    fixture builds the venv and points HIVE_LOCK_VENV at it, and the
+    build verifies the venv's resolved versions against the lock in
+    place of the fresh install. The fresh-venv path itself stays
+    covered: TestBuildLockVerify's dedicated fixture runs one full
+    build WITHOUT the variable. Pre-lock trees (no lock file) build
+    nothing — the build fails at the missing-lock check, which is what
+    the tests assert.
+
+    The venv dir is named hive-lock-venv* under the scratch basetemp
+    (TMPDIR): T4's clean-scratch reaps the mktemp-shaped litter
+    (hive-*) older than N days, so a finished session leaves nothing
+    behind."""
+    repo = get_install_dir()
+    lock = repo / "packaging" / "requirements.lock.txt"
+    if not lock.is_file():
+        yield None
+        return
+    venv_dir = tmp_path_factory.mktemp("hive-lock-venv") / "venv"
+    r = subprocess.run([sys.executable, "-m", "venv", str(venv_dir)],
+                       capture_output=True, text=True, timeout=300)
+    assert r.returncode == 0, (
+        f"could not create the session lock venv:\n{r.stderr}")
+    r = subprocess.run([str(venv_dir / "bin" / "python"), "-m", "pip",
+                        "install", "--quiet", "-r", str(lock)],
+                       capture_output=True, text=True, timeout=900)
+    assert r.returncode == 0, (
+        "the session lock venv could not install the lock — the lock is "
+        f"not installable:\n{r.stderr[-3000:]}")
+    old = os.environ.get("HIVE_LOCK_VENV")
+    os.environ["HIVE_LOCK_VENV"] = str(venv_dir)
+    yield str(venv_dir)
+    if old is None:
+        os.environ.pop("HIVE_LOCK_VENV", None)
+    else:
+        os.environ["HIVE_LOCK_VENV"] = old
 
 
 @pytest.fixture()

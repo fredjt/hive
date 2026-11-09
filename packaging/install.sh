@@ -105,14 +105,28 @@ else
   exit 1
 fi
 
-# Install/update requirements
+# Install/update the Python environment. T1 (0.14): when the release
+# ships the venv lock (packaging/requirements.lock.txt — exact pins, the
+# reproducible artifact), install FROM IT: the venv resolves to the
+# versions the release locked, and hive doctor's "venv lock" check can
+# verify them. Pre-lock releases (pre-0.14) carry no lock: fall back to
+# the floor pins (requirements.txt) with a note.
+REQS_FILE="$INSTALL_DIR/packaging/requirements.txt"
+LOCK_FILE="$INSTALL_DIR/packaging/requirements.lock.txt"
+if [ -f "$LOCK_FILE" ]; then
+  DEP_FILE="$LOCK_FILE"
+  echo "  Installing the locked Python environment (packaging/requirements.lock.txt)"
+else
+  DEP_FILE="$REQS_FILE"
+  echo "  NOTE: no venv lock in this release — installing from floor pins (requirements.txt)"
+fi
 if [ -x "$VENV_DIR/bin/pip" ]; then
   "$VENV_DIR/bin/pip" install --quiet --upgrade pip 2>/dev/null || true
-  "$VENV_DIR/bin/pip" install --quiet -r "$INSTALL_DIR/packaging/requirements.txt"
+  "$VENV_DIR/bin/pip" install --quiet -r "$DEP_FILE"
 else
   "$VENV_DIR/bin/python" -m ensurepip --quiet 2>/dev/null || true
   "$VENV_DIR/bin/python" -m pip install --quiet --upgrade pip 2>/dev/null || true
-  "$VENV_DIR/bin/python" -m pip install --quiet -r "$INSTALL_DIR/packaging/requirements.txt"
+  "$VENV_DIR/bin/python" -m pip install --quiet -r "$DEP_FILE"
 fi
 
 # 2. Make scripts executable

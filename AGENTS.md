@@ -150,7 +150,12 @@ node lib/dashboard/server.js --dir .company --port 3456
 
 ## Python dependencies
 
-`packaging/requirements.txt`: mcp, fastapi, uvicorn[standard], httpx, tomli
+`packaging/requirements.txt` carries the floor pins
+(mcp, fastapi, uvicorn[standard], httpx, tomli). The install's Python
+environment is pinned in `packaging/requirements.lock.txt` (T1, 0.14 —
+exact pins, marker-aware): install.sh installs from the lock, the build
+self-verifies it, and doctor cross-checks the venv against it. Refresh
+after a requirements.txt change: `bash packaging/refresh-venv-lock.sh`.
 
 ---
 

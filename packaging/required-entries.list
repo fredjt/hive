@@ -35,6 +35,10 @@ packaging/requirements.txt
 # consumer requires it at the install root — a drift that
 # drops it fails gate 4, post-stage, and doctor at once.
 packaging/required-entries.list
+# T1 (0.14): the venv lock — the install's Python environment is a
+# reproducible artifact (install.sh installs from it; doctor's
+# "venv lock" check cross-checks the venv against it).
+packaging/requirements.lock.txt
 
 STATE
 .company

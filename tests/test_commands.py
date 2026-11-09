@@ -1748,6 +1748,10 @@ class TestDoctorInstalledSet:
         "etc/config.defaults.toml",
         "etc/config.template.toml",
         "packaging/requirements.txt",
+        # T1 (0.14): the venv lock (doctor's venv-lock check reads it
+        # from the install; _install creates it, TestDoctorVenvLock
+        # rewrites its content).
+        "packaging/requirements.lock.txt",
     )
 
     @classmethod
@@ -1828,6 +1832,8 @@ class TestDoctorInstalledSet:
         assert not c["ok"], f"must fail with .company/ in the install: {c}"
         assert ".company" in c["detail"], c
 
+
+
     def test_doctor_red_naming_state_entry_in_manifest(self, tmp_path):
         """(d) a manifest carrying a runtime-state entry (gate 4's
         state-free rule) fails the check naming the entry."""
@@ -1846,3 +1852,179 @@ class TestDoctorInstalledSet:
         (root / "MANIFEST.txt").unlink()
         c = self._installed_check(tmp_path, root)
         assert c["ok"], f"dev install (no manifest) must not fail: {c}"
+
+
+@pytest.fixture(scope="session")
+def _venv_lock_base(tmp_path_factory):
+    """T1 (0.14): the venv-lock family's session base — a scratch
+    install root with a REAL venv, built ONCE per session THROUGH the
+    module-level _build_probe_root helper (the ONE venv build site,
+    pinned by TestProbeVenvBaseContract — the probe family's per-test
+    venv build was the wall-time class this fixture does not re-open).
+    Tests copy the base locally (writable: they plant dist-info and
+    rewrite the lock)."""
+    base_dir = tmp_path_factory.mktemp("hive-venv-lock-base")
+    root = base_dir / "root"
+    root.mkdir()
+    if not _build_probe_root(root, with_system_site=False):
+        pytest.skip("cannot create a scratch venv for the venv-lock test")
+    return root
+
+
+class TestDoctorVenvLock:
+    """T1 (0.14): doctor cross-checks the installed venv against the
+    venv lock (packaging/requirements.lock.txt) — the install's Python
+    environment is a reproducible artifact, and drift is NAMED:
+      (1) every applicable locked pin matches the venv's resolved
+          version — a mismatch fails the check naming the package
+          (locked version vs installed version)
+      (2) a locked package missing from the venv is named
+      (3) an install without a lock (pre-0.14) reports the resolved
+          versions WITHOUT a FAIL (the no-fail contract for older
+          installs)
+    The venv comes from the probe family's session base (T2, 0.13 —
+    ONE venv build site per session, pinned by
+    TestProbeVenvBaseContract); each test COPIES the base locally
+    because it writes (planted dist-info, rewritten lock). The planted
+    dist-info is all the check reads — importlib.metadata (its
+    resolver) reads the planted METADATA exactly as it reads a real
+    install — so the tests stay hermetic (no network).
+    Red against the pre-T1 doctor, which had no venv-lock check at all
+    (a venv that re-resolved to different versions was undetectable).
+    """
+
+    install_dir = Path(__file__).resolve().parent.parent
+
+    @staticmethod
+    def _lock_text() -> str:
+        return (TestDoctorVenvLock.install_dir / "packaging" /
+                "requirements.lock.txt").read_text()
+
+    @staticmethod
+    def _lock_pins() -> dict:
+        """{name: version} for the pins applicable to THIS interpreter
+        (the tomli marker does not apply on 3.11+)."""
+        from lib.hive_cli.commands.doctor import (_parse_venv_lock,
+                                                  _lock_marker_applies)
+        pins = {}
+        for name, version, marker in _parse_venv_lock(TestDoctorVenvLock._lock_text()):
+            if _lock_marker_applies(marker):
+                pins[name] = version
+        return pins
+
+    @staticmethod
+    def _scratch(tmp_path, base_root, with_lock=True):
+        """A writable scratch install: a local copy of the session base
+        (the probe family's scratch root — real venv + harness sources)
+        plus the installed-set inputs (TestDoctorInstalledSet._install
+        — required entries, the shared constant, the doctor's runtime
+        TOMLs, the manifest) and the venv-lock test's state: the lock
+        (when with_lock) and the planted dist-info in the venv's
+        site-packages (every applicable pin)."""
+        root = tmp_path / "install"
+        shutil.copytree(base_root, root)
+        TestDoctorInstalledSet._install(
+            root, list(TestDoctorInstalledSet.REQUIRED) + ["MANIFEST.txt"])
+        lock_file = root / "packaging" / "requirements.lock.txt"
+        if with_lock:
+            lock_file.write_text(TestDoctorVenvLock._lock_text())
+        else:
+            lock_file.unlink()
+        site = (root / "venv" / "lib"
+                / f"python{sys.version_info.major}.{sys.version_info.minor}"
+                / "site-packages")
+        site.mkdir(parents=True, exist_ok=True)
+        for name, version in TestDoctorVenvLock._lock_pins().items():
+            dist = site / f"{name}-{version}.dist-info"
+            dist.mkdir(exist_ok=True)
+            (dist / "METADATA").write_text(
+                "Metadata-Version: 2.1\n"
+                f"Name: {name}\n"
+                f"Version: {version}\n")
+        return root
+
+    @staticmethod
+    def _run_doctor(tmp_path, root: Path) -> subprocess.CompletedProcess:
+        env = {**os.environ,
+               "PYTHONPATH": str(TestDoctorVenvLock.install_dir / "lib")
+               + os.pathsep + os.environ.get("PYTHONPATH", ""),
+               "HIVE_INSTALL_DIR": str(root), "HIVE_ROOT": str(root)}
+        return subprocess.run(
+            [sys.executable, "-m", "hive_cli.main", "doctor", "--json",
+             str(tmp_path / "proj")],
+            capture_output=True, text=True, timeout=180, env=env)
+
+    def _check(self, tmp_path, base_root, **kw) -> dict:
+        root = self._scratch(tmp_path, base_root, **kw)
+        r = self._run_doctor(tmp_path, root)
+        assert r.returncode in (0, 1), r.stderr[-1000:]
+        payload = json.loads(r.stdout)
+        for c in payload["checks"]:
+            if c["name"].startswith("venv lock"):
+                return c
+        raise AssertionError(
+            "no venv-lock check in doctor output: "
+            f"{[c['name'] for c in payload['checks']]}")
+
+    def test_doctor_venv_lock_green_on_matching_venv(self, tmp_path,
+                                                     _venv_lock_base):
+        """(1) every applicable locked pin matches the venv's resolved
+        version — the check passes and says so."""
+        c = self._check(tmp_path, _venv_lock_base)
+        assert c["ok"], f"matching venv must pass: {c}"
+        assert "match" in c["detail"], c
+
+    def test_doctor_venv_lock_drift_names_the_package(self, tmp_path,
+                                                      _venv_lock_base):
+        """(2) ONE package at a different version in the venv fails the
+        check NAMING THE PACKAGE (locked version vs installed version)."""
+        root = self._scratch(tmp_path, _venv_lock_base)
+        planted = TestDoctorVenvLock._lock_pins()["fastapi"]
+        site = (root / "venv" / "lib"
+                / f"python{sys.version_info.major}.{sys.version_info.minor}"
+                / "site-packages")
+        shutil.rmtree(site / f"fastapi-{planted}.dist-info")
+        wrong = site / "fastapi-9.9.9.dist-info"
+        wrong.mkdir()
+        (wrong / "METADATA").write_text(
+            "Metadata-Version: 2.1\nName: fastapi\nVersion: 9.9.9\n")
+        r = self._run_doctor(tmp_path, root)
+        payload = json.loads(r.stdout)
+        c = next(cc for cc in payload["checks"]
+                 if cc["name"].startswith("venv lock"))
+        assert not c["ok"], f"a drifted venv must fail: {c}"
+        assert "fastapi" in c["detail"], \
+            "the drifted package must be named: " + c["detail"]
+        assert planted in c["detail"], \
+            "the locked version must be named: " + c["detail"]
+        assert "9.9.9" in c["detail"], \
+            "the installed (wrong) version must be named: " + c["detail"]
+
+    def test_doctor_venv_lock_missing_package_named(self, tmp_path,
+                                                    _venv_lock_base):
+        """(2b) a locked package ABSENT from the venv fails the check
+        naming it."""
+        root = self._scratch(tmp_path, _venv_lock_base)
+        site = (root / "venv" / "lib"
+                / f"python{sys.version_info.major}.{sys.version_info.minor}"
+                / "site-packages")
+        httpx_pin = TestDoctorVenvLock._lock_pins()["httpx"]
+        shutil.rmtree(site / f"httpx-{httpx_pin}.dist-info")
+        r = self._run_doctor(tmp_path, root)
+        payload = json.loads(r.stdout)
+        c = next(cc for cc in payload["checks"]
+                 if cc["name"].startswith("venv lock"))
+        assert not c["ok"], f"a missing locked package must fail: {c}"
+        assert "httpx" in c["detail"], c
+
+    def test_doctor_venv_lock_pre_lock_reports_and_passes(self, tmp_path,
+                                                          _venv_lock_base):
+        """(3) an install without a lock (pre-0.14) reports the resolved
+        versions WITHOUT a FAIL — the no-fail contract for older
+        installs."""
+        c = self._check(tmp_path, _venv_lock_base, with_lock=False)
+        assert c["ok"], "a pre-lock install must not fail the check: " + str(c)
+        assert "no lock" in c["detail"], c
+        pins = TestDoctorVenvLock._lock_pins()
+        assert f"mcp={pins['mcp']}" in c["detail"], \
+            "the pre-lock report must carry the resolved versions"

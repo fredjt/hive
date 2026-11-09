@@ -31,6 +31,53 @@ file mtimes pinned to a **stable per-release anchor** resolved in this order
 3. The HEAD commit date (shallow clones where `VERSION`'s history is absent).
 4. Fixed epoch 0 for trees outside git.
 
+## The venv lock (T1, 0.14)
+
+`packaging/requirements.txt` carries FLOOR pins only (`mcp>=1.0`, ...):
+`pip install -r requirements.txt` resolves whatever PyPI serves on install
+day, so an install today and an install next month can run different
+versions of the same packages — and a release that verified green at cut
+time could install broken months later, with no drift detectable anywhere
+(the manifest covers the FILES, the receipt the digests, the doctor
+installed-set check presence — nothing covered the venv's RESOLVED
+versions).
+
+`packaging/requirements.lock.txt` closes that hole: the Python environment
+is a reproducible artifact — an exact pin per name in requirements.txt,
+marker-aware (the `tomli` line is conditional on `python_version < "3.11"`).
+One list, four consumers:
+
+- **install.sh** installs FROM the lock when it ships with the release
+  (pre-0.14 releases carry no lock and fall back to the floor pins with a
+  note).
+- **build-package.sh** self-verifies the lock before staging anything —
+  the producer looks at its own output: (1) the lock exists, (2) every
+  name in requirements.txt has a pin in the lock that satisfies the floor
+  (a miss fails the build, naming the entry), (3) a fresh venv built from
+  the lock imports the runtime set (the selftest probe; `HIVE_LOCK_VENV`
+  lets the test suite point at a session-built venv instead of paying the
+  network install per build).
+- **hive doctor** cross-checks the installed venv against the installed
+  lock (the "venv lock" check): a drifted package is named with the locked
+  and the installed version; an install without a lock (pre-0.14) reports
+  the resolved versions WITHOUT a FAIL.
+- **the refresh path** — when requirements.txt changes:
+
+  ```bash
+  bash packaging/refresh-venv-lock.sh   # re-resolves into a throwaway venv
+  git add packaging/requirements.lock.txt packaging/requirements.txt
+  ```
+
+  The refresh resolves the floors against what PyPI serves at refresh
+time; a name whose marker does not apply to the refresh interpreter
+  (e.g. `tomli` on 3.13) is resolved explicitly against its floor so the
+  lock still pins it for the marker's audience.
+
+The lock ships in the tarball (via the `packaging` entry, listed in
+`MANIFEST.txt`) and is in the required-set constant, so gate 4, the
+install's post-stage check, and doctor all require it in every install
+from 0.14 on.
+
 ## Cutting a hive release — the only path
 
 A release is cut in exactly one way, and gate 0 of the cut script
@@ -130,7 +177,9 @@ bash hive/packaging/install.sh --copy-to ~/.local/share/hive
 
 1. Optionally copies the tree to `--copy-to <dir>` (default: install in place)
 2. Creates a Python venv at `<install>/venv` (uses `uv` if available, else `python3 -m venv`)
-3. Installs `requirements.txt` into the venv
+3. Installs the **venv lock** (`packaging/requirements.lock.txt` — exact
+   pins, T1 0.14) into the venv; pre-lock releases fall back to
+   `requirements.txt` (floor pins) with a note
 4. `chmod +x` for `bin/hive`, `lib/core/*.sh`, `lib/tools/*.sh`
 5. Symlinks `~/.local/bin/hive` → `<install>/bin/hive` (or wherever `--bin-link` points)
 6. Prints PATH instructions if `~/.local/bin` isn't on PATH
@@ -165,6 +214,22 @@ bash ~/.local/share/hive/packaging/uninstall.sh
 Removes the venv and the `~/.local/bin/hive` symlink. Source tree and any
 project `.company/` directories are left alone — delete them manually if you
 want a full purge.
+
+## CI — the scheduled 3.13 full row (T2, 0.14)
+
+The push matrix lives in `.github/workflows/ci.yml` (S4, 0.12: full on
+3.12, version-sensitive subsets on 3.10/3.13 — unchanged by 0.14).
+0.13 recorded ONE full-suite run on 3.13 by hand — a datum, not a row:
+nothing re-ran the full suite on 3.13 after it, and every push
+exercised only the 147-test subset. `.github/workflows/scheduled.yml`
+makes the datum recurring: a `full-313` job running the FULL suite on
+Python 3.13, triggered by
+
+- **schedule** — weekly cron (`23 4 * * 1`, Mondays 04:23 UTC)
+- **workflow_dispatch** — manual: `gh workflow run scheduled.yml`
+
+First dispatch run (recorded per R3 — the figure lives in the tree,
+not in prose): see below.
 
 ## Verifying a published release (one command)
 

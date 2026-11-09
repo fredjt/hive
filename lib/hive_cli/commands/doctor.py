@@ -279,22 +279,33 @@ def handle(args) -> int:
     llm_info: dict = {}
     _RUN.update({"json": json_mode, "checks": checks,
                  "warnings": warnings, "llm": llm_info})
-    if json_mode:
-        import contextlib
-        import io
-        with contextlib.redirect_stdout(io.StringIO()):
+    try:
+        if json_mode:
+            import contextlib
+            import io
+            with contextlib.redirect_stdout(io.StringIO()):
+                all_ok = _run_checks(args)
+        else:
             all_ok = _run_checks(args)
-    else:
-        all_ok = _run_checks(args)
-    payload = {"ok": bool(all_ok), "checks": checks,
-               "warnings": warnings, "llm": llm_info}
-    version_file = HIVE_INSTALL_DIR / "VERSION"
-    if version_file.is_file():
-        payload["version"] = version_file.read_text().strip()
-    _save_doctor_dump(args, payload)
-    if json_mode:
-        print(json.dumps(payload, indent=2))
-    return 0 if all_ok else 1
+        payload = {"ok": bool(all_ok), "checks": checks,
+                   "warnings": warnings, "llm": llm_info}
+        version_file = HIVE_INSTALL_DIR / "VERSION"
+        if version_file.is_file():
+            payload["version"] = version_file.read_text().strip()
+        _save_doctor_dump(args, payload)
+        if json_mode:
+            print(json.dumps(payload, indent=2))
+        return 0 if all_ok else 1
+    finally:
+        # xdist worker contract: a run leaves no _RUN state behind. An
+        # in-process handle(json=True) sets json=True; without this reset
+        # the NEXT in-process check call on the same worker (a test that
+        # invokes _release_checks() & co. directly, not via handle) finds
+        # json still on and its pretty output vanishes — the leak fired
+        # when the suite's assignment put a --json run before a
+        # pretty-print assertion on one worker.
+        _RUN.update({"json": False, "checks": None,
+                     "warnings": None, "llm": None})
 
 
 def _save_doctor_dump(args, payload: dict) -> None:
@@ -336,6 +347,118 @@ def _parse_required_entries(text: str) -> tuple[list, list]:
         elif section is not None:
             section.append(line)
     return required, state
+
+
+# The runtime set the lock must cover — the names the harness, the MCP
+# server, and the CLI actually import (one venv call reports all of them).
+_VENV_LOCK_NAMES = ("mcp", "fastapi", "uvicorn", "httpx", "tomli")
+
+
+def _parse_venv_lock(text: str) -> list:
+    """T1: parse the venv lock. Returns [(name, pinned_version, marker)]
+    in file order; comments, blank lines, and unparseable lines are
+    skipped (the build's self-verify is the pin validator, this is the
+    doctor's reader)."""
+    entries = []
+    for raw in text.splitlines():
+        line = raw.split("#", 1)[0].strip()
+        if not line:
+            continue
+        m = re.match(r"^([A-Za-z0-9._-]+)(\[[^\]]*\])?==([0-9][0-9.]*)"
+                     r"\s*(?:;\s*(.*))?$", line)
+        if m:
+            entries.append((m.group(1), m.group(3), (m.group(4) or "").strip()))
+    return entries
+
+
+def _lock_marker_applies(marker: str) -> bool:
+    """T1: evaluate the small marker vocabulary the lock uses
+    (python_version < "3.11" — the tomli line). Unknown markers count
+    as applicable; the runtime lock carries no other kind."""
+    if not marker:
+        return True
+    m = re.match(r'python_version\s*([<>=!]+)\s*"?([0-9.]+)"?', marker)
+    if not m:
+        return True
+    op = m.group(1)
+    ver = tuple(int(x) for x in m.group(2).split("."))
+    vi = sys.version_info[:len(ver)]
+    return {"<": vi < ver, "<=": vi <= ver, ">": vi > ver,
+            ">=": vi >= ver, "==": vi == ver, "!=": vi != ver}.get(op, True)
+
+
+def _venv_resolved_versions(venv_py: Path, names: tuple) -> dict:
+    """T1: one venv call reports the installed version of every name
+    (importlib.metadata — stdlib, no pip round-trip). Missing packages
+    map to '' (the check names them)."""
+    code = (
+        "import importlib.metadata as m\n"
+        f"names = {list(names)!r}\n"
+        "out = {}\n"
+        "for n in names:\n"
+        "    try:\n"
+        "        out[n] = m.version(n)\n"
+        "    except Exception:\n"
+        "        out[n] = ''\n"
+        "print(repr(out))\n"
+    )
+    try:
+        r = subprocess.run([str(venv_py), "-c", code],
+                           capture_output=True, text=True, timeout=60)
+    except Exception:
+        return {}
+    import ast
+    try:
+        return ast.literal_eval((r.stdout or "").strip() or "{}")
+    except (SyntaxError, ValueError):
+        return {}
+
+
+def _venv_lock_check() -> bool:
+    """T1 (0.14): the installed venv resolves to the locked versions.
+
+    The lock (packaging/requirements.lock.txt, shipped with the release
+    via the entry set) is the released Python environment; this check
+    compares the venv's RESOLVED versions against it, naming the drifted
+    package (locked vs installed) — a venv that quietly re-resolved to
+    newer versions is the 0.11-class drift the lock exists to catch.
+    An install without a lock (pre-0.14) reports the resolved versions
+    WITHOUT a FAIL (the no-fail contract for older installs). Skips
+    silently when there is no venv at all — the 'Python venv' check
+    above already fails that."""
+    from hive_cli.commands.selftest import venv_python_executable
+    name = "venv lock (requirements.lock.txt)"
+    lock = HIVE_INSTALL_DIR / "packaging" / "requirements.lock.txt"
+    venv_py = HIVE_INSTALL_DIR / "venv" / "bin" / "python"
+    if not venv_python_executable(venv_py):
+        return True
+    versions = _venv_resolved_versions(venv_py, _VENV_LOCK_NAMES)
+    if not lock.is_file():
+        # Pre-0.14 install: no lock shipped. Report the versions WITHOUT
+        # a FAIL — an older install cannot be pinned against a pin it
+        # never had.
+        report = ", ".join(
+            f"{n}={versions.get(n) or '(absent)'}" for n in _VENV_LOCK_NAMES)
+        return _check(name, True, f"no lock (pre-0.14 install) — {report}")
+    entries = _parse_venv_lock(lock.read_text())
+    if not entries:
+        return _check(name, False,
+                      f"{lock} carries no pins")
+    drift = []
+    checked = 0
+    for ename, pinned, marker in entries:
+        if not _lock_marker_applies(marker):
+            continue
+        checked += 1
+        inst = versions.get(ename)
+        if not inst:
+            drift.append(f"{ename}: locked {pinned}, not installed in the venv")
+        elif inst != pinned:
+            drift.append(f"{ename}: locked {pinned}, venv has {inst}")
+    if drift:
+        return _check(name, False, "drifted: " + "; ".join(drift))
+    return _check(name, True,
+                  f"all {checked} applicable locked versions match the venv")
 
 
 def _installed_set_check() -> bool:
@@ -442,6 +565,11 @@ def _run_checks(args) -> bool:
                              r.stderr.strip().splitlines()[-1] if r.returncode != 0 else "mcp, fastapi, httpx, tomllib/tomli")
         except Exception as e:
             all_ok &= _check("Required Python packages", False, str(e))
+
+    # T1 (0.14): the venv lock — the installed Python environment
+    # resolves to the versions the release locked (drift is named; a
+    # pre-lock install reports its versions without a FAIL).
+    all_ok &= _venv_lock_check()
 
     # T3 (0.13): installed-set integrity (manifest + required-set
     # constant + state-free rule).
