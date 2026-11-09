@@ -235,6 +235,10 @@ record_gate "gate-3: PASS (build-package produced $TARBALL)"
 #       each offending entry
 # D.2 proved the shipped surface can drift from the public surface with
 # no guard firing; this is the guard.
+# Source the shared parser (required_entries) at its only use site —
+# the earlier gates and --check-surface must keep working on partial
+# trees (the synthetic gate-0 test trees have no packaging/entries.sh).
+. "$SOURCE_DIR/packaging/entries.sh"
 echo "==> Gate 4: shipping manifest"
 LISTING="$(tar -tzf "$TARBALL")"
 if ! echo "$LISTING" | grep -q "MANIFEST\.txt$"; then
@@ -249,16 +253,16 @@ tar -xzf "$TARBALL" -C "$MSTAGE" "hive-$VERSION/MANIFEST.txt" || {
 }
 MANIFEST="$MSTAGE/hive-$VERSION/MANIFEST.txt"
 
+# T3 (0.13): the required set is the shared constant
+# (packaging/required-entries.list) — no inline copy here.
 MISSING=""
-for ENTRY in bin/hive lib/core/agent-spawn.sh lib/core/agent-harness.py \
-             lib/hive_mcp/server.py lib/dashboard/server.js \
-             etc/config.defaults.toml etc/config.template.toml \
-             packaging/requirements.txt; do
+while IFS= read -r ENTRY; do
+  [ -n "$ENTRY" ] || continue
   # the manifest lists entries relative to the package root
   if ! grep -qxF "$ENTRY" "$MANIFEST"; then
     MISSING="$MISSING $ENTRY"
   fi
-done
+done < <(required_entries "$SOURCE_DIR/packaging/required-entries.list" REQUIRED)
 # the dashboard frontend ships as a directory of static files: require
 # at least one entry under lib/dashboard/static/
 if ! grep -q '^lib/dashboard/static/' "$MANIFEST"; then
@@ -274,19 +278,14 @@ STATE=""
 # nested anywhere (a staging entry is a path relative to the package
 # root; the prune list in build-package.sh is a second hand-maintained
 # list, and the manifest is what pins the two together).
-is_state_entry() {
-  case "$1" in
-    .company|.company/*|.worktrees|.worktrees/*) return 0 ;;
-    venv|venv/*|dist|dist/*|__pycache__|__pycache__/*) return 0 ;;
-    .git|.git/*) return 0 ;;
-    */.company|*/.company/*|*/.worktrees|*/.worktrees/*) return 0 ;;
-    */venv|*/venv/*|*/dist|*/dist/*|*/__pycache__|*/__pycache__/*) return 0 ;;
-    */.git|*/.git/*) return 0 ;;
-  esac
-  return 1
-}
+# T3 (0.13): the state-free rule reads the STATE section of the shared
+# constant — any path ELEMENT matching a STATE entry is an offender.
 while IFS= read -r E; do
-  if is_state_entry "$E"; then STATE="$STATE $E"; fi
+  for S in $(required_entries "$SOURCE_DIR/packaging/required-entries.list" STATE); do
+    case "/$E/" in
+      *"/$S/"*) STATE="$STATE $E"; break ;;
+    esac
+  done
 done < "$MANIFEST"
 if [ -n "$STATE" ]; then
   echo "FAIL: manifest carries runtime-state entries:$STATE" >&2

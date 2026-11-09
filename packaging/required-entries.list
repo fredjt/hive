@@ -1,0 +1,45 @@
+# packaging/required-entries.list — the shared required-set constant
+# (T3, 0.13). One list, four consumers: cut-release.sh gate 4,
+# install.sh's post-stage verification, the doctor installed-set
+# check, and the tests that pin this file. Do NOT hand-maintain the
+# list anywhere else — every consumer parses this file (the two
+# inline eight-entry lists in cut-release.sh and install.sh were the
+# drift risk).
+#
+# Sections (a bare word on its own line switches the section):
+#   REQUIRED — runtime entries that must exist in the package AND in
+#              every install (filesystem check by install.sh and
+#              doctor).
+#   STATE    — paths that must never be SHIPPED in a package manifest
+#              (gate 4's state-free rule: any path ELEMENT matching a
+#              STATE entry is an offender). The install root may
+#              legitimately hold venv/ (install.sh creates it);
+#              doctor's install-filesystem sub-rule therefore checks
+#              STATE minus venv.
+#
+# Format: one entry per line, relative to the package/install root.
+# "#" starts a comment; blank lines are ignored. Parsed by the
+# required_entries() helper below (bash) and by doctor.py (python) —
+# both must agree; tests pin the file against both consumers.
+
+REQUIRED
+bin/hive
+lib/core/agent-spawn.sh
+lib/core/agent-harness.py
+lib/hive_mcp/server.py
+lib/dashboard/server.js
+etc/config.defaults.toml
+etc/config.template.toml
+packaging/requirements.txt
+# The constant pins itself: it ships (entries.list) and every
+# consumer requires it at the install root — a drift that
+# drops it fails gate 4, post-stage, and doctor at once.
+packaging/required-entries.list
+
+STATE
+.company
+.worktrees
+venv
+dist
+__pycache__
+.git

@@ -51,8 +51,9 @@ refuses any tree where the version-bearing surfaces disagree:
    order: 0 every version-bearing surface agrees (a mismatch fails,
    naming each stale file), 1 git state (clean tree, no existing tag),
    2 the test suite green, 3 build-package, 4 the shipping manifest
-   (MANIFEST.txt extracted from the tarball — required runtime entries
-   present, runtime-state entries absent, each offender named), 5
+   (MANIFEST.txt extracted from the tarball — the required set and
+   the state-free rule are the shared constant
+   `packaging/required-entries.list`, each offender named), 5
    credential scan, 6 sha256 sidecar, 7 release notes — then
    `git tag v<version>`, push, and `gh release create` with the
    tarball + sha256 sidecar, then the S3 cut receipt
@@ -135,6 +136,16 @@ bash hive/packaging/install.sh --copy-to ~/.local/share/hive
 6. Prints PATH instructions if `~/.local/bin` isn't on PATH
 
 It is **idempotent** — re-running upgrades the venv and refreshes the symlink.
+
+After staging, install.sh verifies the installed set against the shared
+required-set constant (`packaging/required-entries.list` — the same list
+cut gate 4 uses, parsed by the one `required_entries()` helper in
+`packaging/entries.sh`) and fails naming each missing entry. Since 0.13
+the install also carries the tarball's `MANIFEST.txt`, which
+`hive doctor` verifies at doctor time (the installed-set check): required
+entries present, no runtime-state entry in the manifest or at the install
+root — each offender named (a dev install without the generated manifest
+gets a WARN, not a FAIL).
 
 ## What's NOT in the tarball
 

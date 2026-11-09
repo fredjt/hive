@@ -316,6 +316,91 @@ def _save_doctor_dump(args, payload: dict) -> None:
         pass
 
 
+
+def _parse_required_entries(text: str) -> tuple[list, list]:
+    """T3: parse the shared required-set constant (python counterpart
+    of the required_entries() bash helper in packaging/entries.sh).
+    Section words (REQUIRED/STATE) switch sections; comments and blank
+    lines are ignored. Returns (required, state)."""
+    required: list = []
+    state: list = []
+    section = None
+    for line in text.splitlines():
+        line = line.split("#", 1)[0].strip()
+        if not line:
+            continue
+        if line == "REQUIRED":
+            section = required
+        elif line == "STATE":
+            section = state
+        elif section is not None:
+            section.append(line)
+    return required, state
+
+
+def _installed_set_check() -> bool:
+    """T3 (0.13): the installed set verifies at DOCTOR time, not just
+    install time. Reads the installed MANIFEST.txt (the tarball's own
+    bill of materials) and the shared required-set constant
+    (packaging/required-entries.list — ONE list, four consumers: cut
+    gate 4, install.sh post-stage, this check, the pinning tests), and
+    verifies:
+      (1) the manifest exists — a dev install (from a git checkout,
+          where the build generates it) has none: silent skip in pretty
+          mode, a passed 'skipped' check in --json (never a FAIL)
+      (2) every REQUIRED entry exists at the install root
+      (3) no runtime-state entry: the manifest is state-free (any path
+          element matching a STATE entry) AND the install root holds no
+          runtime-state directory (STATE minus venv — install.sh
+          legitimately creates venv/)
+    Names each missing or foreign entry."""
+    name = "installed set (manifest integrity)"
+    warnings = _RUN.get("warnings")
+    manifest = HIVE_INSTALL_DIR / "MANIFEST.txt"
+    if not manifest.is_file():
+        # Dev install (from a git checkout): the shipping manifest is
+        # generated at build time, so it is absent. Skip SILENTLY in
+        # pretty mode — a dev checkout must not print a WARN on every
+        # `hive doctor` (the no-WARN contract is pinned by the env-file
+        # tests); --json records the skip as a passed check.
+        if _RUN.get("json"):
+            return _check(name, True,
+                          "manifest missing (dev install) — skipped")
+        return True
+    req_file = HIVE_INSTALL_DIR / "packaging" / "required-entries.list"
+    if not req_file.is_file():
+        return _check(name, False,
+                      f"{req_file} missing — the required-set constant "
+                      "did not ship with this install")
+    required, state = _parse_required_entries(req_file.read_text())
+    bad = False
+    missing = [e for e in required if not (HIVE_INSTALL_DIR / e).exists()]
+    if missing:
+        bad = True
+    manifest_state = []
+    for entry in manifest.read_text().splitlines():
+        parts = entry.split("/")
+        if any(part in state for part in parts):
+            manifest_state.append(entry)
+    if manifest_state:
+        bad = True
+    state_dirs = [s for s in state if s != "venv"
+                  and (HIVE_INSTALL_DIR / s).exists()]
+    if state_dirs:
+        bad = True
+    detail_parts = []
+    if missing:
+        detail_parts.append("missing required: " + ", ".join(missing))
+    if manifest_state:
+        detail_parts.append("manifest state entries: "
+                            + ", ".join(manifest_state))
+    if state_dirs:
+        detail_parts.append("state dirs in install: "
+                            + ", ".join(state_dirs))
+    return _check(name, not bad,
+                  "; ".join(detail_parts) if detail_parts else
+                  "manifest present, required set complete, state-free")
+
 def _run_checks(args) -> bool:
     print("Hive doctor — checking installation\n")
     all_ok = True
@@ -357,6 +442,10 @@ def _run_checks(args) -> bool:
                              r.stderr.strip().splitlines()[-1] if r.returncode != 0 else "mcp, fastapi, httpx, tomllib/tomli")
         except Exception as e:
             all_ok &= _check("Required Python packages", False, str(e))
+
+    # T3 (0.13): installed-set integrity (manifest + required-set
+    # constant + state-free rule).
+    all_ok &= _installed_set_check()
 
     # CLI
     all_ok &= _check("hive on PATH", shutil.which("hive") is not None)

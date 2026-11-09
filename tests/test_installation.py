@@ -1054,6 +1054,9 @@ class TestShippingManifest:
         "etc/config.defaults.toml",
         "etc/config.template.toml",
         "packaging/requirements.txt",
+        # T3 (0.13): the shared required-set constant ships too (the
+        # doctor installed-set check reads it from the install).
+        "packaging/required-entries.list",
     )
 
     STATE_TOP = (".company", ".worktrees", "venv", "dist",
@@ -1477,6 +1480,11 @@ class TestEntryListSingleSource:
             "bin", "lib", "etc", "share", "packaging", "VERSION",
             "INSTALL", "LICENSE", "CHANGELOG.md", "CONTRIBUTING.md",
             "SECURITY.md",
+            # T3 (0.13): the shipping manifest ships from the published
+            # tarball into the install (doctor's installed-set check
+            # reads it there). The build generates it — from a source
+            # tree it is absent and staged as a NOTE-free skip.
+            "MANIFEST.txt",
         }, f"unexpected entry set: {sorted(plain)}"
         assert [m for m in mapped if len(m) == 2] == \
             [["share/docs/README.md", "README.md"]], \
@@ -1776,3 +1784,114 @@ exit 0
             f"uploads: {receipt_uploads}"
         )
         assert "--clobber" in receipt_uploads[-1]
+
+
+class TestRequiredEntriesConstant:
+    """T3 (0.13) — the required-set constant is shared, not copied.
+
+    The eight-entry required list was hand-maintained TWICE (cut
+    gate 4's inline loop and install.sh's post-stage loop); the
+    state-free rule lived a third way (gate 4's is_state_entry case
+    list). packaging/required-entries.list is now the ONE constant:
+    gate 4, install.sh, the doctor installed-set check, and these
+    tests all read it. This class pins the constant against every
+    other copy of the list in the repo — a new required entry or
+    state path must land in the file first, or the guard fails.
+    """
+
+    CONST = Path(__file__).resolve().parent.parent / \
+        "packaging" / "required-entries.list"
+
+    @staticmethod
+    def _sections() -> tuple[list, list]:
+        required, state = [], []
+        section = None
+        for line in TestRequiredEntriesConstant.CONST.read_text().splitlines():
+            line = line.split("#", 1)[0].strip()
+            if not line:
+                continue
+            if line == "REQUIRED":
+                section = required
+            elif line == "STATE":
+                section = state
+            elif section is not None:
+                section.append(line)
+        return required, state
+
+    def test_required_section_matches_the_test_copies(self):
+        required, _ = self._sections()
+        # TestShippingManifest.REQUIRED (the gate-4 surface) and
+        # TestDoctorInstalledSet.REQUIRED (the doctor surface) are the
+        # other copies of the list — all three must agree.
+        assert required == list(TestShippingManifest.REQUIRED), (
+            "required-entries.list REQUIRED section drifted from "
+            f"TestShippingManifest.REQUIRED:\n{required}")
+        # The doctor test's scratch-install helper creates this list of
+        # files — every entry it creates must be required by the
+        # constant (the helper is a consumer of the list, not a copy).
+        from tests.test_commands import TestDoctorInstalledSet
+        missing = [e for e in TestDoctorInstalledSet.REQUIRED
+                   if e not in required]
+        assert not missing, (
+            "TestDoctorInstalledSet creates files the required-set "
+            f"constant does not require: {missing}")
+
+    def test_state_section_matches_the_state_free_rule(self):
+        _, state = self._sections()
+        assert sorted(state) == sorted(TestShippingManifest.STATE_TOP), (
+            "required-entries.list STATE section drifted from the "
+            "state-free rule:\n" + ", ".join(state))
+
+    def test_bash_and_python_parsers_agree(self):
+        """The two consumers parse the same file two ways (awk in
+        entries.sh, python in doctor.py) — they must agree on the
+        entries."""
+        from lib.hive_cli.commands.doctor import _parse_required_entries
+        py_req, py_state = _parse_required_entries(
+            self.CONST.read_text())
+        for section, py in (("REQUIRED", py_req), ("STATE", py_state)):
+            r = subprocess.run(
+                ["bash", "-c",
+                 ". ./packaging/entries.sh && "
+                 f"required_entries packaging/required-entries.list "
+                 f"{section}"],
+                capture_output=True, text=True, timeout=30,
+                cwd=str(self.CONST.parent.parent))
+            assert r.returncode == 0, r.stderr
+            bash_lines = [l for l in r.stdout.splitlines() if l.strip()]
+            assert bash_lines == list(py), (
+                f"{section}: bash parser and python parser disagree "
+                f"(bash: {bash_lines}, python: {py})")
+
+    def test_consumers_read_the_file_no_inline_copies(self):
+        """cut-release.sh gate 4 and install.sh post-stage must parse
+        the constant — an inline copy of the list creeping back in
+        (the drift class) fails the guard."""
+        for script in ("packaging/cut-release.sh", "packaging/install.sh"):
+            text = (Path(__file__).resolve().parent.parent /
+                    script).read_text()
+            assert "required-entries.list" in text, (
+                f"{script} no longer references the shared "
+                "required-entries.list constant")
+            assert "required_entries" in text, (
+                f"{script} does not use the required_entries() parser")
+            # The inline-copy smell: a required entry named as a bare
+            # word in a bash loop word-list.
+            assert "lib/hive_mcp/server.py lib/dashboard/server.js" \
+                not in text.replace("\\", ""), (
+                f"{script} carries an inline copy of the required "
+                "list — it must read packaging/required-entries.list")
+
+    def test_the_constant_ships_in_the_tarball(self, dirty_tree, tmp_path):
+        """The constant is part of the shipped entry set (doctor reads
+        it from the INSTALL, so the package must carry it)."""
+        tarball = TestShippingManifest()._build(
+            dirty_tree, tmp_path / "dist")
+        import tarfile
+        with tarfile.open(tarball) as tf:
+            names = tf.getnames()
+        assert any(n.endswith("/packaging/required-entries.list")
+                   for n in names), (
+            "the tarball does not ship "
+            "packaging/required-entries.list — the doctor installed-set "
+            "check could not run from an install")

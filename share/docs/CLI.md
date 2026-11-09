@@ -175,6 +175,15 @@ the sprint lifecycle, and the dashboard Rounds panel reads it directly.
 ```
 hive doctor                       # check agent harness, jq, git, node, venv, MCP server, LLM provider
 hive doctor --deep                # + probe LLM endpoint reachability (uses network)
+hive doctor --json                # machine-readable dump of every check
 hive selftest [<project-dir>]     # probe the agent spawn path for real (no LLM call)
 hive version
 ```
+
+`hive doctor` also verifies the **installed set** (T3, 0.13): it reads
+the installed `MANIFEST.txt` (the tarball's own bill of materials —
+shipped to the install since 0.13) against the shared required-set
+constant `packaging/required-entries.list`, and fails naming each
+missing required entry or foreign runtime-state entry. A dev install
+(from a git checkout, where the build generates the manifest) gets a
+WARN, not a FAIL.

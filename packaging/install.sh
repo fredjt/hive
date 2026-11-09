@@ -73,17 +73,17 @@ if [ "$INSTALL_DIR" != "$SOURCE_DIR" ]; then
   fi
   # Post-stage verification: the runtime core must be present, else the
   # install is broken and the chmod/symlink steps below would fail
-  # obscurely. Names each missing entry.
-  for REQUIRED in bin/hive lib/core/agent-spawn.sh lib/core/agent-harness.py \
-                  lib/hive_mcp/server.py lib/dashboard/server.js \
-                  etc/config.defaults.toml etc/config.template.toml \
-                  packaging/requirements.txt; do
+  # obscurely. Names each missing entry. T3 (0.13): the required set is
+  # the shared constant (packaging/required-entries.list) — the same
+  # list cut gate 4 and the doctor installed-set check use.
+  while IFS= read -r REQUIRED; do
+    [ -n "$REQUIRED" ] || continue
     if [ ! -e "$INSTALL_DIR/$REQUIRED" ]; then
       echo "  ERROR: $REQUIRED missing after staging — the install would" >&2
       echo "  be incomplete (source entry missing or unreadable)." >&2
       exit 1
     fi
-  done
+  done < <(required_entries "$SOURCE_DIR/packaging/required-entries.list" REQUIRED)
 fi
 
 echo "Installing Hive at $INSTALL_DIR"

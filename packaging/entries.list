@@ -29,3 +29,7 @@ LICENSE
 CHANGELOG.md
 CONTRIBUTING.md
 SECURITY.md
+# T3 (0.13): the shipping manifest ships to the install (doctor's
+# installed-set check reads it there). The build generates it — from
+# a git checkout it is absent and staged as a NOTE-free skip.
+MANIFEST.txt

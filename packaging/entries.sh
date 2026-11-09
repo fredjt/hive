@@ -28,3 +28,20 @@ entry_pairs() {
     NF == 3 && $2 == "as" { print $1, $3 }
   ' "$1"
 }
+
+# required_entries <required-entries.list> <SECTION>
+# Emit the entries of SECTION (REQUIRED or STATE) from the shared
+# required-set constant (packaging/required-entries.list), one per
+# line. Section words and comments are skipped. T3 (0.13): the single
+# constant's bash parser — cut-release.sh gate 4 and install.sh's
+# post-stage check read it through this helper (doctor.py has the
+# python counterpart; tests pin both against the file).
+required_entries() {
+  awk -v want="$2" '
+    { sub(/#.*/, "") }
+    /^[[:space:]]*$/ { next }
+    $0 == "REQUIRED" { in_sec = (want == "REQUIRED"); next }
+    $0 == "STATE"    { in_sec = (want == "STATE"); next }
+    in_sec && NF == 1 { print $1 }
+  ' "$1"
+}

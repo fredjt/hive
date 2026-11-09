@@ -1715,3 +1715,134 @@ class TestProbeVenvBaseContract:
         assert getattr(meta, "scope", None) == "session", (
             "the venv base must be session-scoped (built once per "
             f"worker); it is '{getattr(meta, 'scope', None)}'-scoped")
+
+
+class TestDoctorInstalledSet:
+    """T3 (0.13): doctor verifies the installed set at DOCTOR time.
+
+    The installed MANIFEST.txt (the tarball's own bill of materials —
+    shipped to the install via entries.list) plus the shared
+    required-set constant (packaging/required-entries.list: ONE list,
+    four consumers — cut gate 4, install.sh post-stage, this check,
+    and the pinning tests) make the 0.12 trust surface verifiable
+    after install, not only at install time. The check verifies:
+      (1) the manifest exists — a dev install (git checkout, where the
+          build generates it) has none: WARN, not FAIL
+      (2) every REQUIRED entry exists at the install root
+      (3) state-free: the manifest carries no STATE entry AND the
+          install root holds no runtime-state directory (STATE minus
+          venv — install.sh legitimately creates venv/)
+    Names each missing or foreign entry. Red against the pre-T3
+    doctor, which had no installed-set check at all (the missing
+    entry and the state dir went unreported).
+    """
+
+    #: The REQUIRED section of packaging/required-entries.list — kept
+    #: in lockstep by TestRequiredEntriesConstant (test_installation.py).
+    REQUIRED = (
+        "bin/hive",
+        "lib/core/agent-spawn.sh",
+        "lib/core/agent-harness.py",
+        "lib/hive_mcp/server.py",
+        "lib/dashboard/server.js",
+        "etc/config.defaults.toml",
+        "etc/config.template.toml",
+        "packaging/requirements.txt",
+    )
+
+    @classmethod
+    def _install(cls, root: Path, manifest_entries) -> Path:
+        """A scratch install root carrying the check's inputs: the
+        required entries (empty files), the shared constant, and a
+        MANIFEST.txt with the given entries."""
+        repo = Path(__file__).resolve().parent.parent
+        for e in cls.REQUIRED:
+            p = root / e
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text("x")
+        pk = root / "packaging"
+        pk.mkdir(exist_ok=True)
+        shutil.copy(repo / "packaging" / "required-entries.list",
+                    pk / "required-entries.list")
+        # doctor's other checks import/parse real files from the
+        # install: llm_providers (stdlib-only) from HIVE_ROOT/lib/core,
+        # and the config TOMLs (doctor parses them — empty stubs would
+        # crash the run, not the check under test).
+        core = root / "lib" / "core"
+        core.mkdir(parents=True, exist_ok=True)
+        shutil.copy(repo / "lib" / "core" / "llm_providers.py",
+                    core / "llm_providers.py")
+        for f in ("config.defaults.toml", "config.template.toml"):
+            shutil.copy(repo / "etc" / f, root / "etc" / f)
+        (root / "MANIFEST.txt").write_text(
+            "\n".join(manifest_entries) + "\n")
+        return root
+
+    @classmethod
+    def _installed_check(cls, tmp_path, root: Path) -> dict:
+        """Run doctor --json against the scratch install; return the
+        installed-set check dict (raises if the check is absent)."""
+        r = subprocess.run(
+            [sys.executable, "-m", "hive_cli.main", "doctor", "--json",
+             str(tmp_path / "proj")],
+            capture_output=True, text=True, timeout=180,
+            env={**os.environ,
+                 "PYTHONPATH": str(Path(__file__).resolve().parent.parent
+                                   / "lib"),
+                 "HIVE_INSTALL_DIR": str(root), "HIVE_ROOT": str(root)})
+        payload = json.loads(r.stdout)
+        for c in payload["checks"]:
+            if c["name"].startswith("installed set"):
+                return c
+        raise AssertionError(
+            "no installed-set check in doctor output: "
+            f"{[c['name'] for c in payload['checks']]}")
+
+    def test_doctor_green_on_clean_install(self, tmp_path):
+        """(a) a clean installed set (manifest present, required
+        complete, state-free) passes the check."""
+        entries = list(self.REQUIRED) + ["MANIFEST.txt"]
+        root = self._install(tmp_path / "install", entries)
+        c = self._installed_check(tmp_path, root)
+        assert c["ok"], f"clean install must pass: {c}"
+        assert "state-free" in c["detail"], c
+
+    def test_doctor_red_naming_removed_required_entry(self, tmp_path):
+        """(b) a required entry removed from the install (listed in
+        the manifest, gone from disk) fails the check NAMING IT."""
+        entries = list(self.REQUIRED) + ["MANIFEST.txt"]
+        root = self._install(tmp_path / "install", entries)
+        (root / "lib" / "hive_mcp" / "server.py").unlink()
+        c = self._installed_check(tmp_path, root)
+        assert not c["ok"], f"must fail with a missing required entry: {c}"
+        assert "lib/hive_mcp/server.py" in c["detail"], c
+
+    def test_doctor_red_naming_state_dir_in_install(self, tmp_path):
+        """(c) a runtime-state directory present at the install root
+        (.company/ — state leaked into the install) fails the check
+        naming it."""
+        entries = list(self.REQUIRED) + ["MANIFEST.txt"]
+        root = self._install(tmp_path / "install", entries)
+        (root / ".company" / "tickets").mkdir(parents=True)
+        c = self._installed_check(tmp_path, root)
+        assert not c["ok"], f"must fail with .company/ in the install: {c}"
+        assert ".company" in c["detail"], c
+
+    def test_doctor_red_naming_state_entry_in_manifest(self, tmp_path):
+        """(d) a manifest carrying a runtime-state entry (gate 4's
+        state-free rule) fails the check naming the entry."""
+        entries = list(self.REQUIRED) + ["MANIFEST.txt",
+                                         ".company/tickets/state.json"]
+        root = self._install(tmp_path / "install", entries)
+        c = self._installed_check(tmp_path, root)
+        assert not c["ok"], f"must fail on a state manifest entry: {c}"
+        assert ".company/tickets/state.json" in c["detail"], c
+
+    def test_dev_install_without_manifest_skips_not_fails(self, tmp_path):
+        """(e) a dev install (from a git checkout — the build generates
+        the manifest, so it is absent) gets a WARN, not a FAIL."""
+        root = self._install(tmp_path / "install",
+                             list(self.REQUIRED) + ["MANIFEST.txt"])
+        (root / "MANIFEST.txt").unlink()
+        c = self._installed_check(tmp_path, root)
+        assert c["ok"], f"dev install (no manifest) must not fail: {c}"
