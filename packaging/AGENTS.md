@@ -55,7 +55,9 @@ httpx>=0.27
 tomli>=2.0; python_version < "3.11"
 ```
 
-Python runtime requires **>=3.10** (per `pyproject.toml`).
+Python runtime requires **>=3.11** (per `pyproject.toml` — 0.15: Python
+3.10 is EOL (2026-10-04) and the floor moves with it; the `tomli`
+backport dependency retires with the surface, T4).
 
 ## Common commands
 

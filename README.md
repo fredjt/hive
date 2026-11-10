@@ -73,7 +73,7 @@ The installer copies the tree to `~/.local/share/hive`, creates a Python
 venv there with the required packages, and symlinks `~/.local/bin/hive`
 to the launcher. Add `~/.local/bin` to your PATH if it isn't already.
 
-Dependencies: Python 3.10+ with `mcp`, `fastapi`, `uvicorn`, `httpx` (auto-
+Dependencies: Python 3.11+ with `mcp`, `fastapi`, `uvicorn`, `httpx` (auto-
 installed in the venv); `git`, `jq`, `node` for the
 dashboard, `bash`.
 

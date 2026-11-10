@@ -410,3 +410,72 @@ class TestReadmeFile:
     def test_readme_file_is_not_empty(self):
         content = Path("README.md").read_text().strip()
         assert len(content) > 100  # README should have substantial content
+
+
+class TestPythonFloorConsistency:
+    """T4 (0.15): the 3.11 floor tells ONE story (the LLM-docs-guard
+    pattern). `packaging/pyproject.toml`'s `requires-python` is the
+    canonical floor; every doc surface that claims a floor must agree
+    with it — a doc that keeps telling operators the old floor (3.10+
+    after 0.15) fails the suite, naming the file. Red against a tree
+    where pyproject moved to 3.11 but a README/AGENTS.md kept 3.10.
+    """
+
+    @staticmethod
+    def _floor() -> tuple:
+        import tomllib
+        repo = Path(__file__).resolve().parent.parent
+        t = tomllib.loads(
+            (repo / "packaging" / "pyproject.toml").read_text())
+        req = t["project"]["requires-python"]  # ">=3.11"
+        m = __import__("re").match(r'>=\s*(\d+)\.(\d+)', req)
+        assert m, f"unparseable requires-python: {req!r}"
+        return int(m.group(1)), int(m.group(2))
+
+    def test_pyproject_floor_is_3_11(self):
+        """The floor IS 3.11 (0.15's breaking change: 3.10 is EOL)."""
+        assert self._floor() == (3, 11)
+
+    @classmethod
+    def test_doc_floor_claims_match_pyproject(cls):
+        """Every doc floor claim agrees with pyproject — and the OLD
+        floor (3.10) is gone from the same surfaces."""
+        major, minor = cls._floor()
+        repo = Path(__file__).resolve().parent.parent
+        checks = [
+            # (file, the claim the doc must carry, stale claims that must
+            # be gone from that file)
+            ("packaging/AGENTS.md", f">={major}.{minor}", [">=3.10"]),
+            ("share/docs/PACKAGING.md", f"({major}.{minor}+)",
+             ["(3.10+)"]),
+            ("share/docs/README.md", f"Python {major}.{minor}+",
+             ["Python 3.10+"]),
+            ("README.md", f"Python {major}.{minor}+",
+             ["Python 3.10+"]),
+        ]
+        stale = []
+        for rel, needle, old_claims in checks:
+            text = (repo / rel).read_text()
+            if needle not in text:
+                stale.append(
+                    f"{rel}: missing the {major}.{minor} floor claim "
+                    f"({needle!r})")
+            for old in old_claims:
+                if old in text:
+                    stale.append(
+                        f"{rel}: still claims the old floor ({old!r})")
+        assert not stale, "floor claims disagree with pyproject:\n  " \
+            + "\n  ".join(stale)
+
+    @classmethod
+    def test_pyproject_has_no_tomli_dependency(cls):
+        """The floor makes the tomli backport dead: pyproject must not
+        list it (the 3.10-only `python_version<'3.11'` marker can never
+        apply)."""
+        import tomllib
+        repo = Path(__file__).resolve().parent.parent
+        t = tomllib.loads(
+            (repo / "packaging" / "pyproject.toml").read_text())
+        deps = " ".join(t["project"].get("dependencies", []))
+        assert "tomli" not in deps, \
+            f"pyproject still lists tomli under the 3.11 floor: {deps!r}"

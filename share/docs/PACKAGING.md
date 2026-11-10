@@ -5,7 +5,7 @@ tarball carries its own bill of materials: `MANIFEST.txt` at the
 package root is the exact, sorted entry list — the build writes it
 into the staged package before tarring, and gate 4 of the cut verifies
 it from the tarball (required runtime entries present, runtime-state
-entries absent). Targets need only `bash`, `python3` (3.10+), `git`,
+entries absent). Targets need only `bash`, `python3` (3.11+), `git`,
 `jq`, and `node` (for the dashboard).
 
 ## Build a release tarball
