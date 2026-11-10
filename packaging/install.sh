@@ -226,6 +226,23 @@ else
   "$VENV_DIR/bin/python" -m pip install --quiet -r "$DEP_FILE"
 fi
 
+# 1a. T1 (0.15): the installed venv is EXACTLY the released environment.
+# When the release ships the lock, prune the venv to the exact set (the
+# lock closure + venv tooling): a reused venv (the upgrade path) may
+# hold a name the release does not define (a hand-installed package, a
+# dependency a newer release dropped) and the prune removes it, every
+# removal named. Runs under the venv's OWN python (its metadata is the
+# ground truth); stdlib only, so it cannot depend on what the venv
+# contains. A prune failure never aborts the install — doctor names the
+# drift afterwards.
+if [ -f "$LOCK_FILE" ] && [ -x "$VENV_DIR/bin/python" ]; then
+  echo "  Pruning the venv to the exact released environment (lock closure + tooling)..."
+  PYTHONPATH="$INSTALL_DIR/lib" "$VENV_DIR/bin/python" \
+    "$INSTALL_DIR/lib/hive_cli/commands/venv_prune.py" \
+    --venv "$VENV_DIR" --lock "$LOCK_FILE" \
+    || echo "  WARNING: venv prune failed — the install continues; 'hive doctor' will name the drift." >&2
+fi
+
 # 2. Make scripts executable
 chmod +x "$INSTALL_DIR/bin/hive"
 chmod +x "$INSTALL_DIR/lib/core/"*.sh

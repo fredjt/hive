@@ -2650,3 +2650,72 @@ class TestMarkerUninstallExclusions:
         assert not install_dir.exists(), \
             "a clean marked tree must be removed whole"
         assert "kept" not in (ru.stdout + ru.stderr).lower()
+class TestVenvPrune:
+    """T1 (0.15) — the installed venv is EXACTLY the released
+    environment (the lock closure + venv tooling), shared between
+    install.sh (the prune) and hive doctor (the installed-set check).
+    The exact set comes from lib/hive_cli/commands/venv_prune.py —
+    stdlib only, run under the venv's OWN python (its metadata is the
+    ground truth)."""
+
+    VENV_PRUNE = _repo_root() / "lib" / "hive_cli" / "commands" / "venv_prune.py"
+
+    @classmethod
+    def _prune_module(cls):
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(
+            "hive_venv_prune", cls.VENV_PRUNE)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return mod
+
+    def test_lock_direct_names_parse(self):
+        vp = self._prune_module()
+        lock = _repo_root() / "packaging" / "requirements.lock.txt"
+        direct = vp.lock_direct_names(lock)
+        for name in ("mcp", "fastapi", "uvicorn", "httpx"):
+            assert name in direct, f"{name} not parsed from the lock"
+        assert "tomli" not in direct  # T4: retired with the 3.11 floor
+
+    def test_exact_set_is_closure_plus_tooling(self):
+        vp = self._prune_module()
+        lock = _repo_root() / "packaging" / "requirements.lock.txt"
+        exact = vp.exact_venv_set(lock)
+        for name in ("mcp", "fastapi", "uvicorn", "httpx",
+                     "pip", "setuptools", "wheel"):
+            assert name in exact, f"{name} missing from the exact set"
+
+    def test_normalize_pep503(self):
+        vp = self._prune_module()
+        assert vp.normalize("Uvicorn[standard]") == "uvicorn"
+        assert vp.normalize("Zope.Interface") == "zope-interface"
+        assert vp.normalize("foo__bar.baz") == "foo-bar-baz"
+
+    def test_planted_residue_is_pruned_and_named(self, tmp_path):
+        """venv with a planted extra package: the prune removes it,
+        names it, and leaves the released set (a direct lock name)
+        alone."""
+        vp = self._prune_module()
+        venv = tmp_path / "venv"
+        r = subprocess.run(
+            [sys.executable, "-m", "venv", str(venv)],
+            capture_output=True, text=True, timeout=180)
+        if r.returncode != 0:
+            pytest.skip(f"cannot create a venv here: {r.stderr[:120]}")
+        site = next(p / "site-packages" for p in
+                    sorted((venv / "lib").glob("python*.*")))
+        (site / "planted-residue-1.0.0.dist-info").mkdir(parents=True)
+        (site / "planted-residue-1.0.0.dist-info" / "METADATA").write_text(
+            "Metadata-Version: 2.1\nName: planted-residue\n"
+            "Version: 1.0.0\n")
+        (site / "mcp-2.3.0.dist-info").mkdir(parents=True)
+        (site / "mcp-2.3.0.dist-info" / "METADATA").write_text(
+            "Metadata-Version: 2.1\nName: mcp\nVersion: 2.3.0\n")
+        lock = _repo_root() / "packaging" / "requirements.lock.txt"
+        assert "planted-residue" in vp.unexpected(venv, lock)
+        assert "mcp" not in vp.unexpected(venv, lock)
+        removed = vp.prune(venv, lock)
+        assert "planted-residue" in removed
+        assert "mcp" not in removed
+        assert "planted-residue" not in vp.installed_names(venv)
+        assert "mcp" in vp.installed_names(venv)
