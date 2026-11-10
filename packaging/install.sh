@@ -129,6 +129,43 @@ if [ "$INSTALL_DIR" != "$SOURCE_DIR" ]; then
     fi
   done < <(required_entries "$SOURCE_DIR/packaging/required-entries.list" REQUIRED)
 
+  # T1 (0.15): the entry set is the EXACT source of truth for the
+  # tree. A staged install re-run over an older release (the upgrade
+  # path — the .hive-install branch above) must leave EXACTLY what the
+  # new release defines: a top-level install-root entry not in the
+  # entry set, outside {venv, .hive-install}, is install residue of a
+  # superseded release (a removed tool, a renamed file, a deleted doc)
+  # and is removed, each named. With T2's invariant (a marked tree
+  # never holds runtime state — staging into a state dir is refused,
+  # and the pre-T2 cohabiting case is refused too), no runtime-state
+  # exclusions are needed in the prune: the state cannot be here.
+  # venv and .hive-install are the installer's own lifecycle (reused
+  # below, rewritten below) — never prune material. In-place installs
+  # never reach this branch (the tree is the operator's work, T2).
+  entry_in_set() {
+    local name="$1" src dest
+    while read -r src dest; do
+      [ "$dest" = "$name" ] && return 0
+    done < <(entry_pairs "$SOURCE_DIR/packaging/entries.list")
+    return 1
+  }
+  PRUNED=""
+  for ENTRY_PATH in "$INSTALL_DIR"/* "$INSTALL_DIR"/.[!.]*; do
+    [ -e "$ENTRY_PATH" ] || continue
+    ENTRY_NAME="$(basename "$ENTRY_PATH")"
+    case "$ENTRY_NAME" in
+      venv|.hive-install) continue ;;
+    esac
+    if ! entry_in_set "$ENTRY_NAME"; then
+      rm -rf -- "$ENTRY_PATH"
+      PRUNED="$PRUNED  - $ENTRY_NAME\n"
+    fi
+  done
+  if [ -n "$PRUNED" ]; then
+    echo "  Pruned install residue (not in this release's entry set):"
+    printf '%b' "$PRUNED"
+  fi
+
   # T3 (0.14): the install marker. This dir is a STAGED COPY made by
   # this install — teardown mirrors setup: uninstall.sh removes the
   # install dir itself ONLY on this marker (an uninstall removes what

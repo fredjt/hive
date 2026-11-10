@@ -2522,6 +2522,52 @@ class TestTeardownSafety:
         assert not (state_dir / "lib").exists()
 
 
+class TestUpgradePrune:
+    """T1 (0.15) — install-on-install leaves EXACTLY what the new
+    release defines.
+
+    The operator's machine moves 0.14 -> 0.15 by re-running the
+    install over the marked tree (the .hive-install branch — T2 makes
+    that the only marked-dir case the staging allows). 0.14's staging
+    only overwrote: a top-level entry a superseded release left
+    (a removed tool, a renamed file, a deleted doc) stayed in the
+    install forever. 0.15's post-stage prune makes the entry set the
+    EXACT source of truth for the tree: residue outside {entry set,
+    venv, .hive-install} is removed, each piece named.
+    """
+
+    def test_upgrade_prunes_tree_residue(self, dirty_tree, tmp_path):
+        home = tmp_path / "home"
+        home.mkdir()
+        install_dir = tmp_path / "install"
+        r1 = TestTeardownSafety._copy_to_install(dirty_tree, install_dir,
+                                                 home)
+        assert r1.returncode == 0, r1.stdout + "\n" + r1.stderr
+        # Plant stale residue: top-level entries NOT in the entry set
+        (install_dir / "stale-leftover.txt").write_text("old release junk")
+        stale_dir = install_dir / "lib-stale"
+        stale_dir.mkdir()
+        (stale_dir / "old-tool.sh").write_text("#!/bin/sh\nexit 0\n")
+        # The upgrade: re-run the install over the marked tree
+        r2 = TestTeardownSafety._copy_to_install(dirty_tree, install_dir,
+                                                 home)
+        assert r2.returncode == 0, r2.stdout + "\n" + r2.stderr
+        assert not (install_dir / "stale-leftover.txt").exists(), \
+            "stale top-level file must be pruned on the upgrade"
+        assert not stale_dir.exists(), "stale dir must be pruned on the upgrade"
+        for name in ("stale-leftover.txt", "lib-stale"):
+            assert name in r2.stdout, \
+                f"the prune must name what it removed: {name}\n{r2.stdout}"
+        # The entry set is intact, venv + marker are never prune material
+        for name in ("bin", "lib", "etc", "share", "packaging",
+                     "VERSION", "README.md"):
+            assert (install_dir / name).exists(), \
+                f"entry-set member {name} must survive the prune"
+        assert (install_dir / "venv").is_dir(), "venv must survive the prune"
+        assert (install_dir / ".hive-install").exists(), \
+            "the marker must survive the prune"
+
+
 class TestMarkerUninstallExclusions:
     """T2 (0.15) — defense in depth: the uninstall's marker-path tree
     removal EXCLUDES runtime state (.company/, .worktrees/) and names
