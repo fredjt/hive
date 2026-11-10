@@ -382,43 +382,11 @@ class TestConfigLayer:
         assert r.returncode == 0, r.stderr
         assert r.stdout.strip() == ""  # defaults carry an empty string
 
-    def test_fallback_parser_is_tomli_not_toml(self, tmp_path, monkeypatch):
-        """3.10 regression (G5): with stdlib tomllib absent, the fallback
-        must be tomli — the package packaging/requirements.txt installs
-        for Python < 3.11 — not the legacy ``toml`` package. The 3.10 CI
-        matrix died on `import toml` (ModuleNotFoundError), which broke
-        config-get.sh and every config consumer. Simulated 3.10: the
-        module's tomllib binding is unset and `import toml` is made
-        impossible; the chain must still parse via tomli."""
-        try:
-            import tomli  # noqa: F401
-        except ImportError:
-            pytest.skip("tomli not installed (pip install -r "
-                        "packaging/requirements.txt)")
-        import hive_config
-
-        monkeypatch.setattr(hive_config, "tomllib", None)
-        monkeypatch.setitem(sys.modules, "toml", None)
-
-        user = tmp_path / "user.toml"
-        user.write_text('[llm]\nbase_url = "http://user:1/v1"\n')
-        data = hive_config.load_config(
-            hive_root=str(REPO_ROOT),
-            env={"HOME": str(tmp_path), "HIVE_CONFIG": str(user)})
-        # Both the defaults file (repo etc/) and the user file parsed.
-        assert data["llm"]["base_url"] == "http://user:1/v1"
-        assert isinstance(data.get("release"), dict), (
-            "defaults section unparsed — the fallback parser chain failed")
-
-        # config-get.sh must answer through the same chain (the 3.10
-        # CI failure surfaced here, not in the module directly).
-        r = subprocess.run(
-            ["bash", str(LIB / "tools" / "config-get.sh"), "llm", "base_url"],
-            capture_output=True, text=True, timeout=30,
-            env={**os.environ, "HIVE_CONFIG": str(user),
-                 "HOME": str(tmp_path)})
-        assert r.returncode == 0, r.stderr
-        assert r.stdout.strip() == "http://user:1/v1"
+    # T4 (0.15): test_fallback_parser_is_tomli_not_toml retires with
+    # the surface — the tomli/toml fallback chain in hive_config is
+    # gone (stdlib tomllib is the only parser under the 3.11 floor).
+    # The static successor: tests/test_integration.py::TestNoTomliInLib
+    # pins the ABSENCE of `import tomli` under lib/.
 
     def test_key_set_via_cli_visible_to_harness_and_lifecycle(self, tmp_path):
         """A key set via `hive config set` must be visible to BOTH the
@@ -554,6 +522,22 @@ PROJECT_LOCAL_EXEMPT = {
     "lib/tools/init-finance-scaffold.sh",
 }
 
+# T3 (0.15): the commit-point class. These scripts commit their
+# cross-process-observed state writes via tmp + rename (the single
+# commit point, docs/commit-point-audit.md Class A) — the "tmp file
+# creation" idiom above is exactly their pattern, so the G1 grep (which
+# exists to catch a state-LAYER bypass) registers these files as the
+# converted surface. A NEW direct tmp write in any OTHER lib/*.sh still
+# fails the guard, as do literal .json redirects everywhere.
+T3_ATOMIC_SITES = {
+    "lib/tools/release-gates.sh",        # releases/<ver>-gates.json
+    "lib/tools/release-verdict-write.sh",  # the release verdict file
+    "lib/tools/report-write.sh",         # marketing/dept reports
+    "lib/tools/test-results.sh",         # component test-results.json
+    "lib/tools/research-findings.sh",    # ongoing findings
+    "lib/tools/verification-gates.sh",   # component test-output.log
+}
+
 
 class TestCompanyWriteLayering:
     def _sh_files(self):
@@ -572,6 +556,11 @@ class TestCompanyWriteLayering:
                     continue
                 for name, rx in WRITE_IDIOMS:
                     if rx.search(line):
+                        # T3 (0.15): the tmp+rename commit pattern is
+                        # the registered surface in T3_ATOMIC_SITES.
+                        if (name == "tmp file creation"
+                                and rel in T3_ATOMIC_SITES):
+                            continue
                         hits.append(f"{f.relative_to(REPO_ROOT)}:{lineno}: {name}: {line.strip()}")
         assert not hits, "direct .company/ JSON writes found (must go through lib/hive_state):\n" + "\n".join(hits)
 
