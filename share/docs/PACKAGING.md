@@ -196,6 +196,35 @@ entries present, no runtime-state entry in the manifest or at the install
 root — each offender named (a dev install without the generated manifest
 gets a WARN, not a FAIL).
 
+## Upgrade (T1, 0.15)
+
+Re-running the install over a marked tree (the `.hive-install` marker)
+is the upgrade path. It re-stages the entry set and then makes the tree
+EXACTLY what the new release defines:
+
+1. **Tree prune** — a top-level install-root entry outside the new
+   entry set (other than `venv`/`.hive-install`) is install residue of
+   a superseded release and is removed, each entry named. A marked tree
+   never holds runtime state (staging into one is refused, T2), so the
+   prune has nothing live to touch.
+2. **Venv prune** — the installed venv is reduced to the exact released
+   environment (the lock closure + the venv tooling `pip`/`setuptools`/
+   `wheel`/`uv`); a name outside the set is uninstalled, each removal
+   named. `hive doctor`'s 'venv exact set' check verifies the result
+   afterwards and names any drift with the fix.
+
+To verify a completed upgrade from the repo:
+
+```bash
+bash packaging/verify-release.sh v0.15.0 --from v0.14.0 ~/.local/share/hive
+```
+
+It verifies the new release as usual (sidecar, receipt digests, keys)
+AND that the install dir is exactly the new entry set, the venv is in
+the new exact set, and the previous release's receipt is valid (the
+chain holds). The cut does the same verification automatically
+(`cut-release.sh --upgrade-from`, T5).
+
 ## What's NOT in the tarball
 
 - `venv/` (recreated on the target)
