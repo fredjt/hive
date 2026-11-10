@@ -39,6 +39,11 @@ VERSION=""
 OUT_DIR=""
 DRY_RUN=0
 CHECK_SURFACE=0
+# T5 (0.15): --upgrade-from PREV-TAG — the cut verifies the LIVE upgrade:
+# scratch-install the published previous release, install the staged tree
+# on top (the T1 upgrade path), doctor it, and assert the atomic commit
+# points are in the delivered tree. The receipt gains the upgrade line.
+UPGRADE_FROM=""
 # T6 (0.13): the gate-2 default is the S5 primary loop (-n 8) — the
 # 0.12 cut had to pass --suite "... -n 8" explicitly to get it
 # (~11 min of serial gate-2 wall instead of ~3 min on the 0.12
@@ -53,6 +58,7 @@ while [ $# -gt 0 ]; do
     --suite)   SUITE="$2"; shift 2 ;;
     --dry-run) DRY_RUN=1; shift ;;
     --check-surface) CHECK_SURFACE=1; shift ;;
+    --upgrade-from) UPGRADE_FROM="$2"; shift 2 ;;
     -h|--help)
       cat <<'EOF'
 Usage: cut-release.sh [--version X.Y.Z] [--out-dir DIR] [--suite CMD]
@@ -73,6 +79,11 @@ The release cut, as a command (E1). Gates, in order:
   5  credential-pattern scan of every tarball entry (scan report)
   6  sha256 sidecar verifies
   7  release notes extracted from the CHANGELOG section
+  8  (with --upgrade-from PREV-TAG) the LIVE upgrade: scratch-install
+     the published previous release, install the staged tree on top
+     (the T1 upgrade path), doctor it (exact set + venv exact), and
+     assert the atomic commit points are in the delivered tree; the
+     receipt gains the upgrade line (from-tag, verified)
   then: git tag, push branch, push tag, gh release create (tarball +
   sha256 sidecar + notes), then the S3 cut receipt is written and
   uploaded as the third asset (--clobber-safe on re-run)
@@ -367,6 +378,50 @@ TITLE="Hive $VERSION"
 [ -n "$FIRST_LINE" ] && TITLE="Hive $VERSION — $(echo "$FIRST_LINE" | sed 's/\s\{2,\}/ /g')"
 record_gate "gate-7: PASS (release notes extracted: $TITLE)"
 
+# ---- Gate 8: T5 (0.15) — the live upgrade verification -------------------
+if [ -n "$UPGRADE_FROM" ]; then
+  echo "==> Gate 8: the live upgrade from $UPGRADE_FROM"
+  UPREV="${UPGRADE_FROM#v}"
+  USTAGE="$(mktemp -d -t hive-cut-upgrade-XXXXXX)"
+  if ! gh release download "$UPGRADE_FROM" --dir "$USTAGE" 2>/dev/null \
+      || [ ! -f "$USTAGE/hive-$UPREV.tar.gz" ]; then
+    echo "FAIL: cannot download the published $UPGRADE_FROM tarball" >&2
+    rm -rf "$USTAGE"; exit 1
+  fi
+  tar -xzf "$USTAGE/hive-$UPREV.tar.gz" -C "$USTAGE"
+  UINSTALL="$USTAGE/install"
+  if ! bash "$USTAGE/hive-$UPREV/packaging/install.sh" --copy-to "$UINSTALL" \
+      >/dev/null 2>&1; then
+    echo "FAIL: the published $UPGRADE_FROM scratch install failed" >&2
+    rm -rf "$USTAGE"; exit 1
+  fi
+  UNSTAGE="$(mktemp -d -t hive-cut-upgrade-new-XXXXXX)"
+  tar -xzf "$TARBALL" -C "$UNSTAGE"
+  if ! bash "$UNSTAGE/hive-$VERSION/packaging/install.sh" --copy-to "$UINSTALL" \
+      >/dev/null 2>&1; then
+    echo "FAIL: installing the v$VERSION staged tree on top of $UPGRADE_FROM failed" >&2
+    rm -rf "$USTAGE" "$UNSTAGE"; exit 1
+  fi
+  if ! HIVE_INSTALL_DIR="$UINSTALL" "$UINSTALL/venv/bin/python" -m hive_cli.main doctor \
+      >/dev/null 2>&1; then
+    echo "FAIL: doctor failed on the upgraded scratch install" >&2
+    rm -rf "$USTAGE" "$UNSTAGE"; exit 1
+  fi
+  APROBLEMS=""
+  grep -q 'RUNNER_LOCK=' "$UINSTALL/lib/tools/sprint-lifecycle.sh" \
+    || APROBLEMS="$APROBLEMS runner-lock"
+  grep -q 'atomic_commit "\$RUNNER_PID"' "$UINSTALL/lib/tools/sprint-lifecycle.sh" \
+    || APROBLEMS="$APROBLEMS atomic-pid"
+  grep -q 'mv -f "\$halt_tmp" "\$COMPANY_DIR/rounds/halt"' "$UINSTALL/lib/tools/sprint-lifecycle.sh" \
+    || APROBLEMS="$APROBLEMS atomic-halt"
+  if [ -n "$APROBLEMS" ]; then
+    echo "FAIL: the delivered tree is missing atomic commit points:$APROBLEMS" >&2
+    rm -rf "$USTAGE" "$UNSTAGE"; exit 1
+  fi
+  rm -rf "$USTAGE" "$UNSTAGE"
+  record_gate "gate-8: PASS (live upgrade from $UPGRADE_FROM verified: scratch install, overlay, doctor, atomic commit points present)"
+fi
+
 if [ "$DRY_RUN" = 1 ]; then
   echo ""
   echo "==> DRY RUN — stopping before the tag"
@@ -437,6 +492,9 @@ SIDE_SHA="$(sha256sum "$CHECKSUM" | awk '{print $1}')"
   echo "commit: $COMMIT"
   echo "tag: v$VERSION"
   printf '%s\n' "$GATE_RESULTS" | sed '/^$/d'
+  if [ -n "$UPGRADE_FROM" ]; then
+    echo "upgrade-from: $UPGRADE_FROM (verified)"
+  fi
   echo "asset: hive-$VERSION.tar.gz sha256=$TAR_SHA"
   echo "asset: hive-$VERSION.sha256 sha256=$SIDE_SHA"
   echo "manifest: MANIFEST.txt sha256=$MANIFEST_SHA"

@@ -2850,9 +2850,11 @@ class TestVerifyUpgradeFrom:
 
     @classmethod
     def _run(cls, tmp, assets, tree, drop_prev_receipt=False):
-        cls._build_release(assets, cls.NEW)
-        cls._build_release(assets, cls.PREV,
-                           drop_receipt=drop_prev_receipt)
+        if not (assets / f"hive-{cls.NEW}.tar.gz").exists():
+            cls._build_release(assets, cls.NEW)
+        if not (assets / f"hive-{cls.PREV}.receipt.txt").exists():
+            cls._build_release(assets, cls.PREV,
+                               drop_receipt=drop_prev_receipt)
         bindir = cls._fake_gh(tmp, assets)
         return subprocess.run(
             ["bash", str(_repo_root() / "packaging" / "verify-release.sh"),
@@ -2907,3 +2909,37 @@ class TestVerifyUpgradeFrom:
         out = r.stdout + r.stderr
         assert r.returncode == 1, out[-900:]
         assert "cannot download the previous receipt" in out, out[-900:]
+
+    def _append_upgrade_line(self, assets, ver, line):
+        rec = assets / f"hive-{ver}.receipt.txt"
+        rec.write_text(rec.read_text() + line + "\n")
+
+    def test_receipt_upgrade_line_verifies(self, tmp_path):
+        """T5 (0.15): a receipt carrying the upgrade line (from-tag,
+        verified) verifies against --from that tag — the line agrees."""
+        assets = tmp_path / "a"
+        assets.mkdir()
+        tree = self._make_tree(tmp_path, venv_names=("fixturepkg", "pip"))
+        self._build_release(assets, self.NEW)
+        self._build_release(assets, self.PREV)
+        self._append_upgrade_line(assets, self.NEW,
+                                  f"upgrade-from: v{self.PREV} (verified)")
+        r = self._run(tmp_path, assets, tree)
+        out = r.stdout + r.stderr
+        assert r.returncode == 0, out[-900:]
+        assert "upgrade-from line agrees" in out, out[-500:]
+
+    def test_receipt_upgrade_line_mismatch_fails(self, tmp_path):
+        """T5 (0.15): a receipt claiming a DIFFERENT predecessor fails
+        the upgrade verification, naming the chain mismatch."""
+        assets = tmp_path / "a"
+        assets.mkdir()
+        tree = self._make_tree(tmp_path, venv_names=("fixturepkg", "pip"))
+        self._build_release(assets, self.NEW)
+        self._build_release(assets, self.PREV)
+        self._append_upgrade_line(assets, self.NEW,
+                                  "upgrade-from: v0.9.7 (verified)")
+        r = self._run(tmp_path, assets, tree)
+        out = r.stdout + r.stderr
+        assert r.returncode == 1, out[-900:]
+        assert "chain mismatch" in out, out[-900:]

@@ -200,6 +200,12 @@ if [ -n "$FROM" ]; then
     echo "    6/7 no venv in $TREE — the venv exact-set check is skipped"
   fi
   [ -z "$MISSING" ] || fail "upgrade: required entries missing from $TREE:$MISSING"
+  UPGRADE_LINE="$(grep '^upgrade-from: ' "$RECEIPT_NAME" | head -1 | awk '{print $2}')"
+  if [ -n "$UPGRADE_LINE" ] && [ "$UPGRADE_LINE" != "$FROM" ]; then
+    fail "upgrade: the receipt claims upgrade-from $UPGRADE_LINE, but this verification is --from $FROM — the chain mismatch"
+  elif [ -n "$UPGRADE_LINE" ]; then
+    echo "    the receipt's upgrade-from line agrees with --from $FROM"
+  fi
   receipt_keys_ok "$WORKDIR/prev/$PREV_RECEIPT" "$PREV_VERSION" "$FROM"
   if [ "$FAIL" = 0 ]; then
     ok "5-7/7 upgrade verified: the tree is exactly the $TAG entry set, the venv is in the exact set, and the $FROM receipt is valid"
