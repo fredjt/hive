@@ -2522,6 +2522,29 @@ class TestTeardownSafety:
         assert not (state_dir / "lib").exists()
 
 
+    def test_online_installer_delegates_with_bash_not_sh(self, dirty_tree):
+        """T2 (0.15) follow-up — the 0.14-class latent bug: install.sh
+        is a BASH script (the staging loops use process substitution),
+        and install-online.sh invoked it with `sh`. On dash systems
+        (Debian, Ubuntu, the CI runners) that is a SYNTAX ERROR, not a
+        refusal — the online installer died before it could do
+        anything. The delegation must use bash (the documented manual
+        path), never sh. Pinned statically: sh=bash boxes cannot
+        reproduce the dash parse failure, so the guard is on the
+        invocation itself."""
+        text = (dirty_tree / "packaging" / "install-online.sh").read_text()
+        for line in text.splitlines():
+            if "packaging/install.sh" in line and \
+                    line.strip().startswith(("sh ", "bash ")):
+                assert line.strip().startswith("bash "), \
+                    "install-online.sh must invoke install.sh with " \
+                    "bash, not sh: " + line.strip()
+                return
+        raise AssertionError(
+            "install-online.sh no longer invokes install.sh at all — "
+            "the delegation contract changed; update this guard")
+
+
 class TestUpgradePrune:
     """T1 (0.15) — install-on-install leaves EXACTLY what the new
     release defines.

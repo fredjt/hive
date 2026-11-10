@@ -119,7 +119,15 @@ EXTRACTED="$(find "$TMP" -mindepth 1 -maxdepth 1 -type d | head -1)"
 [ -d "$EXTRACTED" ] || err "Extraction failed (no top-level directory)"
 
 log "Installing to $INSTALL_DIR ..."
-sh "$EXTRACTED/packaging/install.sh" --copy-to "$INSTALL_DIR"
+# T2 (0.15): install.sh is a BASH script (the staging loops use process
+# substitution); on systems where /bin/sh is dash (Debian, Ubuntu, the
+# CI runners), `sh install.sh` dies with a syntax error before it can
+# refuse or stage. Delegate with bash — the documented manual path.
+if ! command -v bash >/dev/null 2>&1; then
+  echo "ERROR: bash is required (install.sh is a bash script)." >&2
+  exit 1
+fi
+bash "$EXTRACTED/packaging/install.sh" --copy-to "$INSTALL_DIR"
 
 log ""
 log "Hive installed. Try:"
