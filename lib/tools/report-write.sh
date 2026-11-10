@@ -120,11 +120,15 @@ esac
 REPORT_FILE="$DEST_DIR/$FILENAME"
 mkdir -p "$(dirname "$REPORT_FILE")"
 
+# T3 (0.15): tmp + rename — a single commit point. The report is read
+# cross-process (other agents, the dashboard); a truncate-then-fill
+# write would expose a truncated file mid-write.
 if [ "$USE_STDIN" = true ]; then
-  cat > "$REPORT_FILE"
+  cat > "$REPORT_FILE.tmp.$$"
 else
-  echo "$CONTENT" > "$REPORT_FILE"
+  printf '%s\n' "$CONTENT" > "$REPORT_FILE.tmp.$$"
 fi
+mv -f "$REPORT_FILE.tmp.$$" "$REPORT_FILE"
 
 # Output absolute path
 realpath "$REPORT_FILE"

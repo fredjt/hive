@@ -54,11 +54,16 @@ if [ "$APPEND" = true ]; then
     echo "$CONTENT" >> "$FINDINGS_FILE"
   fi
 else
+  # T3 (0.15): tmp + rename — a single commit point. The findings file
+  # is read cross-process (other agents); a truncate-then-fill write
+  # would expose a truncated file mid-write. The append branch above
+  # keeps O_APPEND (>>) — the log class, not the truncate class.
   if [ "$USE_STDIN" = true ]; then
-    cat > "$FINDINGS_FILE"
+    cat > "$FINDINGS_FILE.tmp.$$"
   else
-    echo "$CONTENT" > "$FINDINGS_FILE"
+    printf '%s\n' "$CONTENT" > "$FINDINGS_FILE.tmp.$$"
   fi
+  mv -f "$FINDINGS_FILE.tmp.$$" "$FINDINGS_FILE"
 fi
 
 # Output absolute path

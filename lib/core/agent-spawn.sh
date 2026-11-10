@@ -74,7 +74,12 @@ STREAM_FILE="$STREAM_DIR/${SPAWN_ID}.jsonl"
 ACTIVE_FILE="$ACTIVE_DIR/${SPAWN_ID}.json"
 
 # Write active spawn metadata
-cat > "$ACTIVE_FILE" <<META
+# T3 (0.15): tmp + rename — a single commit point. The record is
+# read cross-process (company-health's stale-spawn cleanup, the
+# ic-spawn monitors); a truncate-then-fill write would expose partial
+# JSON mid-write.
+ACTIVE_FILE_TMP="${ACTIVE_FILE}.tmp.$$"
+cat > "$ACTIVE_FILE_TMP" <<META
 {
   "id": "$SPAWN_ID",
   "agent": "$HIVE_AGENT",
@@ -85,6 +90,7 @@ cat > "$ACTIVE_FILE" <<META
   "pid": "$$"
 }
 META
+mv -f "$ACTIVE_FILE_TMP" "$ACTIVE_FILE"
 
 # Cleanup on exit.
 # E3: the log must say HOW the spawn ended. In the 0.10.0 field run

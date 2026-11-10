@@ -59,11 +59,15 @@ else
 fi
 
 # Write content
+# T3 (0.15): tmp + rename — a single commit point. The results file is
+# read cross-process (verification, the dashboard); a truncate-then-fill
+# write would expose a truncated file mid-write.
 if [ "$USE_STDIN" = true ]; then
-  cat > "$RESULTS_FILE"
+  cat > "$RESULTS_FILE.tmp.$$"
 else
-  echo "$CONTENT" > "$RESULTS_FILE"
+  printf '%s\n' "$CONTENT" > "$RESULTS_FILE.tmp.$$"
 fi
+mv -f "$RESULTS_FILE.tmp.$$" "$RESULTS_FILE"
 
 # Output absolute path
 realpath "$RESULTS_FILE"

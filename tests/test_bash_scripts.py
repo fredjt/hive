@@ -2799,3 +2799,69 @@ class TestCleanScratchScript:
             assert not (mock / name).exists(), f"old litter {name} must be reaped"
         assert (mock / "pytest-of-t" / "pytest-current").exists(), \
             "pytest-current is never touched"
+
+
+class TestAtomicStateWrites:
+    """T3 (0.15) — the commit-point class, lib side.
+
+    Every cross-process-observed state write in lib/tools + lib/core
+    commits at a single point (tmp + rename): a reader observes the
+    old content or the new content — never an empty file, never a
+    partial line. The audit table behind this (and the static guard,
+    tests/test_xdist_contract.py::TestLibCommitPointGuard) lives in
+    docs/commit-point-audit.md. These tests exercise the converted
+    writers end-to-end: the file lands complete, and no tmp litter is
+    left behind.
+    """
+
+    def test_report_write_lands_atomic(self, tmp_company_dir):
+        r = run_script(
+            f"{SCRIPTS_DIR}/report-write.sh",
+            ["marketing", "r.md", "--content", "hello report"],
+            env={"COMPANY_DIR": str(tmp_company_dir)},
+        )
+        assert r.returncode == 0, r.stdout + r.stderr
+        target = tmp_company_dir / "marketing" / "reports" / "r.md"
+        assert target.read_text().strip() == "hello report"
+        self._no_tmp_litter(tmp_company_dir)
+
+    def test_test_results_lands_atomic(self, tmp_company_dir):
+        r = run_script(
+            f"{SCRIPTS_DIR}/test-results.sh",
+            ["it", "web", "--format", "json", "--content", '{"ok": true}'],
+            env={"COMPANY_DIR": str(tmp_company_dir)},
+        )
+        assert r.returncode == 0, r.stdout + r.stderr
+        target = (tmp_company_dir / "departments" / "it" / "components"
+                  / "web" / "test-results.json")
+        assert target.read_text().strip() == '{"ok": true}'
+        self._no_tmp_litter(tmp_company_dir)
+
+    def test_research_findings_fresh_lands_atomic(self, tmp_company_dir):
+        r = run_script(
+            f"{SCRIPTS_DIR}/research-findings.sh",
+            ["ticket-1", "--content", "finding one"],
+            env={"COMPANY_DIR": str(tmp_company_dir)},
+        )
+        assert r.returncode == 0, r.stdout + r.stderr
+        target = (tmp_company_dir / "research" / "ongoing"
+                  / "ticket-1-findings.md")
+        assert target.read_text().strip() == "finding one"
+        # the append branch keeps O_APPEND (>>) — it must still work
+        r2 = run_script(
+            f"{SCRIPTS_DIR}/research-findings.sh",
+            ["ticket-1", "--content", "finding two", "--append"],
+            env={"COMPANY_DIR": str(tmp_company_dir)},
+        )
+        assert r2.returncode == 0, r2.stdout + r2.stderr
+        assert target.read_text().splitlines() == [
+            "finding one", "finding two"]
+        self._no_tmp_litter(tmp_company_dir)
+
+    @staticmethod
+    def _no_tmp_litter(company_dir: Path):
+        leftovers = []
+        for p in company_dir.rglob("*.tmp.*"):
+            leftovers.append(str(p))
+        assert not leftovers, \
+            f"tmp litter left behind the rename: {leftovers}"
