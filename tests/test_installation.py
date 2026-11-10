@@ -2520,3 +2520,87 @@ class TestTeardownSafety:
         assert ".company" in (r.stderr + r.stdout), r.stderr
         assert not (state_dir / ".hive-install").exists()
         assert not (state_dir / "lib").exists()
+
+
+class TestMarkerUninstallExclusions:
+    """T2 (0.15) — defense in depth: the uninstall's marker-path tree
+    removal EXCLUDES runtime state (.company/, .worktrees/) and names
+    whatever it kept. The install-side refusal (TestTeardownSafety)
+    should make this branch dead code; the exclusion makes it
+    dead-SAFE for any marked tree that predates T2."""
+
+    @staticmethod
+    def _stub_venv(install_dir: Path) -> None:
+        vbin = install_dir / "venv" / "bin"
+        vbin.mkdir(parents=True, exist_ok=True)
+        for tool in ("pip", "python"):
+            p = vbin / tool
+            p.write_text("#!/bin/sh\nexit 0\n")
+            p.chmod(0o755)
+
+    @staticmethod
+    def _uninstall(install_dir: Path, home: Path) -> subprocess.CompletedProcess:
+        return subprocess.run(
+            ["bash", str(install_dir / "packaging" / "uninstall.sh")],
+            capture_output=True, text=True, timeout=300,
+            cwd=str(install_dir.parent),
+            env={**os.environ, "HOME": str(home)})
+
+    def test_marker_uninstall_keeps_cohabiting_state(self, dirty_tree,
+                                                     tmp_path):
+        """(b) a marker uninstall over a cohabiting tree (hand-written
+        marker + planted .company/, simulating a pre-T2 install) keeps
+        the workspace intact — today's rm -rf removes it (red)."""
+        shutil.rmtree(dirty_tree / ".company")
+        shutil.rmtree(dirty_tree / ".worktrees")
+        home = tmp_path / "home"
+        home.mkdir()
+        install_dir = tmp_path / "install"
+        r = TestTeardownSafety._copy_to_install(dirty_tree, install_dir,
+                                                home)
+        assert r.returncode == 0, r.stdout + "\n" + r.stderr
+        # simulate a pre-T2 cohabitation: state lands in the marked tree
+        (install_dir / ".company" / "tickets" / "state.json").parent.mkdir(
+            parents=True)
+        (install_dir / ".company" / "tickets" / "state.json").write_text(
+            '{"round": 1}\n')
+        (install_dir / ".company" / "roster.json").write_text("{}\n")
+        (install_dir / ".worktrees" / "open-ticket").mkdir(parents=True)
+        (install_dir / ".worktrees" / "open-ticket" /
+         "work.txt").write_text("wip\n")
+
+        ru = self._uninstall(install_dir, home)
+        assert ru.returncode == 0, ru.stdout + "\n" + ru.stderr
+        # the state survives, intact
+        assert (install_dir / ".company" / "tickets" /
+                "state.json").read_text() == '{"round": 1}\n'
+        assert (install_dir / ".worktrees" / "open-ticket" /
+                "work.txt").read_text() == "wip\n"
+        # the rest of the tree is gone
+        assert not (install_dir / "lib").exists(), \
+            "the install tree (minus the kept state) must be removed"
+        assert not (install_dir / ".hive-install").exists()
+        # the kept entries are NAMED in the output
+        out = ru.stdout + ru.stderr
+        assert ".company" in out and "kept" in out.lower(), \
+            "the uninstall must name the state it kept: " + out
+        assert ".worktrees" in out, out
+
+    def test_marker_uninstall_clean_tree_removes_everything(self,
+                                                            dirty_tree,
+                                                            tmp_path):
+        """The clean case is unchanged: a marked tree with no state is
+        removed whole (dir included) — the exclusion keeps nothing."""
+        shutil.rmtree(dirty_tree / ".company")
+        shutil.rmtree(dirty_tree / ".worktrees")
+        home = tmp_path / "home"
+        home.mkdir()
+        install_dir = tmp_path / "install"
+        r = TestTeardownSafety._copy_to_install(dirty_tree, install_dir,
+                                                home)
+        assert r.returncode == 0, r.stdout + "\n" + r.stderr
+        ru = self._uninstall(install_dir, home)
+        assert ru.returncode == 0, ru.stdout + "\n" + ru.stderr
+        assert not install_dir.exists(), \
+            "a clean marked tree must be removed whole"
+        assert "kept" not in (ru.stdout + ru.stderr).lower()

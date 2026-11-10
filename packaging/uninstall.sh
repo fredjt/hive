@@ -127,10 +127,27 @@ elif [ -f "$MARKER" ]; then
   echo ""
   echo "Staged install (marker: $MARKER) — removing the install tree the"
   echo "install created: $INSTALL_DIR"
+  # T2 (0.15): defense in depth — the tree removal EXCLUDES runtime
+  # state (.company/, .worktrees/) and names whatever it kept. The
+  # install-side refusal (install.sh refuses to stage into a dir that
+  # holds state) should make this branch dead code; the exclusion makes
+  # it dead-SAFE for any marked tree that predates the refusal (a
+  # pre-0.15 cohabiting tree, however it got there, keeps its state).
+  # A clean marked tree (no state) is removed whole, as before — the
+  # rmdir below drops the (now stateless) root dir itself.
   # The script is reading from this tree — exec a fresh shell so the rm
   # does not race the running script's own file (bash reads its script
-  # incrementally). The caller sees rm's exit status as uninstall's.
-  exec sh -c 'rm -rf -- "$1"' _ "$INSTALL_DIR"
+  # incrementally). The caller sees the removal's exit status.
+  exec sh -c '
+    status=0
+    for keep in .company .worktrees; do
+      [ -e "$1/$keep" ] && echo "  kept: $keep — runtime state, not install residue"
+    done
+    find "$1" -mindepth 1 -maxdepth 1 ! -name .company ! -name .worktrees \
+      -exec rm -rf {} + || status=1
+    rmdir "$1" 2>/dev/null
+    exit "$status"
+  ' _ "$INSTALL_DIR"
 else
   echo ""
   echo "Hive uninstalled. The source tree at $INSTALL_DIR is untouched (in-place"
