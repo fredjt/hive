@@ -2041,6 +2041,42 @@ class TestDoctorVenvLock:
         assert f"mcp={pins['mcp']}" in c["detail"], \
             "the pre-lock report must carry the resolved versions"
 
+    def test_doctor_venv_exact_set_green_on_released_venv(self, tmp_path,
+                                                          _venv_lock_base):
+        """T1 (0.15): a venv holding EXACTLY the released set (the
+        planted lock pins + the venv's own tooling) passes the
+        exact-set check — one list with the install's prune
+        (lib/hive_cli/commands/venv_prune.py)."""
+        root = self._scratch(tmp_path, _venv_lock_base)
+        r = self._run_doctor(tmp_path, root)
+        payload = json.loads(r.stdout)
+        c = next(cc for cc in payload["checks"]
+                 if cc["name"].startswith("venv exact set"))
+        assert c["ok"], f"a released venv must pass the exact-set check: {c}"
+        assert "exact" in c["detail"], c
+
+    def test_doctor_venv_exact_set_names_outside_names(self, tmp_path,
+                                                        _venv_lock_base):
+        """T1 (0.15): a venv holding a name OUTSIDE the released set
+        (a hand pip install) fails the exact-set check NAMING THE
+        PACKAGE, with the fix (re-run the install / pip uninstall)."""
+        root = self._scratch(tmp_path, _venv_lock_base)
+        site = (root / "venv" / "lib"
+                / f"python{sys.version_info.major}.{sys.version_info.minor}"
+                / "site-packages")
+        dist = site / "hand-installed-extra-1.0.dist-info"
+        dist.mkdir()
+        (dist / "METADATA").write_text(
+            "Metadata-Version: 2.1\nName: hand-installed-extra\nVersion: 1.0\n")
+        r = self._run_doctor(tmp_path, root)
+        payload = json.loads(r.stdout)
+        c = next(cc for cc in payload["checks"]
+                 if cc["name"].startswith("venv exact set"))
+        assert not c["ok"], f"a venv with an outside name must fail: {c}"
+        assert "hand-installed-extra" in c["detail"], c
+        assert "pip uninstall" in c["detail"], \
+            "the fix hint must name pip uninstall: " + c["detail"]
+
 
 class TestDoctorUnconfiguredCrossReference:
     """T5 (0.14): the unconfigured-provider diagnostic cross-references

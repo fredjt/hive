@@ -476,6 +476,43 @@ def _venv_lock_check() -> bool:
                   f"all {checked} applicable locked versions match the venv")
 
 
+def _venv_exact_set_check() -> bool:
+    """T1 (0.15): the installed venv is EXACTLY the released environment.
+
+    The lock is the released Python environment; the venv must hold
+    EXACTLY its closure + the venv tooling (pip/setuptools/wheel/uv —
+    the named exceptions). Anything else installed (a hand pip install,
+    a dependency a newer release dropped) is drift the install's prune
+    should have removed — named here, with the fix (re-run the install,
+    or pip uninstall the named package). ONE list: the same
+    lib/hive_cli/commands/venv_prune.py module install.sh's prune runs.
+    Skips silently without a venv (the 'Python venv' check fails that)
+    or without a lock (pre-0.14 installs cannot be pinned against a pin
+    they never had — the no-fail contract)."""
+    from hive_cli.commands.selftest import venv_python_executable
+    from hive_cli.commands import venv_prune
+    name = "venv exact set (lock closure + tooling)"
+    lock = HIVE_INSTALL_DIR / "packaging" / "requirements.lock.txt"
+    venv = HIVE_INSTALL_DIR / "venv"
+    if not venv_python_executable(venv / "bin" / "python"):
+        return True
+    if not lock.is_file():
+        return _check(name, True,
+                      "no lock (pre-0.14 install) — exact-set check skipped")
+    try:
+        unexpected_names = venv_prune.unexpected(venv, lock)
+    except Exception as e:
+        return _check(name, False, f"could not enumerate the venv: {e}")
+    if unexpected_names:
+        return _check(name, False,
+                      "outside the released set: "
+                      + ", ".join(unexpected_names)
+                      + " — re-run the install (it prunes the venv), or "
+                      "pip uninstall the named package(s)")
+    return _check(name, True,
+                  "exact — every installed name is in the lock closure + tooling")
+
+
 def _installed_set_check() -> bool:
     """T3 (0.13): the installed set verifies at DOCTOR time, not just
     install time. Reads the installed MANIFEST.txt (the tarball's own
@@ -584,6 +621,7 @@ def _run_checks(args) -> bool:
     # resolves to the versions the release locked (drift is named; a
     # pre-lock install reports its versions without a FAIL).
     all_ok &= _venv_lock_check()
+    all_ok &= _venv_exact_set_check()
 
     # T3 (0.13): installed-set integrity (manifest + required-set
     # constant + state-free rule).
