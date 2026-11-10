@@ -330,6 +330,20 @@ T5 (0.13) skip-reason contract — every skip names its condition:
 trip, `HIVE_FULL_INSTALL_TEST=1`), `test_live_0_12_0_assets_verify`
 (live 0.12.0 assets not present in the CI checkout's dist/).
 
+**First dispatch of the repurposed row** (recorded per R3 — the
+figure lives in the tree, not in prose): run
+[42892819358](https://github.com/fredjt/hive/actions/runs/42892819358),
+2026-11-10, against commit `00a9072`: **FAILED — 1 failed, 1,388
+passed, 6 skipped** (full suite, Python 3.13). The single failure —
+`test_install_online_inherits_the_refusal` — was a latent repo bug,
+not a lock issue: the online installer delegated to install.sh via
+`sh` (dash on the CI runner is a syntax error before the refusal can
+run; sh=bash on the dev box keeps it invisible). Fixed in `2ff0c47`
+(delegate with bash; the contract is pinned statically); the
+re-dispatch run [42924409622](https://github.com/fredjt/hive/actions/runs/42924409622)
+(commit `9add042`) is **green — 1,392 passed, 3 skipped in
+257.02s** (full suite, Python 3.13, GitHub ubuntu-latest).
+
 ## Verifying a published release (one command)
 
 `packaging/verify-release.sh <tag>` fetches a release's three assets
