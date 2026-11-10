@@ -69,9 +69,9 @@ One list, four consumers:
   ```
 
   The refresh resolves the floors against what PyPI serves at refresh
-time; a name whose marker does not apply to the refresh interpreter
-  (e.g. `tomli` on 3.13) is resolved explicitly against its floor so the
-  lock still pins it for the marker's audience.
+time; a name whose marker does not apply to the refresh interpreter is
+  resolved explicitly against its floor so the lock still pins it for
+  the marker's audience.
 
 The lock ships in the tarball (via the `packaging` entry, listed in
 `MANIFEST.txt`) and is in the required-set constant, so gate 4, the
@@ -262,21 +262,36 @@ and `tests/test_xdist_contract.py::TestScratchSnowballGuard` pins the
 module-level mktemp call sites in the suite, so a new per-test mktemp
 call fails the guard until it is deliberately pinned.
 
-## CI — the scheduled 3.13 full row (T2, 0.14)
+## CI — the split: push answers TODAY, the schedule answers NEXT MONTH (T4, 0.15)
 
-The push matrix lives in `.github/workflows/ci.yml` (S4, 0.12: full on
-3.12, version-sensitive subsets on 3.10/3.13 — unchanged by 0.14).
-0.13 recorded ONE full-suite run on 3.13 by hand — a datum, not a row:
-nothing re-ran the full suite on 3.13 after it, and every push
-exercised only the 147-test subset. `.github/workflows/scheduled.yml`
-makes the datum recurring: a `full-313` job running the FULL suite on
-Python 3.13, triggered by
+Two workflows, one question each:
 
-- **schedule** — weekly cron (`23 4 * * 1`, Mondays 04:23 UTC)
-- **workflow_dispatch** — manual: `gh workflow run scheduled.yml`
+- **Push (`.github/workflows/ci.yml`) — "does the lock install and
+  go green TODAY?"** EXACTLY two full rows — 3.12 and 3.13, both
+  running the full suite, both installing the runtime deps from the
+  venv lock (`packaging/requirements.lock.txt` — the released Python
+  environment, T1, 0.14). The S4 (0.12) risk split and its 3.10
+  version-sensitive subset retired with the 3.10 row — Python 3.10 is
+  EOL and 3.11 is the floor, so the surface the subset existed for
+  (the tomli backport) is gone.
 
-**First dispatch run** (recorded per R3 — the figure lives in the
-tree, not in prose): run [42566985025](https://github.com/fredjt/hive/actions/runs/42566985025),
+- **Schedule (`.github/workflows/scheduled.yml`) — "does it still hold
+  NEXT MONTH?"** the `reproducibility` job on Python 3.13: a fresh
+  runner re-resolves the SAME lock from PyPI and re-runs the full
+  suite against it. The lock is what `install.sh` installs, so this
+  row exercises the operator's actual artifact on a schedule — a
+  broken pin, a yanked release, or a package that stopped building for
+  a supported interpreter surfaces here before it reaches a cut.
+  Triggers: weekly cron (`23 4 * * 1`, Mondays 04:23 UTC) +
+  `workflow_dispatch` (`gh workflow run scheduled.yml`).
+
+0.14's scheduled row (the recurring 3.13 full, T2, 0.14) retires with
+the S4 split: 3.13 is now a full PUSH row, so the recurring full-3.13
+datum is already taken by every push; what the schedule uniquely adds
+is the weeks-later re-resolution.
+
+**First dispatch of the 0.14 row** (recorded per R3 — the figure
+lives in the tree, not in prose): run [42566985025](https://github.com/fredjt/hive/actions/runs/42566985025),
 2026-11-09, against commit `316a54f` (T2, on top of T1):
 **1,346 passed, 3 skipped in 272.78s** (full suite, Python 3.13,
 `-n auto`, GitHub ubuntu-latest). Skip list re-audited against the

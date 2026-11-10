@@ -1,19 +1,19 @@
-# Scheduled 3.13 full-suite row (T2, 0.14).
+# Reproducibility-over-time row (T4, 0.15).
 #
-# The push matrix in ci.yml is UNTOUCHED (S4, 0.12: full on 3.12,
-# version-sensitive subsets on 3.10/3.13) — this file is the ONLY CI
-# addition in 0.14, and it lives in its own workflow on purpose: the
-# Tomli surface guard (tests/test_integration.py::TestTomliSurfaceGuard)
-# keeps checking ci.yml, not this file, and the push rows keep their
-# push design.
+# The split (documented in share/docs/PACKAGING.md): the push rows in
+# ci.yml answer "does the lock install and go green TODAY" — a fresh
+# checkout, the venv LOCK (packaging/requirements.lock.txt, the
+# released Python environment, T1 0.14), today's PyPI. THIS row
+# answers "does it still hold NEXT MONTH": a fresh runner weeks later
+# re-resolves the SAME lock and re-runs the full suite against it — a
+# broken pin, a yanked release, or a package that stopped building for
+# a supported interpreter surfaces here, on a schedule, before it
+# reaches an operator's machine.
 #
-# What it runs: the FULL suite on Python 3.13. 0.13 recorded ONE
-# full-suite run on 3.13 by hand (1,334 passed / 6 skipped, 176.99s) —
-# a datum, not a row. The datum decays: the suite has grown since, and
-# every push since exercised only the 147-test subset on 3.13, so the
-# full 3.13 coverage would never run again until someone remembered.
-# A confidence datum that is taken once is an assumption, not a check;
-# this makes it recurring.
+# 0.14's scheduled row (the recurring 3.13 full, T2 0.14) retires with
+# the S4 split: 3.13 is now a full PUSH row (T4, this release), so the
+# recurring full-3.13 datum is already taken by every push; what the
+# schedule uniquely adds is the WEEKS-LATER re-resolution.
 #
 # Triggers:
 #   - schedule: weekly cron (Mondays 04:23 UTC — staggered, not on the
@@ -24,7 +24,7 @@
 # The first dispatch run's result (pass count + skip list + wall time,
 # run id) is recorded in share/docs/PACKAGING.md (R3: the figure lives
 # in the tree).
-name: Scheduled 3.13 full
+name: Reproducibility over time (scheduled)
 
 on:
   schedule:
@@ -32,8 +32,8 @@ on:
   workflow_dispatch:
 
 jobs:
-  full-313:
-    name: Tests (Python 3.13 — full, scheduled)
+  reproducibility:
+    name: Lock re-resolve + full suite (Python 3.13, scheduled)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -43,20 +43,22 @@ jobs:
         with:
           python-version: '3.13'
 
-      - name: Install dependencies
+      - name: Re-resolve the venv lock (the released Python environment)
         run: |
           python -m pip install --upgrade pip setuptools wheel
           # Install Rust toolchain for building pydantic-core, cffi, etc.
           curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain none
           export PATH="$HOME/.cargo/bin:$PATH"
-          # Core runtime deps (needed for imports in hive_cli/hive_mcp)
-          pip install mcp fastapi 'uvicorn[standard]' httpx tomli
+          # The LOCK, not the floors: this row verifies the released
+          # environment (what install.sh installs) still resolves from
+          # PyPI weeks after the cut.
+          pip install -r packaging/requirements.lock.txt
           # Test deps (xdist: the suite is xdist-safe, -n auto parallelizes
           # across the runner's cores)
           pip install pytest anyio pytest-xdist
           # Verify installation
-          python -c "import mcp; import fastapi; import httpx; print('All dependencies installed successfully')"
+          python -c "import mcp; import fastapi; import httpx; import tomllib; print('lock environment installed')"
 
-      - name: Run the FULL test suite on 3.13
+      - name: Run the FULL test suite against the lock
         run: |
           PYTHONPATH=lib pytest tests/ -n auto -v --tb=short
