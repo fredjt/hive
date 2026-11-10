@@ -2,24 +2,22 @@
 # Runs on every push to main and on every pull request.
 #
 # Jobs:
-#   1. **Python tests** — matrix split by risk (S4, 0.12): ONE version
-#      (3.12) carries the full suite; every supported version (3.10,
-#      3.13) carries its version-sensitive paths — the config-load /
-#      tomli-fallback tests + an import smoke + a quick CLI smoke.
-#      RULE: the version-sensitive surface is PINNED by
-#      tests/test_integration.py::TestTomliSurfaceGuard — a new
-#      `import tomli` / `tomllib` outside the pinned files fails the
-#      guard until the subset below is updated with it.
-#
-# Per-push wall time (T1, 0.13 — the figure lives in the repo, not in
-# prose). First matrix push, run 42520823326 (432c2b8): pipeline 3m5s;
-# suite steps — 3.12 full 165.5s (1,311 tests), 3.10 subset 44.6s
-# (147), 3.13 subset 42.3s (147); total suite time 252.4s. Old 2x full
-# matrix, run 42421662322 (pre-matrix): pipeline ~4m; suite steps —
-# 3.12 full 205.3s, 3.10 full 210.7s (1,292 tests each); total 415.9s.
-# So per-push: the full row is 165.5s vs the slower old row's 210.7s
-# (the new run also carried +19 tests), the subset rows add ~1m of
-# PARALLEL wall, and the 3.13 row's coverage costs no full-suite time.
+#   1. **Python tests** — EXACTLY TWO FULL ROWS (T4, 0.15): 3.12 and
+#      3.13, both running the full suite. The S4 (0.12) risk split —
+#      one full row + version-sensitive subsets — retires with the 3.10
+#      row: Python 3.10 is EOL (2026-10-04) and 3.11 is the floor
+#      (packaging/pyproject.toml), so the version-sensitive surface
+#      that existed only for 3.10 (the tomli backport) is gone; there
+#      is no subset left to run. Wall impact (the figures live in the
+#      repo, not in prose): before — 3.12 full 165.5s (1,311 tests),
+#      3.10 subset 44.6s (147), 3.13 subset 42.3s (147) (run
+#      42520823326); after — 3.12 full ~165s + 3.13 full ~205s (the
+#      3.13 full figure is the 0.14 one-off confidence run), each
+#      row parallel on its runner. RULE: the floor story is pinned by
+#      tests/test_json_structures.py::TestPythonFloorConsistency (the
+#      docs agree with pyproject) and
+#      tests/test_integration.py::TestNoTomliInLib (`import tomli` is
+#      absent from lib/ — re-opening the 3.10 surface fails).
 #   2. **Bash syntax check** — `bash -n` on every .sh file in lib/tools/ and lib/core/
 #   3. **Python linting** — ruff check (warn-only for existing style issues)
 #   4. **Node.js dashboard** — basic syntax validation of server.js
@@ -48,10 +46,8 @@ jobs:
         include:
           - python: '3.12'
             suite: full
-          - python: '3.10'
-            suite: version-sensitive
           - python: '3.13'
-            suite: version-sensitive
+            suite: full
     steps:
       - uses: actions/checkout@v4
 
@@ -66,8 +62,11 @@ jobs:
           # Install Rust toolchain for building pydantic-core, cffi, etc.
           curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain none
           export PATH="$HOME/.cargo/bin:$PATH"
-          # Core runtime deps (needed for imports in hive_cli/hive_mcp)
-          pip install mcp fastapi 'uvicorn[standard]' httpx tomli
+          # Core runtime deps: the LOCK (the released Python environment,
+          # T1 0.14) — the push rows verify the lock installs and goes
+          # green TODAY; the scheduled row (scheduled.yml) re-checks the
+          # same lock weeks later (reproducibility over time, T4 0.15).
+          pip install -r packaging/requirements.lock.txt
           # Test deps (xdist: the suite is xdist-safe, -n auto parallelizes
           # across the runner's cores)
           pip install pytest anyio pytest-xdist
@@ -76,30 +75,9 @@ jobs:
 
       - name: Run test suite
         run: |
-          if [ "${{ matrix.suite }}" = "full" ]; then
-            # 3.12 carries the full suite (S4)
-            PYTHONPATH=lib pytest tests/ -n auto -v --tb=short
-          else
-            # Version-sensitive subset (S4): config-load through the
-            # pinned tomli/tomllib parser chain (test_json_structures),
-            # [llm] section loads (test_llm_providers), CLI smoke
-            # (test_cli), plus an import smoke over the runtime surface.
-            PYTHONPATH=lib python -c \
-              "import hive_cli.main, hive_mcp.server, hive_config, core.llm_providers"
-            # The four pinned parser chains are exercised here: hive_config
-            # + llm_providers (test_llm_providers loads [llm] through the
-            # canonical chain), commands/config.py (TestConfigSetUpsert),
-            # commands/doctor.py (TestConfigIntegrity's doctor checks);
-            # test_json_structures parses the config TOML (its own
-            # tomllib/tomli fallback) and test_cli is the CLI smoke.
-            PYTHONPATH=lib pytest \
-              tests/test_json_structures.py \
-              tests/test_llm_providers.py \
-              tests/test_cli.py \
-              tests/test_commands.py::TestConfigSetUpsert \
-              tests/test_commands.py::TestConfigIntegrity \
-              -v --tb=short
-          fi
+          # T4 (0.15): both rows run the full suite — the S4
+          # version-sensitive subset retired with the 3.10 row.
+          PYTHONPATH=lib pytest tests/ -n auto -v --tb=short
 
   # ──────────────────────────────────────────────
   # 2. Bash syntax validation
