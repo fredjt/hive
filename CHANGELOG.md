@@ -1,5 +1,83 @@
 # Changelog
 
+## 0.15.0
+
+The upgrade release.
+The trust surface so far verified a release against ITSELF; 0.15
+verifies a release against its PREDECESSOR: install-on-install leaves
+EXACTLY what the new release defines (T1), a marked tree can no longer
+hold the runtime state its teardown would delete (T2), the race class
+0.14's CI flake named is audited, hardened, and pinned (T3), and the
+EOL interpreter row retires with the version-sensitive surface that
+exists only for it (T4). The cut itself is the first to verify the
+live upgrade (T5). Feature-light: no new commands, roles, stages, or
+providers. One breaking change: Python 3.10 support ends with this
+release (EOL — T4).
+
+### The upgrade path — install-on-install leaves exactly what the new release defines (T1)
+- `install.sh` prunes the installed tree: a top-level install-root
+  entry outside the new entry set (other than `venv`/`.hive-install`)
+  is residue of a superseded release and is removed, each entry
+  named.
+- A shared module (`lib/hive_cli/commands/venv_prune.py`) reduces the
+  installed venv to the exact released environment (the lock closure
+  + the venv tooling `pip`/`setuptools`/`wheel`/`uv`): a name outside
+  the set is uninstalled, each removal named. `install.sh` runs it at
+  install/upgrade time; `hive doctor`'s "venv exact set" check
+  verifies the result and names any drift with the fix.
+- `verify-release.sh --from PREV-TAG [install-dir]` verifies a
+  completed upgrade: the tree is exactly the new entry set, the
+  required set is present, the venv is in the new exact set, and the
+  previous release's receipt is valid (the chain holds).
+- PACKAGING.md documents the upgrade story (the Upgrade section).
+
+### Teardown safety — a marked tree never holds runtime state (T2)
+- Staging (install or upgrade) into a directory that holds runtime
+  state (`.company/`, `.worktrees/`) is refused before anything is
+  touched, the conflicting entry named.
+- Uninstall of a marked tree removes the whole tree (mirroring the
+  full stage); the symlink+venv-only path stays reserved for
+  unmarked (pre-0.14) trees.
+- Follow-up (caught by the scheduled row's first dispatch): the
+  online installer delegated to `install.sh` via `sh` — on dash
+  systems a syntax error before the refusal could run. It now
+  delegates with bash; the contract is pinned statically.
+
+### Commit points — the race class is audited, hardened, and pinned (T3)
+- The runner's singleton moves its mutex to a dedicated lock file
+  (flock needs a stable inode); the pid, heartbeat, and LLM-outage
+  counter commit atomically (tmp + rename): an observer reads the old
+  value or the new value — never empty, never partial. The halt
+  marker's atomic commit (post-0.14) ships alongside.
+- The audit (`docs/commit-point-audit.md`) classifies every state
+  write in lib/tools + lib/core + the harness: cross-process
+  observed writes commit at a single commit point; self-contained
+  sites stay, each with a one-line justification.
+- The static guard (the lib-side sibling of the xdist worker
+  contract): a new direct write to a state path fails the suite;
+  registered sites carry their justification. The forced-takeover
+  test hammers the poll window (N=20) — no empty pid reads.
+
+### Python 3.10 is EOL (T4)
+- The floor is 3.11: `pyproject.toml` requires `>=3.11`, the tomli
+  fallback and the conditional lock line retire — plain `tomllib`
+  everywhere (the version-sensitive surface existed only for 3.10,
+  which is EOL).
+- The CI matrix retires the 3.10 row: one version (3.12) carries the
+  full suite, the supported versions (3.11, 3.13) carry the
+  version-sensitive subset.
+- The scheduled reproducibility row is repurposed from the 3.10
+  subset to the full 3.13 run.
+
+### The cut verifies the live upgrade (T5)
+- `cut-release.sh --upgrade-from PREV-TAG`: gate 8 scratch-installs
+  the published previous release, installs the staged tree on top,
+  doctor's the result, and asserts the atomic commit points in the
+  delivered tree. The receipt gains the upgrade line (from-tag,
+  verified) — the first receipt to carry one.
+- `verify-release.sh --from` verifies that line: a receipt claiming a
+  different predecessor is a named chain mismatch.
+
 ## 0.14.0
 
 The reproducibility release.
