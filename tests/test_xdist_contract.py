@@ -314,3 +314,165 @@ class TestScratchSnowballGuard:
             "the scratch (T4). Use the tmp_path fixture, or extend "
             "PINNED_SITES with a deliberate reason:\n"
             + "\n".join(f"  {k}: {v}" for k, v in sorted(unknown)))
+
+
+class TestLibCommitPointGuard:
+    """T3 (0.15) — the commit-point class is pinned by construction.
+
+    The audit (docs/commit-point-audit.md) classified every state write
+    in lib/tools + lib/core + agent-harness.py: cross-process-observed
+    direct (TRUNCATE-then-fill) writes commit at a single point (tmp +
+    rename), and the sites that keep a direct write are registered with
+    a one-line justification. This guard scans the bash tree for direct
+    truncate writes whose target is a state path ($COMPANY_DIR/... or a
+    variable derived from it) and is not a tmp+rename target, and fails
+    on any site that is not in the registered set below — a new un-
+    audited write fails the guard until it is converted or justified in
+    the audit doc + this set (the scratch-snowball guard's pattern)."""
+
+    #: (file, line-content-substring) — every direct truncate write to a
+    #: state path that is NOT tmp+rename, per docs/commit-point-audit.md
+    #: Class B (one-line justification in the doc; a new registration
+    #: requires a new audit row).
+    REGISTERED = {
+        # chat-send.sh — create-only channel header (guarded by [ ! -f ];
+        # identical one-line content, no partial-line reader window)
+        ("lib/tools/chat-send.sh",
+         'echo "# Channel: $CHANNEL" > "$CHAT_FILE"'),
+        # company-health.sh — the health daemon's self-contained dedup
+        # stamps (sole reader: itself)
+        ("lib/tools/company-health.sh", 'echo "$now" > "$_last_file"'),
+        ("lib/tools/company-health.sh", 'echo "$_now" > "$_last_file"'),
+        ("lib/tools/company-health.sh",
+         'echo "$now" > "$_status_dir/last-disk-crit"'),
+        ("lib/tools/company-health.sh",
+         'echo "$now" > "$_status_dir/last-disk-warn"'),
+        ("lib/tools/company-health.sh",
+         'echo "$_wt_now" > "$_wt_last_file"'),
+        # init-brief.sh / init-chat-channels.sh — init-time one-shot
+        # writes (no concurrent reader exists before init completes)
+        ("lib/tools/init-brief.sh", 'cat > "$COMPANY_DIR/brief.md" <<EOF'),
+        ("lib/tools/init-chat-channels.sh",
+         'echo "# Channel: $channel" > "$CHANNEL_FILE"'),
+        # onboard-generate.sh — onboarding runs in the init phase
+        ("lib/tools/onboard-generate.sh", "cat > \"$ONBOARD_FILE\" <<'EOF'"),
+        ("lib/tools/onboard-generate.sh", "cat > \"$README_FILE\" <<'EOF'"),
+        ("lib/tools/onboard-generate.sh", "cat > \"$CHARTER_FILE\" <<'EOF'"),
+        # release-test-suite.sh — the per-version test log; the first
+        # write CREATES this version's log and a re-run deliberately
+        # resets it (new-run semantics); single header line
+        ("lib/tools/release-test-suite.sh", '} > "$LOG"'),
+        # sprint-lifecycle.sh / verification-gates.sh — DEDICATED lock
+        # files (flock only; the content is never read by anyone)
+        ("lib/tools/sprint-lifecycle.sh", 'exec 9>"$RUNNER_LOCK"'),
+        ("lib/tools/verification-gates.sh", 'exec 8>"$GATE_LOCK"'),
+        # vp-idle-check.sh — the VP idle-check's self-contained run
+        # stamps (sole reader: itself; one-line content)
+        ("lib/tools/vp-idle-check.sh", 'echo "run" > "$LAST_RUN_FILE.reason"'),
+        ("lib/tools/vp-idle-check.sh", "date -u +%s > \"$LAST_RUN_FILE\""),
+        ("lib/tools/vp-idle-check.sh",
+         'echo "run:$ACTIVE active tickets" > "$LAST_RUN_FILE.reason"'),
+        ("lib/tools/vp-idle-check.sh",
+         'echo "run:dept-chat-updated" > "$LAST_RUN_FILE.reason"'),
+        ("lib/tools/vp-idle-check.sh",
+         'echo "run:leadership-chat-updated" > "$LAST_RUN_FILE.reason"'),
+        ("lib/tools/vp-idle-check.sh",
+         'echo "run:30-min-heartbeat" > "$LAST_RUN_FILE.reason"'),
+        ("lib/tools/vp-idle-check.sh",
+         'echo "skip:idle (active=0, no chat changes, last run $((NOW - LAST_RUN_TS))s ago)" > "$LAST_RUN_FILE.reason"'),
+        # orchestrator.sh — one-shot startup log line at orchestrator boot
+        ("lib/core/orchestrator.sh",
+         'printf \'%s\\n\' "$CEO_OUTPUT" > "$COMPANY_DIR/logs/ceo-initial-build.log"'),
+    }
+
+    ASSIGN_RE = re.compile(r'^\s*(?:local\s+)?([A-Za-z_][A-Za-z0-9_]*)=(.*)$')
+    # a '>' that is not part of '>>' / '>=' / '2>'-style fd-dup, followed
+    # by the redirect target token
+    WRITE_RE = re.compile(r'(?<![><])>(?!=)(?!>)\s*"?([A-Za-z_{/$.][^" \n]*)')
+
+    @classmethod
+    def _state_vars(cls, text):
+        """(vars, all-assignments): variables assigned from $COMPANY_DIR
+        (transitively) — a state path's address may travel in a var."""
+        vm = {}
+        for line in text.splitlines():
+            m = cls.ASSIGN_RE.match(line)
+            if m:
+                vm.setdefault(m.group(1), m.group(2))
+        sv = {n for n, r in vm.items() if "COMPANY_DIR" in r}
+        changed = True
+        while changed:
+            changed = False
+            for n, r in vm.items():
+                if n in sv:
+                    continue
+                for v in list(sv):
+                    if re.search(r"\$%s\b|\$\{%s\}" % (v, v), r):
+                        sv.add(n)
+                        changed = True
+        return sv, vm
+
+    @classmethod
+    def _is_state_target(cls, tok, sv, vm):
+        if not tok or tok in ("/dev/null",) or tok.startswith("/tmp"):
+            return False
+        if "COMPANY_DIR" in tok:
+            return True
+        if ".tmp" in tok:
+            return False  # the tmp+rename idiom (halt.tmp.$$ & kin)
+        m = re.match(r'^["\']?\$?\{?([A-Za-z_][A-Za-z0-9_]*)\}?', tok)
+        if m and m.group(1) in sv:
+            return ".tmp" not in vm.get(m.group(1), "")
+        return False
+
+    def scan(self, path):
+        """[(lineno, stripped-line)] of every direct truncate write in
+        the file whose target is a state path (not a tmp+rename target)."""
+        text = Path(path).read_text()
+        sv, vm = self._state_vars(text)
+        hits = []
+        for i, line in enumerate(text.splitlines(), 1):
+            s = line.strip()
+            if not s or s.startswith("#"):
+                continue
+            m = self.WRITE_RE.search(s)
+            if m and self._is_state_target(m.group(1), sv, vm):
+                hits.append((i, s))
+        return hits
+
+    def test_no_unregistered_direct_state_writes(self):
+        repo = Path(__file__).resolve().parent.parent
+        violations = []
+        for d in ("lib/tools", "lib/core"):
+            for f in sorted((repo / d).glob("*.sh")):
+                rel = str(f.relative_to(repo))
+                for i, s in self.scan(f):
+                    if not any(pf == rel and q in s
+                               for pf, q in self.REGISTERED):
+                        violations.append(f"{rel}:{i}: {s[:90]}")
+        assert not violations, (
+            "direct truncate write(s) to a state path that the audit "
+            "(docs/commit-point-audit.md) does not register — the "
+            "commit-point class (T3, 0.15): a reader can land between "
+            "create-truncate and fill. Convert to tmp + rename, or add "
+            "the site to the audit + REGISTERED with a justification:\n"
+            + "\n".join(violations))
+
+    def test_planted_direct_write_is_caught(self, tmp_path):
+        """Test-first (a): plant a new direct write (a resurrected
+        `cat > halt`-shaped site) in a copy of a real script — the
+        scanner names it (red against a guard that only checks the
+        registered set)."""
+        repo = Path(__file__).resolve().parent.parent
+        src = repo / "lib" / "tools" / "sprint-state.sh"
+        planted = tmp_path / "planted.sh"
+        body = (
+            "#!/usr/bin/env bash\n"
+            'COMPANY_DIR="${COMPANY_DIR:-.company}"\n'
+            'cat > "$COMPANY_DIR/rounds/halt" <<EOF\n'
+            '{ "reason": "planted" }\n'
+            "EOF\n")
+        planted.write_text(body)
+        hits = self.scan(planted)
+        assert any("COMPANY_DIR/rounds/halt" in s for _, s in hits), (
+            "the planted direct write must be caught: " + repr(hits))

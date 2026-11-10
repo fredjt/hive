@@ -358,7 +358,11 @@ if [ -z "$GATE_FAIL" ]; then
     else
       FAIL_FILE="$COMPANY_DIR/departments/$DEPT/components/$TID/test-output.log"
       mkdir -p "$(dirname "$FAIL_FILE")"
-      echo "$TEST_OUT" > "$FAIL_FILE"
+      # T3 (0.15): tmp + rename — a single commit point. The gate result
+      # names this file for the VP and the dashboard reads it; a truncate
+      # of a multi-KB test output is a wide empty/partial window.
+      echo "$TEST_OUT" > "$FAIL_FILE.tmp.$$"
+      mv -f "$FAIL_FILE.tmp.$$" "$FAIL_FILE"
       record_gate "$TID" "tests-pass" "fail" "see $FAIL_FILE"
       GATE_FAIL="tests failed (output saved to $FAIL_FILE)"
     fi

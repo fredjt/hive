@@ -46,12 +46,15 @@ justification; the guard exempts exactly these.
 | `brief.md` (fresh) | lib/tools/init-brief.sh | init-time one-shot: no agent, dashboard, or runner exists before init completes, so no concurrent reader |
 | `chat/<channel>.md` header (create-only) | lib/tools/chat-send.sh | guarded by `[ ! -f ]`; the content is the identical one-line header, so a create race cannot expose anything but the complete line |
 | channel files (create-only) | lib/tools/init-chat-channels.sh | init-time one-shot; guarded skip if the channel exists |
-| `finance/.../cash-position.json` | lib/tools/init-finance-scaffold.sh | init-time one-shot scaffold write; no reader exists yet |
-| `legal/.../LICENSE.proposed` | lib/tools/init-legal-scaffold.sh | init-time one-shot scaffold write; no reader exists yet |
+| `finance/.../cash-position.json` | lib/tools/init-finance-scaffold.sh | init-time one-shot scaffold write of a PROJECT file (finance/ under the project root, not `.company/`); no reader exists yet |
+| `legal/.../LICENSE.proposed` | lib/tools/init-legal-scaffold.sh | init-time one-shot scaffold write of a PROJECT file (legal/ under the project root, not `.company/`); no reader exists yet |
 | onboarding README/CHARTER/ONBOARD | lib/tools/onboard-generate.sh | onboarding runs in the init phase; no concurrent readers |
 | `$PROJECT_ROOT/README.md` (if absent) | lib/core/init.sh | init-time one-shot, and it is a project file, not `.company/` state |
 | `logs/ceo-initial-build.log` | lib/core/orchestrator.sh | one-shot startup log line written once at orchestrator boot; readers tail afterwards |
 | heartbeat-dedup stamps (`_last_file`, `last-disk-crit`, `last-disk-warn`, `_wt_last_file`) | lib/tools/company-health.sh | self-contained: the health daemon is the sole reader of its own dedup stamps; a partial stamp only re-logs a line early |
+| run stamps (`logs/vp-last-run.<dept>` + `.reason`) | lib/tools/vp-idle-check.sh | self-contained: the idle-check is the sole reader of its own run stamps (its dedup logic reads the ts it writes); one-line content |
+| `rounds/runner.lock` / `gate-runs/<dept>-<tid>.lock` | lib/tools/sprint-lifecycle.sh, verification-gates.sh | DEDICATED lock files: `exec N>` creates the file the flock needs (a stable inode); the content is never read by anyone — flock only |
+| `releases/<ver>-test.log` (header line) | lib/tools/release-test-suite.sh | per-version log: the first write CREATES this version's log and a suite re-run deliberately resets it (new-run semantics); single header line, appends resume |
 | log rotation (`: > "$log_file"`) | lib/tools/log-rotate.sh | the named equivalent: in-place truncate to PRESERVE the inode so the daemon's open fd stays valid (copy-gzip the backup first); the observable state is exactly 'empty, then appends resume' |
 | `/tmp/...` scratch (`hive-changelog.*`, `hive-publish-notes.*`, `gh-*.preflight`, `*.wt.$$`) | lib/tools/release-publish*.sh, gh-pr-*.sh, gh-push-branch.sh | not state: mktemp scratch outside `.company/`, single consumer, removed by the consumer |
 
