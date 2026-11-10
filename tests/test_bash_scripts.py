@@ -2837,6 +2837,22 @@ class TestAtomicStateWrites:
         assert target.read_text().strip() == '{"ok": true}'
         self._no_tmp_litter(tmp_company_dir)
 
+    def test_release_verdict_lands_atomic(self, tmp_company_dir):
+        state = tmp_company_dir / "sprints" / "current.json"
+        state.parent.mkdir(parents=True, exist_ok=True)
+        verify_log = tmp_company_dir / "releases" / "vX-verify.md"
+        state.write_text(json.dumps(
+            {"stage": "release-verify",
+             "release": {"verify_log": str(verify_log)}}))
+        r = run_script(
+            f"{SCRIPTS_DIR}/release-verdict-write.sh",
+            ["GO", "--rationale", "all clean"],
+            env={"COMPANY_DIR": str(tmp_company_dir)},
+        )
+        assert r.returncode == 0, r.stdout + r.stderr
+        assert verify_log.read_text().splitlines()[0] == "VERDICT: GO"
+        self._no_tmp_litter(tmp_company_dir)
+
     def test_research_findings_fresh_lands_atomic(self, tmp_company_dir):
         r = run_script(
             f"{SCRIPTS_DIR}/research-findings.sh",

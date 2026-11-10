@@ -218,7 +218,11 @@ else
   echo
   echo "  }"
   echo "}"
-  } > "$REPORT"
+  # T3 (0.15): tmp + rename — a single commit point. The gates report
+  # is read cross-process (release-ic, the dashboard); a truncate-then-fill
+  # write would expose a partial JSON mid-write.
+  } > "$REPORT.tmp.$$"
+  mv -f "$REPORT.tmp.$$" "$REPORT"
   echo
   echo "release-gates report: $REPORT"
   echo "  pass=$PASS  fail=$FAIL  skip=$SKIP"

@@ -98,7 +98,11 @@ fi
     echo "BLOCKERS:"
     echo "$STDIN_BUF"
   fi
-} > "$VERIFY_LOG"
+# T3 (0.15): tmp + rename — a single commit point. sprint-lifecycle
+# (a different process) parses the first VERDICT: line; a truncate-then-fill
+# write would expose a partial/empty verdict mid-write.
+} > "$VERIFY_LOG.tmp.$$"
+mv -f "$VERIFY_LOG.tmp.$$" "$VERIFY_LOG"
 
 echo "release-verdict-write: $VERDICT recorded at $VERIFY_LOG"
 realpath "$VERIFY_LOG"
