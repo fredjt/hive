@@ -402,9 +402,35 @@ if [ -n "$UPGRADE_FROM" ]; then
     echo "FAIL: installing the v$VERSION staged tree on top of $UPGRADE_FROM failed" >&2
     rm -rf "$USTAGE" "$UNSTAGE"; exit 1
   fi
-  if ! HIVE_INSTALL_DIR="$UINSTALL" "$UINSTALL/venv/bin/python" -m hive_cli.main doctor \
-      >/dev/null 2>&1; then
-    echo "FAIL: doctor failed on the upgraded scratch install" >&2
+  # bin/hive, not a bare venv python: the CLI resolves from the install's
+  # lib/ (bin/hive exports PYTHONPATH=$HIVE_INSTALL_DIR/lib). doctor's
+  # exit code is NOT the gate — the LLM selftest fails on any box without
+  # a configured provider. The UPGRADE surface is the named checks.
+  DOC_JSON="$(mktemp -t hive-cut-doctor-XXXXXX)"
+  HIVE_INSTALL_DIR="$UINSTALL" bash "$UINSTALL/bin/hive" doctor --json \
+    > "$DOC_JSON" 2>/dev/null
+  DOCTOR_BAD="$( "$UINSTALL/venv/bin/python" - "$DOC_JSON" <<'PYEOF'
+import json, sys
+try:
+    d = json.load(open(sys.argv[1]))
+except Exception as e:
+    print("doctor JSON unreadable: " + str(e))
+    sys.exit(0)
+checks = {c["name"]: bool(c.get("ok")) for c in d.get("checks", [])}
+REQUIRED = [
+    "Python venv",
+    "Required Python packages",
+    "venv lock (requirements.lock.txt)",
+    "venv exact set (lock closure + tooling)",
+    "installed set (manifest integrity)",
+]
+bad = [n for n in REQUIRED if n not in checks or not checks[n]]
+print(" ".join(bad))
+PYEOF
+)"
+  rm -f "$DOC_JSON"
+  if [ -n "$DOCTOR_BAD" ]; then
+    echo "FAIL: doctor's upgrade checks failed on the upgraded scratch install: $DOCTOR_BAD" >&2
     rm -rf "$USTAGE" "$UNSTAGE"; exit 1
   fi
   APROBLEMS=""
