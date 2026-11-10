@@ -24,11 +24,9 @@ tree on PYTHONPATH — no dependency on what the venv contains.
 from __future__ import annotations
 
 import argparse
-import os
 import re
 import subprocess
 import sys
-import unicodedata
 from importlib import metadata
 from pathlib import Path
 
