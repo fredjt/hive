@@ -48,12 +48,9 @@ def _toml_loads(text: str) -> dict:
     exactly the dead-spawn-path case the doctor probe exists to
     diagnose — a crash here swallows that diagnosis (0.10.0 3.10 CI)."""
     try:
-        import tomllib
-    except ImportError:  # Python 3.10/3.11
-        try:
-            import tomli as tomllib
-        except ImportError:  # parser-less venv (the doctor dead-venv case)
-            tomllib = None
+        import tomllib  # stdlib (3.11+; the 0.15 floor)
+    except ImportError:  # parser-less venv (the doctor dead-venv case)
+        tomllib = None
     if tomllib is None:
         return {}
     return tomllib.loads(text)

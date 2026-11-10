@@ -28,10 +28,7 @@ def _write_config(tmp_path, text):
 
 class TestLlmConfigSection:
     def test_defaults_have_llm_section(self):
-        try:
-            import tomllib
-        except ImportError:  # Python 3.10 (CI matrix) — CI installs tomli
-            import tomli as tomllib
+        import tomllib  # stdlib (3.11+; the 0.15 floor)
         config = tomllib.loads((REPO / "etc" / "config.defaults.toml").read_text())
         assert "llm" in config
         llm = config["llm"]
@@ -218,7 +215,7 @@ class TestNoTomlParser:
     must not die in config parsing. Env vars stay the source of truth
     and the harness --selftest reports the REAL spawn-path failure
     (missing httpx) instead of a config-parsing traceback that swallows
-    the diagnosis. Simulated by blocking tomllib/tomli/toml imports,
+    the diagnosis. Simulated by blocking the tomllib import,
     which is version-independent: on 3.13 it blocks the stdlib parser
     the same way 3.10 simply lacks it."""
 
@@ -229,8 +226,6 @@ class TestNoTomlParser:
         import hive_config
         monkeypatch.setattr(hive_config, "tomllib", None)
         monkeypatch.setitem(sys.modules, "tomllib", None)
-        monkeypatch.setitem(sys.modules, "tomli", None)
-        monkeypatch.setitem(sys.modules, "toml", None)
 
     def test_resolve_degrades_to_env(self, no_parser, tmp_path):
         # A readable defaults file makes the parse path run: without a
@@ -258,7 +253,7 @@ class TestNoTomlParser:
             "import sys, importlib.abc\n"
             "class B(importlib.abc.MetaPathFinder):\n"
             "    def find_spec(self, name, path=None, target=None):\n"
-            "        if name in ('tomllib', 'tomli', 'toml'):\n"
+            "        if name == 'tomllib':\n"
             "            raise ImportError('blocked for test')\n"
             "        return None\n"
             "sys.meta_path.insert(0, B())\n")

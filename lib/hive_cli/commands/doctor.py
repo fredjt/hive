@@ -163,10 +163,7 @@ def _env_file_check() -> bool:
 
 
 def _toml_loads_file(path: Path) -> dict:
-    try:
-        import tomllib
-    except ImportError:  # Python 3.10 (CI matrix) — CI installs tomli
-        import tomli as tomllib
+    import tomllib  # stdlib (3.11+; the 0.15 floor)
     return tomllib.loads(path.read_text()) or {}
 
 
@@ -366,7 +363,8 @@ def _parse_required_entries(text: str) -> tuple[list, list]:
 
 # The runtime set the lock must cover — the names the harness, the MCP
 # server, and the CLI actually import (one venv call reports all of them).
-_VENV_LOCK_NAMES = ("mcp", "fastapi", "uvicorn", "httpx", "tomli")
+# T4 (0.15): tomli retired with the 3.11 floor (tomllib is stdlib).
+_VENV_LOCK_NAMES = ("mcp", "fastapi", "uvicorn", "httpx")
 
 
 def _parse_venv_lock(text: str) -> list:
@@ -387,9 +385,11 @@ def _parse_venv_lock(text: str) -> list:
 
 
 def _lock_marker_applies(marker: str) -> bool:
-    """T1: evaluate the small marker vocabulary the lock uses
-    (python_version < "3.11" — the tomli line). Unknown markers count
-    as applicable; the runtime lock carries no other kind."""
+    """T1: evaluate the small marker vocabulary the lock format
+    allows (e.g. python_version < "3.11" — the machinery stays for
+    the format; T4, 0.15: no line in the lock carries a marker
+    anymore, tomli retired with the 3.11 floor). Unknown markers
+    count as applicable; the runtime lock carries no other kind."""
     if not marker:
         return True
     m = re.match(r'python_version\s*([<>=!]+)\s*"?([0-9.]+)"?', marker)
@@ -567,17 +567,16 @@ def _run_checks(args) -> bool:
                      str(venv_py))
 
     if venv_python_executable(venv_py):
-        # tomllib is stdlib on Python 3.11+; fall back to tomli on older versions
+        # tomllib is stdlib (3.11+; the 0.15 floor)
         check_code = (
             "import mcp; import fastapi; import httpx; "
-            "import sys; "
-            "(__import__('tomllib') if sys.version_info >= (3,11) else __import__('tomli'))"
+            "import tomllib"
         )
         try:
             r = subprocess.run([str(venv_py), "-c", check_code],
                                capture_output=True, text=True)
             all_ok &= _check("Required Python packages", r.returncode == 0,
-                             r.stderr.strip().splitlines()[-1] if r.returncode != 0 else "mcp, fastapi, httpx, tomllib/tomli")
+                             r.stderr.strip().splitlines()[-1] if r.returncode != 0 else "mcp, fastapi, httpx, tomllib")
         except Exception as e:
             all_ok &= _check("Required Python packages", False, str(e))
 

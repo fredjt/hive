@@ -284,10 +284,7 @@ class TestConfigDefaults:
         assert len(content) > 0
 
     def _load(self) -> dict:
-        try:
-            import tomllib
-        except ImportError:
-            import tomli as tomllib
+        import tomllib  # stdlib (3.11+; the 0.15 floor)
         return tomllib.loads(Path("etc/config.defaults.toml").read_text())
 
     def test_config_parses_as_toml(self):
@@ -340,10 +337,7 @@ class TestConfigTemplate:
 
     @staticmethod
     def _load(path) -> dict:
-        try:
-            import tomllib
-        except ImportError:
-            import tomli as tomllib
+        import tomllib  # stdlib (3.11+; the 0.15 floor)
         return tomllib.loads(Path(path).read_text())
 
     def test_template_exists_and_parses(self):

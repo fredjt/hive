@@ -3,8 +3,9 @@
 # packaging/requirements.txt carries FLOOR pins (>=X): an install today
 # and an install next month can resolve different versions. This lock is
 # the RELEASED environment: an exact pin for every name in
-# requirements.txt, marker-aware (the tomli line applies only below
-# Python 3.11, where tomllib is not stdlib).
+# requirements.txt, marker-aware. (T4, 0.15: the tomli line retired
+# with the 3.11 floor — tomllib is stdlib, so no line carries a
+# marker anymore; the machinery stays for the format.)
 #
 # Consumers (the lock is one list, like the entry set and the
 # required-set constant):
@@ -25,4 +26,3 @@ mcp==2.3.0
 fastapi==0.162.2
 uvicorn[standard]==0.54.0
 httpx==0.28.1
-tomli==2.5.0; python_version < "3.11"

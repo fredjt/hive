@@ -155,38 +155,18 @@ class TestICSpawnDiagnostics:
 
 
 
-class TestTomliSurfaceGuard:
-    """S4 (0.12) — the version-sensitive surface is pinned.
+class TestNoTomliInLib:
+    """T4 (0.15) — the 3.10 surface is RETIRED: `import tomli` is gone
+    from lib/ (the static successor of TestTomliSurfaceGuard, which
+    pinned the surface's PRESENCE and retires with it).
 
-    The CI matrix runs the FULL suite on one version (3.12); the 3.10
-    and 3.13 rows run the version-sensitive subset only (the
-    config-load/tomli-fallback tests + an import smoke + a quick CLI
-    smoke — the file list in ci.yml). A new `import tomli` /
-    `tomllib` outside the pinned files would silently outgrow that
-    subset's coverage, so this guard fails (and the pin set must be
-    updated together with the ci.yml subset).
+    The 3.11 floor makes stdlib tomllib the only TOML parser in the
+    runtime. Any new `import tomli` in lib/ re-opens a version-sensitive
+    surface (a marker-conditional dependency + a per-version CI row) and
+    fails this guard until it is deliberately justified.
     """
 
-    # The ONLY files allowed to import a TOML parser.
-    PINNED = {
-        "lib/hive_config.py",
-        "lib/hive_cli/commands/config.py",
-        "lib/hive_cli/commands/doctor.py",
-        "lib/core/llm_providers.py",
-    }
-    # The ci.yml version-sensitive subset — its tests exercise every
-    # parser path in PINNED: hive_config.load_config + llm_providers
-    # (test_llm_providers), commands/config.py (TestConfigSetUpsert),
-    # commands/doctor.py (TestConfigIntegrity).
-    SUBSET_FILES = (
-        "tests/test_json_structures.py",
-        "tests/test_llm_providers.py",
-        "tests/test_cli.py",
-        "tests/test_commands.py::TestConfigSetUpsert",
-        "tests/test_commands.py::TestConfigIntegrity",
-    )
-
-    def test_no_tomli_imports_outside_pinned_files(self):
+    def test_no_import_tomli_in_lib(self):
         import re
         from conftest import get_install_dir
         repo = get_install_dir()
@@ -195,31 +175,10 @@ class TestTomliSurfaceGuard:
             if "__pycache__" in py.parts:
                 continue
             text = py.read_text()
-            if re.search(
-                    r"^\s*(import (tomli|tomllib)"
-                    r"|from (tomli|tomllib) import)", text, re.M):
+            if re.search(r"^\s*(import tomli|from tomli import)",
+                         text, re.M):
                 found.add(str(py.relative_to(repo)))
-        assert found <= self.PINNED, (
-            f"tomli/tomllib imports outside the CI subset's pinned "
-            f"files: {sorted(found - self.PINNED)} — update PINNED here "
-            f"AND the version-sensitive subset in ci.yml"
-        )
-
-    def test_ci_subset_files_exist(self):
-        from conftest import get_install_dir
-        repo = get_install_dir()
-        for f in self.SUBSET_FILES:
-            file_part = f.split("::")[0]
-            assert (repo / file_part).is_file(), \
-                f"ci.yml subset file missing: {file_part}"
-        ci = (repo / ".github" / "workflows" / "ci.yml").read_text()
-        if "version-sensitive" not in ci:
-            pytest.skip(
-                "the S4 ci.yml matrix is not on this branch yet "
-                "(s4-ci-yml — this repo's OAuth git credential lacks "
-                "workflow scope); the version-sensitive SURFACE is still "
-                "pinned by test_no_tomli_imports_outside_pinned_files. "
-                "Once the matrix lands, this test enforces the subset "
-                "names against ci.yml.")
-        for f in self.SUBSET_FILES:
-            assert f in ci, f"ci.yml subset must name {f}"
+        assert not found, (
+            f"`import tomli` in lib/ — the 3.10 surface is retired "
+            f"(0.15, T4): {sorted(found)}. Under the 3.11 floor, stdlib "
+            f"tomllib is the only TOML parser.")

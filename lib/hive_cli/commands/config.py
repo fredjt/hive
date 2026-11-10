@@ -6,10 +6,7 @@ import os
 import re
 import subprocess
 import sys
-try:
-    import tomllib  # Python 3.11+
-except ImportError:
-    import tomli as tomllib  # Python 3.10 backport
+import tomllib  # stdlib (3.11+; the 0.15 floor — the 3.10 tomli backport is retired)
 from pathlib import Path
 
 

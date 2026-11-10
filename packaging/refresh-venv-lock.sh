@@ -8,12 +8,12 @@ set -euo pipefail
 # requirements.txt changes (a floor bump, a new dependency), re-resolve:
 # a fresh throwaway venv installs the FLOORS (what PyPI serves today),
 # and this script writes the resolved versions back as the lock — the
-# marker of each requirement line is carried over verbatim, so the
-# conditional line (tomli, python_version < "3.11") stays conditional.
+# marker of each requirement line is carried over verbatim (under the
+# 0.15 floor no line carries a marker — tomli retired with 3.11).
 #
-# A name whose marker does not apply to the resolution interpreter
-# (e.g. tomli on 3.13) is resolved explicitly against its floor, so the
-# lock still carries an exact pin for that marker's audience.
+# A name whose marker does not apply to the resolution interpreter is
+# resolved explicitly against its floor, so the lock still carries an
+# exact pin for that marker's audience.
 #
 # Usage: refresh-venv-lock.sh [--python PY]
 #   --python  Interpreter for the resolution venv (default: python3)
@@ -89,9 +89,9 @@ for raw in open(sys.argv[1]):
     try:
         version = meta.version(name)
     except meta.PackageNotFoundError:
-        # The marker does not apply to THIS interpreter (e.g. tomli on
-        # 3.11+): resolve the name explicitly against its floor so the
-        # lock still pins it for the marker's audience.
+        # The marker does not apply to THIS interpreter: resolve the
+        # name explicitly against its floor so the lock still pins it
+        # for the marker's audience.
         print(f"  {name}: marker {marker!r} does not apply to this "
               f"interpreter — resolving '{req}' explicitly")
         r = subprocess.run(
@@ -110,8 +110,9 @@ header = """# Hive venv lock (T1, 0.14) — the Python environment the release i
 # packaging/requirements.txt carries FLOOR pins (>=X): an install today
 # and an install next month can resolve different versions. This lock is
 # the RELEASED environment: an exact pin for every name in
-# requirements.txt, marker-aware (the tomli line applies only below
-# Python 3.11, where tomllib is not stdlib).
+# requirements.txt, marker-aware. (T4, 0.15: the tomli line retired
+# with the 3.11 floor — tomllib is stdlib, so no line carries a
+# marker anymore; the machinery stays for the format.)
 #
 # Consumers (the lock is one list, like the entry set and the
 # required-set constant):

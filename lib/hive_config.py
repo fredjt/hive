@@ -20,9 +20,8 @@ import sys
 from pathlib import Path
 
 try:
-    import tomllib
-except ImportError:  # Python < 3.11 (CI matrix runs 3.10) — _toml_loads
-    # falls back to tomli (packaging/requirements.txt) or toml.
+    import tomllib  # stdlib (3.11+; the 0.15 floor)
+except ImportError:  # a parser-less interpreter — _toml_loads fails loudly
     tomllib = None
 
 
@@ -61,20 +60,12 @@ def _toml_loads(text: str) -> dict:
     merely unreadable."""
     if tomllib is not None:
         return tomllib.loads(text)
-    try:
-        import tomli  # type: ignore
-        return tomli.loads(text)
-    except ImportError:
-        pass
-    try:
-        import toml  # type: ignore
-        return toml.loads(text)
-    except ImportError as e:
-        raise ImportError(
-            "no TOML parser available — this interpreter has no stdlib "
-            "tomllib (Python >= 3.11) and neither tomli nor toml is "
-            "installed (pip install tomli, see packaging/requirements.txt)"
-        ) from e
+    # T4 (0.15): the 3.10 surface (the tomli/toml fallback chain) is
+    # retired — stdlib tomllib is the only parser under the 3.11 floor.
+    raise ImportError(
+        "no TOML parser available — this interpreter has no stdlib "
+        "tomllib (requires Python >= 3.11; see packaging/pyproject.toml)"
+    )
 
 
 def load_config(hive_root: str | Path | None = None,

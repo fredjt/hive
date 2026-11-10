@@ -15,7 +15,7 @@ This directory contains the packaging artifacts: installers, the build script, a
 | `build-package.sh` | Produces a redistributable `dist/hive-<version>.tar.gz` + `.sha256` from the source tree |
 | `uninstall.sh` | Removes the `hive` symlink and venv and runs the one-time legacy cleanup of stale agent hook registrations; on a staged install (the `.hive-install` marker from `install.sh --copy-to`, T3 0.14) it also removes the install tree — in-place installs keep their tree; `--keep-tree` forces the old behavior; `.company/` workspaces are never touched |
 | `pyproject.toml` | Python project metadata (setuptools) — defines `hive-os` package, entry point `hive → hive_cli.main:main` |
-| `requirements.txt` | Floor-pinned Python dependencies: mcp, fastapi, uvicorn, httpx, tomli |
+| `requirements.txt` | Floor-pinned Python dependencies: mcp, fastapi, uvicorn, httpx (0.15: the `tomli` backport retired with the 3.11 floor) |
 | `requirements.lock.txt` | The venv lock (T1, 0.14) — EXACT pins per name in requirements.txt, marker-aware; install.sh installs from it, the build self-verifies it, doctor cross-checks the venv against it |
 | `refresh-venv-lock.sh` | Regenerates `requirements.lock.txt` from `requirements.txt` (fresh venv, PyPI resolution, exact pins written back) — run it when requirements.txt changes |
 | `clean-scratch.sh` | Reclaims the scratch under `$TMPDIR` (T4, 0.14) — basetemp generations kept back to the newest 3, mktemp litter (tmp.*/hive-*/pip-unpack-*) reaped past a min age, `--dry-run` first, never touches fresh/live paths |
@@ -52,7 +52,6 @@ mcp>=1.0
 fastapi>=0.110
 uvicorn[standard]>=0.27
 httpx>=0.27
-tomli>=2.0; python_version < "3.11"
 ```
 
 Python runtime requires **>=3.11** (per `pyproject.toml` — 0.15: Python

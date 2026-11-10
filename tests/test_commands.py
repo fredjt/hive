@@ -364,10 +364,7 @@ class TestConfigSetUpsert:
 
     @staticmethod
     def _load(path):
-        try:
-            import tomllib
-        except ImportError:
-            import tomli as tomllib
+        import tomllib  # stdlib (3.11+; the 0.15 floor)
         return tomllib.loads(Path(path).read_text())
 
     def test_set_creates_file_seeded_from_template(self, tmp_path):
