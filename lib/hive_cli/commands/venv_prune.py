@@ -200,6 +200,10 @@ def main(argv=None) -> int:
                         "environment)")
     p.add_argument("--dry-run", action="store_true",
                    help="name what would be removed; remove nothing")
+    p.add_argument("--list", action="store_true",
+                   help="print the installed names outside the exact "
+                        "set, one per line; change nothing (the "
+                        "verify-release.sh --from mode reads this)")
     a = p.parse_args(argv)
     venv = Path(a.venv)
     lock = Path(a.lock)
@@ -209,6 +213,10 @@ def main(argv=None) -> int:
     if not lock.is_file():
         print(f"venv_prune: no lock at {lock}", file=sys.stderr)
         return 1
+    if a.list:
+        for n in unexpected(venv, lock):
+            print(n)
+        return 0
     victims = prune(venv, lock, dry_run=a.dry_run)
     if not victims:
         print("  venv is exact — every installed name is in the "

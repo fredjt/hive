@@ -2719,3 +2719,168 @@ class TestVenvPrune:
         assert "mcp" not in removed
         assert "planted-residue" not in vp.installed_names(venv)
         assert "mcp" in vp.installed_names(venv)
+class TestVerifyUpgradeFrom:
+    """T1 (0.15) — verify-release.sh --from: the upgrade is verified.
+
+    Hermetic (a fake `gh` serves local fixture releases): a clean
+    upgraded tree verifies; a tree with residue, or a venv with an
+    extra name, fails and NAMES it; a missing previous receipt fails.
+    """
+    NEW = "0.9.9"
+    PREV = "0.9.8"
+
+    @classmethod
+    def _receipt(cls, ver, tar_sha, side_sha, man_sha):
+        gates = "".join(f"gate-{n}: PASS (t{n})\n" for n in range(8))
+        return (f"receipt: hive-{ver}\nversion: {ver}\nbranch: main\n"
+                "commit: 0123456789abcdef0123456789abcdef01234567\n"
+                f"tag: v{ver}\n{gates}"
+                f"asset: hive-{ver}.tar.gz sha256={tar_sha}\n"
+                f"asset: hive-{ver}.sha256 sha256={side_sha}\n"
+                f"manifest: MANIFEST.txt sha256={man_sha}\n"
+                f"release: https://github.com/fake/hive/releases/tag/v{ver}\n")
+
+    @classmethod
+    def _build_release(cls, assets, ver, drop_receipt=False):
+        pkg = assets / f"hive-{ver}"
+        (pkg / "bin").mkdir(parents=True)
+        (pkg / "lib" / "core").mkdir(parents=True)
+        (pkg / "packaging").mkdir(parents=True)
+        (pkg / "bin" / "hive").write_text("#!/bin/sh\n")
+        (pkg / "lib" / "core" / "agent-harness.py").write_text("pass\n")
+        (pkg / "packaging" / "required-entries.list").write_text(
+            "REQUIRED\nbin/hive\nlib/core/agent-harness.py\n")
+        (pkg / "packaging" / "requirements.lock.txt").write_text(
+            "fixturepkg==1.0.0\n")
+        files = sorted(str(f.relative_to(pkg))
+                       for f in pkg.rglob("*") if f.is_file())
+        man = pkg / "MANIFEST.txt"
+        man.write_text("\n".join(files + ["MANIFEST.txt"]) + "\n")
+        man_sha = subprocess.run(["sha256sum", str(man)],
+                                 capture_output=True, text=True).stdout.split()[0]
+        tb = assets / f"hive-{ver}.tar.gz"
+        subprocess.run(["tar", "-czf", str(tb), "-C", str(assets),
+                        f"hive-{ver}"], check=True, capture_output=True)
+        tar_sha = subprocess.run(["sha256sum", str(tb)],
+                                 capture_output=True,
+                                 text=True).stdout.split()[0]
+        side = assets / f"hive-{ver}.sha256"
+        side.write_text(f"{tar_sha}  hive-{ver}.tar.gz\n")
+        side_sha = subprocess.run(["sha256sum", str(side)],
+                                  capture_output=True,
+                                  text=True).stdout.split()[0]
+        if not drop_receipt:
+            (assets / f"hive-{ver}.receipt.txt").write_text(
+                cls._receipt(ver, tar_sha, side_sha, man_sha))
+
+    @classmethod
+    def _fake_gh(cls, tmp, assets):
+        d = tmp / "ghbin-up"
+        d.mkdir()
+        gh = d / "gh"
+        lines = [
+            "#!/bin/sh",
+            "tag=; dir=; pat=; prev=",
+            "for a in \"$@\"; do",
+            "  case \"$prev\" in",
+            "    --dir) dir=\"$a\" ;;",
+            "    --pattern) pat=\"$a\" ;;",
+            "  esac",
+            "  [ \"$prev\" = download ] && tag=\"$a\"",
+            "  prev=\"$a\"",
+            "done",
+            "case \"$pat\" in",
+            f"  \"\") cp \"{assets}\"/hive-${{tag#v}}.* \"$dir\"/ 2>/dev/null ;;",
+            f"  *) cp \"{assets}/$pat\" \"$dir\"/ 2>/dev/null ;;",
+            "esac",
+            "exit 0",
+        ]
+        gh.write_text("\n".join(lines) + "\n")
+        gh.chmod(0o755)
+        return d
+
+    @classmethod
+    def _make_tree(cls, tmp, residue=(), venv_names=()):
+        tree = tmp / "tree"
+        (tree / "bin").mkdir(parents=True)
+        (tree / "lib" / "core").mkdir(parents=True)
+        (tree / "bin" / "hive").write_text("#!/bin/sh\n")
+        (tree / "lib" / "core" / "agent-harness.py").write_text("pass\n")
+        (tree / ".hive-install").write_text("version=0.9.8\n")
+        for name in residue:
+            (tree / name).write_text("stale\n")
+        if venv_names:
+            venv = tree / "venv"
+            (venv / "bin").mkdir(parents=True)
+            (venv / "bin" / "python").symlink_to(sys.executable)
+            sp = (venv / "lib" /
+                  f"python{sys.version_info.major}.{sys.version_info.minor}"
+                  / "site-packages")
+            sp.mkdir(parents=True)
+            for i, name in enumerate(venv_names):
+                d = sp / f"{name}-{i + 1}.0.0.dist-info"
+                d.mkdir()
+                (d / "METADATA").write_text(
+                    f"Metadata-Version: 2.1\nName: {name}\n"
+                    f"Version: {i + 1}.0.0\n")
+        return tree
+
+    @classmethod
+    def _run(cls, tmp, assets, tree, drop_prev_receipt=False):
+        cls._build_release(assets, cls.NEW)
+        cls._build_release(assets, cls.PREV,
+                           drop_receipt=drop_prev_receipt)
+        bindir = cls._fake_gh(tmp, assets)
+        return subprocess.run(
+            ["bash", str(_repo_root() / "packaging" / "verify-release.sh"),
+             f"v{cls.NEW}", "--from", f"v{cls.PREV}", str(tree)],
+            capture_output=True, text=True, timeout=120,
+            env={**os.environ,
+                 "PATH": f"{bindir}{os.pathsep}{os.environ['PATH']}"})
+
+    def test_clean_upgrade_verifies(self, tmp_path):
+        """A tree that is EXACTLY the new entry set (plus venv/.hive-
+        install), with a venv in the exact set: verified end to end."""
+        assets = tmp_path / "a"
+        assets.mkdir()
+        tree = self._make_tree(tmp_path, venv_names=("fixturepkg", "pip"))
+        r = self._run(tmp_path, assets, tree)
+        out = r.stdout + r.stderr
+        assert r.returncode == 0, out[-900:]
+        assert "upgrade v0.9.8 → v0.9.9 OK" in out, out[-500:]
+
+    def test_residue_fails_and_is_named(self, tmp_path):
+        """A top-level entry outside the new entry set (pre-0.15-style
+        residue the upgrade prune should have removed) fails, named."""
+        assets = tmp_path / "a"
+        assets.mkdir()
+        tree = self._make_tree(tmp_path, residue=("old-tool.sh",),
+                               venv_names=("fixturepkg", "pip"))
+        r = self._run(tmp_path, assets, tree)
+        out = r.stdout + r.stderr
+        assert r.returncode == 1, out[-900:]
+        assert "old-tool.sh" in out, out[-900:]
+        assert "outside the v0.9.9 entry set" in out, out[-900:]
+
+    def test_venv_extra_fails_and_is_named(self, tmp_path):
+        """A venv holding a name outside the new exact set (a hand pip
+        install the upgrade prune should have removed) fails, named."""
+        assets = tmp_path / "a"
+        assets.mkdir()
+        tree = self._make_tree(
+            tmp_path, venv_names=("fixturepkg", "pip", "planted-residue"))
+        r = self._run(tmp_path, assets, tree)
+        out = r.stdout + r.stderr
+        assert r.returncode == 1, out[-900:]
+        assert "planted-residue" in out, out[-900:]
+
+    def test_missing_prev_receipt_fails(self, tmp_path):
+        """No previous receipt (an unverifiable predecessor) fails the
+        upgrade verification, naming the chain gap."""
+        assets = tmp_path / "a"
+        assets.mkdir()
+        tree = self._make_tree(tmp_path, venv_names=("fixturepkg", "pip"))
+        r = self._run(tmp_path, assets, tree, drop_prev_receipt=True)
+        out = r.stdout + r.stderr
+        assert r.returncode == 1, out[-900:]
+        assert "cannot download the previous receipt" in out, out[-900:]
