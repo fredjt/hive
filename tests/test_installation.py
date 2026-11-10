@@ -2367,3 +2367,156 @@ class TestUninstallParity:
         assert not (install_dir / "venv").exists()
         link = home / ".local" / "bin" / "hive"
         assert not link.exists() and not link.is_symlink()
+
+
+class TestTeardownSafety:
+    """T2 (0.15) — a marked tree never holds runtime state.
+
+    0.14's T3 made teardown mirror setup: a --copy-to install writes
+    the .hive-install marker and the uninstall removes the WHOLE tree
+    on it — no exclusions. Nothing prevented a marked install from
+    cohabiting with runtime state (install.sh --copy-to <project dir>
+    stages a marked tree alongside .company/), so the uninstall then
+    removed the project's live state as 'install residue'. 0.15 pins
+    the invariant both directions:
+
+    - install REFUSES to stage into a dir that holds .company/ or
+      .worktrees/ (fail-fast, naming the collision) — staged installs
+      only; in-place installs are the operator's tree and are
+      unchanged. A dir that carries ONLY the existing .hive-install
+      marker is the upgrade path (T1, 0.15): re-running the install
+      over it is allowed and announced (the post-stage prune makes
+      the tree exact).
+    - uninstall EXCLUDES runtime state from the marker-path tree
+      removal and names whatever it kept — dead-SAFE for any marked
+      tree that predates the install-side refusal.
+
+    install-online.sh inherits the refusal through the shared staging
+    path (it delegates to install.sh --copy-to) — a seam test pins it.
+    """
+
+    @staticmethod
+    def _stub_venv(install_dir: Path) -> None:
+        vbin = install_dir / "venv" / "bin"
+        vbin.mkdir(parents=True, exist_ok=True)
+        for tool in ("pip", "python"):
+            p = vbin / tool
+            p.write_text("#!/bin/sh\nexit 0\n")
+            p.chmod(0o755)
+
+    @classmethod
+    def _copy_to_install(cls, tree: Path, install_dir: Path,
+                         home: Path) -> subprocess.CompletedProcess:
+        cls._stub_venv(install_dir)
+        return subprocess.run(
+            ["bash", str(tree / "packaging" / "install.sh"),
+             "--copy-to", str(install_dir),
+             "--bin-link", str(home / ".local" / "bin" / "hive")],
+            capture_output=True, text=True, timeout=600,
+            cwd=str(tree), env={**os.environ, "HOME": str(home)})
+
+    def test_copy_to_into_company_dir_refuses_and_names_it(self, dirty_tree,
+                                                            tmp_path):
+        """(a) a --copy-to install into a directory holding a planted
+        .company/ FAILS the install, naming the collision — today it
+        stages silently (red)."""
+        home = tmp_path / "home"
+        home.mkdir()
+        install_dir = tmp_path / "install"
+        install_dir.mkdir()
+        (install_dir / ".company" / "tickets" / "state.json").parent.mkdir(
+            parents=True)
+        (install_dir / ".company" / "tickets" / "state.json").write_text("{}\n")
+        r = self._copy_to_install(dirty_tree, install_dir, home)
+        assert r.returncode != 0, \
+            "staging into a dir with .company/ must fail: " + r.stdout
+        assert ".company" in (r.stderr + r.stdout), r.stderr
+        # refused BEFORE staging: no marker, no staged entries
+        assert not (install_dir / ".hive-install").exists()
+        assert not (install_dir / "lib").exists(), \
+            "a refused install must not stage anything"
+
+    def test_copy_to_into_worktrees_dir_refuses_and_names_it(self,
+                                                             dirty_tree,
+                                                             tmp_path):
+        """The .worktrees/ half of the same refusal."""
+        home = tmp_path / "home"
+        home.mkdir()
+        install_dir = tmp_path / "install"
+        install_dir.mkdir()
+        (install_dir / ".worktrees" / "some-ticket").mkdir(parents=True)
+        r = self._copy_to_install(dirty_tree, install_dir, home)
+        assert r.returncode != 0, \
+            "staging into a dir with .worktrees/ must fail: " + r.stdout
+        assert ".worktrees" in (r.stderr + r.stdout), r.stderr
+        assert not (install_dir / ".hive-install").exists()
+
+    def test_copy_to_into_marked_and_state_dir_refuses(self, dirty_tree,
+                                                       tmp_path):
+        """A pre-T2 cohabiting tree (marker + .company/ — however it
+        got there) is refused on re-run too: the upgrade prune would
+        otherwise delete the state the install never created."""
+        home = tmp_path / "home"
+        home.mkdir()
+        install_dir = tmp_path / "install"
+        install_dir.mkdir()
+        (install_dir / ".company" / "tickets").mkdir(parents=True)
+        (install_dir / ".hive-install").write_text(
+            "version=0.14.0\ninstalled_at=2026-11-01T00:00:00Z\n"
+            "mode=copy-to\n")
+        r = self._copy_to_install(dirty_tree, install_dir, home)
+        assert r.returncode != 0, \
+            "staging into a marked dir that holds state must fail"
+        out = r.stderr + r.stdout
+        assert ".company" in out and ".hive-install" in out, out
+
+    def test_copy_to_into_marked_dir_is_the_upgrade_path(self, dirty_tree,
+                                                         tmp_path):
+        """A dir carrying ONLY the existing marker (a clean marked
+        tree) is the upgrade path (T1, 0.15): re-running the install
+        over it is allowed and announced, not refused."""
+        home = tmp_path / "home"
+        home.mkdir()
+        install_dir = tmp_path / "install"
+        r1 = self._copy_to_install(dirty_tree, install_dir, home)
+        assert r1.returncode == 0, r1.stdout + "\n" + r1.stderr
+        # stale entry from a previous release (outside the entry set)
+        (install_dir / "stale-leftover.txt").write_text("old\n")
+        r2 = self._copy_to_install(dirty_tree, install_dir, home)
+        assert r2.returncode == 0, \
+            "re-running the install over a marked tree is the upgrade " \
+            "path and must not be refused: " + r2.stdout + r2.stderr
+
+    def test_install_online_inherits_the_refusal(self, dirty_tree,
+                                                 tmp_path):
+        """install-online.sh's HIVE_INSTALL_DIR seam: it delegates to
+        install.sh --copy-to, so the refusal is inherited — a one-liner
+        pointed at a state dir fails before staging, naming it."""
+        ver = (dirty_tree / "VERSION").read_text().strip()
+        pkg = tmp_path / f"hive-{ver}"
+        (pkg / "packaging").mkdir(parents=True)
+        for name in ("install.sh", "entries.sh", "entries.list",
+                     "required-entries.list"):
+            shutil.copy(dirty_tree / "packaging" / name,
+                        pkg / "packaging" / name)
+        shutil.copy(dirty_tree / "VERSION", pkg / "VERSION")
+        tarball = tmp_path / f"hive-{ver}.tar.gz"
+        subprocess.run(["tar", "-czf", str(tarball), "-C", str(tmp_path),
+                        pkg.name], check=True, capture_output=True)
+
+        home = tmp_path / "home"
+        home.mkdir()
+        state_dir = tmp_path / "hive-install-dir"
+        (state_dir / ".company" / "tickets").mkdir(parents=True)
+        r = subprocess.run(
+            ["sh", str(dirty_tree / "packaging" / "install-online.sh")],
+            capture_output=True, text=True, timeout=120,
+            cwd=str(tmp_path),
+            env={**os.environ, "HOME": str(home),
+                 "HIVE_PKG_FILE": str(tarball),
+                 "HIVE_INSTALL_DIR": str(state_dir)})
+        assert r.returncode != 0, \
+            "install-online into a state dir must fail: " + r.stdout
+        assert ".company" in (r.stderr + r.stdout), r.stderr
+        assert not (state_dir / ".hive-install").exists()
+        assert not (state_dir / "lib").exists()

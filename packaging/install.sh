@@ -36,6 +36,50 @@ EOF
 done
 
 if [ "$INSTALL_DIR" != "$SOURCE_DIR" ]; then
+  # T2 (0.15): a marked tree never holds runtime state. A staged install
+  # writes the .hive-install marker, and the uninstall removes the WHOLE
+  # tree on that marker — so staging into a dir that already holds
+  # runtime state would make the teardown delete what the setup never
+  # created (the install stages silently, the uninstall then removes the
+  # project's live state as 'install residue'). Refuse fail-fast, naming
+  # the collision. In-place installs are the operator's own tree — no
+  # marker, no refusal, unchanged.
+  #
+  # A dir that carries ONLY the existing .hive-install marker is NOT a
+  # collision: re-running the install over a marked tree is the upgrade
+  # path (T1, 0.15) — the post-stage prune makes the tree exactly the
+  # new release's entry set. (A marked dir that ALSO holds runtime state
+  # is a pre-T2 cohabiting tree — the state refusal below still applies:
+  # the upgrade prune must not be allowed to delete live state.)
+  STAGE_REFUSAL=""
+  for STATE_ENTRY in .company .worktrees; do
+    if [ -e "$INSTALL_DIR/$STATE_ENTRY" ]; then
+      STAGE_REFUSAL="$STAGE_REFUSAL  - $INSTALL_DIR/$STATE_ENTRY (runtime state)\n"
+    fi
+  done
+  if [ -n "$STAGE_REFUSAL" ]; then
+    echo "ERROR: refusing to stage into $INSTALL_DIR — it holds" >&2
+    printf '%b' "$STAGE_REFUSAL" >&2
+    echo "  A staged install is removed whole-tree by the uninstall" >&2
+    echo "  (teardown mirrors setup, T3 0.14); staging here would make" >&2
+    echo "  teardown delete the project's live state." >&2
+    if [ -e "$INSTALL_DIR/.hive-install" ]; then
+      echo "  The dir also carries an existing .hive-install marker:" >&2
+      echo "  a pre-0.15 cohabiting tree. Move the state out (or" >&2
+      echo "  'hive stop' first), then re-run the install — or pick a" >&2
+      echo "  different install dir." >&2
+    else
+      echo "  Pick a different install dir (the default:" >&2
+      echo "  $HOME/.local/share/hive)." >&2
+    fi
+    exit 1
+  fi
+  if [ -e "$INSTALL_DIR/.hive-install" ]; then
+    echo "  Existing staged install detected ($INSTALL_DIR/.hive-install) —"
+    echo "  this run is the UPGRADE: re-staging over it; the post-stage"
+    echo "  prune (T1, 0.15) leaves exactly the new release's entry set."
+  fi
+
   # S2: the whole-tree rsync is gone. Only the shared entry set
   # (packaging/entries.list — the same list build-package.sh stages) is
   # copied. Runtime state (.company/, .worktrees/), build artifacts
