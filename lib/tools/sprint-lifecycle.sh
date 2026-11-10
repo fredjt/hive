@@ -57,6 +57,13 @@ LLM_OUTAGE_COUNTER_FILE="$COMPANY_DIR/status/llm-outage-count"
 
 # ── Singleton lock ──────────────────────────────────────────────────
 RUNNER_PID="$COMPANY_DIR/rounds/runner.pid"
+# T3 (0.15): the mutex lives on a DEDICATED lock file. flock needs a
+# stable inode, and locking the pidfile itself (the 0.14 design:
+# exec 9>"$RUNNER_PID") created the empty window — the open truncated
+# the file, the pid was written only after the flock was held, and a
+# poller (the test suite, operator tooling, this script's own PRIOR_PID
+# read on the next start) landing in between read an empty pidfile.
+RUNNER_LOCK="$COMPANY_DIR/rounds/runner.lock"
 RUNNER_HEARTBEAT="$COMPANY_DIR/rounds/runner-heartbeat"
 mkdir -p "$(dirname "$RUNNER_PID")"
 PRIOR_PID=$(cat "$RUNNER_PID" 2>/dev/null | head -1 | tr -dc '0-9')
@@ -84,18 +91,38 @@ if [ -n "$PRIOR_PID" ] && [ "$PRIOR_PID" != "$$" ] && kill -0 "$PRIOR_PID" 2>/de
     sleep 0.3
   fi
 fi
-exec 9>"$RUNNER_PID"
+# T3 (0.15): the single commit point for state writes in this file.
+# Content goes to a tmp sibling, then mv -f (rename) is THE commit:
+# an observer reads the old content or the new content — never an
+# empty file, never a partial line. A failed write keeps the old
+# content (and cleans up the tmp). Content arrives on stdin.
+atomic_commit() {
+  local target="$1"
+  local tmp="${1}.tmp.$$"
+  if cat > "$tmp" 2>/dev/null; then
+    mv -f "$tmp" "$target" 2>/dev/null || { rm -f "$tmp"; return 1; }
+  else
+    rm -f "$tmp"
+    return 1
+  fi
+}
+exec 9>"$RUNNER_LOCK"
 if ! flock -n 9; then
   echo "Refusing to start: another sprint-lifecycle holds the runner lock." >&2
   exit 1
 fi
-echo $$ >&9
+# T3 (0.15): the pid COMMITS atomically (tmp + rename) — the file is
+# observed as the prior pid or the new pid, never empty, never partial.
+# (Single commit point, the same pattern as rounds/halt — 99fb61f —
+# and the state layer's round-append.)
+printf '%s\n' "$$" | atomic_commit "$RUNNER_PID"
 
 # Item 6: heartbeat - lets health and ops distinguish a live runner
 # from a crashed one (dead pid + stale heartbeat = crash, not just a
 # cleaned-up pidfile). Written each loop iteration and while idling.
+# T3 (0.15): tmp + rename — a reader never sees a partial line.
 runner_heartbeat() {
-  printf '{ "pid": %s, "ts": "%s" }\n' "$$" "$(ts)" > "$RUNNER_HEARTBEAT" 2>/dev/null || true
+  printf '{ "pid": %s, "ts": "%s" }\n' "$$" "$(ts)" | atomic_commit "$RUNNER_HEARTBEAT" 2>/dev/null || true
 }
 runner_heartbeat
 
@@ -250,7 +277,8 @@ llm_outage_note_failure() {
   local n
   n=$(( $(llm_outage_count) + 1 ))
   mkdir -p "$(dirname "$LLM_OUTAGE_COUNTER_FILE")"
-  echo "$n" > "$LLM_OUTAGE_COUNTER_FILE"
+  # T3 (0.15): tmp + rename — a reader never sees a partial line.
+  printf '%s\n' "$n" | atomic_commit "$LLM_OUTAGE_COUNTER_FILE"
   log "LLM outage counter: $n/$LLM_OUTAGE_LIMIT (stage=$stage)"
   if [ "$n" -ge "$LLM_OUTAGE_LIMIT" ]; then
     llm_outage_halt "$stage"

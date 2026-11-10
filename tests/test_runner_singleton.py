@@ -113,6 +113,63 @@ def test_forced_takeover_is_deliberate(tmp_path):
                     p.kill()
 
 
+def test_forced_takeover_pid_never_empty_under_hammer(tmp_path):
+    """T3 (0.15) — the empty-pidfile window is gone.
+
+    N=20 forced takeovers in ONE company, with the takeover poll
+    hammered (10 ms): every read of runner.pid must be a pid — never
+    empty, never partial — and every heartbeat read must parse as
+    complete JSON. Red before the hardening: the 0.14 design did
+    `exec 9>"$RUNNER_PID"` (the file is created truncated) and wrote
+    the pid only after the flock — a poller landing in the window read
+    an empty file (it flaked once in one full -n 8 run and passed 3/3
+    in serial isolation — the signature of a load-dependent race, not
+    a logic failure).
+    """
+    h = LifecycleHarness(tmp_path, mode="noop")
+    pidfile = h.project / ".company" / "rounds" / "runner.pid"
+    hbfile = h.project / ".company" / "rounds" / "runner-heartbeat"
+    prev = None
+    total_reads = 0
+    try:
+        for i in range(20):
+            p = _spawn_runner(
+                h, {"HIVE_RUNNER_FORCE": "1"} if prev is not None else None)
+            deadline = time.time() + 30
+            committed = False
+            while not committed:
+                if pidfile.exists():
+                    content = pidfile.read_text()
+                    total_reads += 1
+                    assert content.strip(), (
+                        f"takeover {i}: runner.pid read EMPTY — the "
+                        "window between truncate and write (the 0.14 "
+                        "exec-9 design)")
+                    committed = content.strip() == str(p.pid)
+                if hbfile.exists():
+                    hb_text = hbfile.read_text()
+                    if hb_text.strip():
+                        hb = json.loads(hb_text)  # partial line = crash
+                        assert isinstance(hb.get("pid"), int), hb
+                if time.time() > deadline:
+                    raise AssertionError(
+                        f"takeover {i}: pid {p.pid} never committed "
+                        f"to {pidfile}")
+                time.sleep(0.01)
+            if prev is not None:
+                assert prev.poll() is not None, (
+                    f"takeover {i}: the prior runner must be terminated")
+            prev = p
+    finally:
+        for p in ([prev] if prev is not None else []):
+            p.terminate()
+            try:
+                p.wait(timeout=15)
+            except subprocess.TimeoutExpired:
+                p.kill()
+    assert total_reads > 0, "the hammer never read the pidfile"
+
+
 def test_health_restarts_runner_into_real_log_file():
     """Static guard: company-health.sh maps the sprint-lifecycle role to
     the hyphen-named log (the old tr '-' '_' produced the orphan
