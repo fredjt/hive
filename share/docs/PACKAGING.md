@@ -381,6 +381,19 @@ cut commit run both full suites (3.12 + 3.13); the scheduled row's
 next dispatch re-checks the cut CACHE-FREE (the T3 exception) — its
 result is recorded here when it lands (the reproducibility number).
 
+**First dispatch of the 0.16 row** (recorded per R3 — the figure
+lives in the tree): run
+[42991058092](https://github.com/fredjt/hive/actions/runs/42991058092)
+(`workflow_dispatch`, 2026-11-11, commit `011198c`): **green — 1,400
+passed, 3 skipped in 197.39s** (full suite, Python 3.13). The lock
+re-resolved from PyPI CACHE-FREE (the T3 exception — "does PyPI still
+serve it", not "does our cache still hold it") in 11s under
+`--only-binary :all:`: the wheel-only contract held on the dispatch.
+No toolchain step. The number to watch going forward is the
+scheduled (4-hourly) dispatches of this same row — a broken pin, a
+yanked release, or a wheel that stops shipping for a supported
+interpreter surfaces there, naming the line.
+
 ## Verifying a published release (one command)
 
 `packaging/verify-release.sh <tag>` fetches a release's three assets
