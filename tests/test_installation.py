@@ -1512,6 +1512,70 @@ class TestBuildLockVerify:
             ":\n" + out[-2000:])
 
 
+@pytest.fixture(scope="session")
+def _fresh_install(_dirty_base, tmp_path_factory):
+    """T2 (0.16): the install's own FRESH-branch selftest, once per
+    session (the TestBuildLockVerify pattern).
+
+    With the venv-tax tests re-pointed at the session base (T2), every
+    per-test install REUSES a copied venv — nothing in the install
+    cluster pays the venv-CREATION branch anymore (the
+    uv/stdlib-venv path + the FIRST lock install). The fresh branch
+    keeps exactly one dedicated coverage: one full fresh install per
+    session, on a clean destination (a --copy-to install into an empty
+    dir — the operator's Option A path, the cut's gate-8 path). The
+    test using it is distributed to one worker. The tree and the
+    install are hive-* named scratch: T4's clean-scratch reaps them.
+    """
+    base = tmp_path_factory.mktemp("hive-fresh-install")
+    install_dir = base / "install"
+    r = subprocess.run(
+        ["bash", str(_dirty_base / "packaging" / "install.sh"),
+         "--copy-to", str(install_dir),
+         "--bin-link", str(base / "binlink" / "hive")],
+        capture_output=True, text=True, timeout=1800,
+        cwd=str(_dirty_base),
+    )
+    return r, install_dir
+
+
+class TestFreshInstallBranch:
+    """T2 (0.16) — the fresh-install branch keeps its dedicated test.
+
+    The venv-creation branch (uv venv / python3 -m venv + the first
+    lock install) is the one install cost the session base cannot
+    absorb: a base that already carries a venv can only exercise the
+    reuse branch. The dedicated fixture runs ONE full fresh install
+    per session (the TestBuildLockVerify pattern — "the fresh path
+    itself stays covered ... a dedicated fixture runs one full build
+    WITHOUT the variable", distributed to one worker) and asserts the
+    venv exists and imports the locked set.
+    """
+
+    def test_fresh_install_creates_the_venv_and_imports_the_locked_set(
+            self, _fresh_install):
+        r, install_dir = _fresh_install
+        assert r.returncode == 0, (
+            "a FRESH install (venv creation + first lock install) must "
+            "pass:\n" + r.stdout[-3000:] + "\n" + r.stderr[-3000:])
+        out = r.stdout + r.stderr
+        assert "Reusing existing venv" not in out, (
+            "the fresh branch must CREATE the venv, not reuse one:\n"
+            + out[-2000:])
+        venv_python = install_dir / "venv" / "bin" / "python"
+        assert venv_python.is_file(), (
+            "the fresh install must leave a venv with a python at "
+            f"{venv_python}")
+        ri = subprocess.run(
+            [str(venv_python), "-c",
+             "import mcp, fastapi, uvicorn, httpx"],
+            capture_output=True, text=True, timeout=120)
+        assert ri.returncode == 0, (
+            "the fresh venv must import the locked set "
+            "(mcp, fastapi, uvicorn, httpx):\n"
+            + ri.stderr[-2000:])
+
+
 class TestInstallCopyToEntrySet:
     """S2 (0.12) — install the entry set, not the tree.
 
