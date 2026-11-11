@@ -1,5 +1,107 @@
 # Changelog
 
+## 0.16.0
+
+The price release.
+0.12 built the trust surface, 0.13 wired its consumers, 0.14 made
+the release reproducible, and 0.15 proved the move — and the
+invariants those releases bought now cost wall clock on every run:
+a 103-second hammer that is 38.7% of the suite wall, an install
+cluster that pays a fresh venv and a lock install per test, and a CI
+matrix that installs a toolchain that installs nothing. 0.16
+restructures the cost without weakening a single invariant: the pin
+keeps its N and its poll (T1), the fresh-install path keeps its
+dedicated test (T2), the scheduled row keeps its job (T3). No
+breaking changes; no new commands, roles, stages, or providers.
+
+### The hammer's 103 seconds — the pin's cost, not its doubt (T1)
+- The hammer's parent now reaps the prior runner on every window
+  iteration (the real supervisor model — company-health does the
+  same): a reaped prior frees the pid file in ~0.14s per takeover,
+  not 5.3s (zombie). The pin (N=20, polling for empty pid reads) is
+  unchanged.
+- The production death check is 0.1s x 10 (a 1s cap; was 0.5s x 10):
+  a reaping supervisor sees the takeover commit in ~0.2s; the
+  unreaped worst case pays the full cap once, per takeover, and is
+  pinned by its dedicated test.
+- The takeover now waits (bounded) for the runner lock to actually
+  clear: the killed prior's orphaned children (the state-layer
+  python) hold the inherited lock fd for ~100ms — the 0.15 5s cap
+  masked it (the flock always landed seconds after the TERM, when
+  the orphans were gone; observed 20% of forced takeovers refused).
+  A third LIVE runner still wins the refusal; the non-forced path is
+  untouched.
+- The static tick guard pins the 0.1s granularity (red while a
+  coarser literal exists).
+- Result: the hammer is 14.45s (was 103.03s) — 7.2% of the suite
+  wall, not 38.7%.
+
+### The install cluster — the venv is built once per session (T2)
+- Session-scoped `_installed_base`: one staged tree (the same surface
+  the per-test versions staged) plus ONE real install.sh run that
+  builds the venv from the lock. The five venv-tax tests copy the
+  base per test (the S5 contract) and run install.sh against the
+  copy — the venv is REUSED (the 0.15 T1 upgrade branch: idempotent
+  lock re-install, exact-set prune); the user-config assertions run
+  under a fresh scratch HOME exactly as before.
+- The dirty-tree copy-to test seeds its destination venv from the
+  base (the same upgrade branch); the tree prune it asserts is
+  venv-independent, so the assertions are unchanged.
+- The fresh-install branch (venv CREATION + the first lock install)
+  keeps its dedicated per-session test (the TestBuildLockVerify
+  pattern): one full `--copy-to` install on a clean staged tree
+  asserts the creation branch actually runs and the venv imports the
+  locked set.
+- The receipt tests share a session cut-tree base (one full-repo tar
+  + git init + base commit per session); each test copies it, resets
+  it, and gets a fresh bare origin.
+- Result: the venv-tax tests are ~3s each (was 35.54–45.92s); the
+  dirty-tree test is 5.4s (was 45.14s); the receipt class is
+  16.4s/31.0s (was 26–37s).
+
+### The wheel-only contract — in every push, on the schedule, pinned (T3)
+- `TestLockWheelOnly`: the lock's full closure resolves with
+  `--only-binary :all:` (session-scoped, one download round-trip) —
+  the wheel-only property that makes `install.sh` install without
+  compiling anything (no gcc, no Rust on a stranger's machine) is
+  now pinned; red on any line that needs source, naming it.
+- The push rows install the lock with `--only-binary :all:` — the
+  contract lives in every push: a lock line that loses wheel
+  coverage fails the row, naming the line. The inert rustup step
+  (a `--default-toolchain none` install ships NO compiler) is gone
+  from both workflows; a static guard pins its absence and the
+  contract's presence on every row (the snowball pattern).
+- The push rows share a pip wheel cache keyed on sha256 of the lock
+  + interpreter + OS — the install step drops from 24s/12s to
+  8s/14s (run 42934413101 vs 42983142965).
+- The scheduled row is the explicit exception: NO cache (its job is
+  the weeks-later PyPI re-resolution — a hit would turn "does PyPI
+  still serve it" into "does our cache still hold it") — and the
+  same `--only-binary` contract, so a wheel that rots by then
+  surfaces there, on the schedule, naming the line. PACKAGING.md
+  records the split.
+
+### The price, recorded (T4)
+| metric | 0.15 | 0.16 |
+|---|---|---|
+| suite wall, -n 8, this box (Python 3.13.18, 88 cores) | 266.72-276.71s (3 runs) | 201.72-218.95s (3 green back-to-back runs) |
+| suite CPU total (user+sys, /usr/bin/time) | 864.1s | 851.3-865.4s |
+| hammer (test_runner_singleton, N=20) | 103.03s (38.7% of suite wall) | 14.45s (~7% of suite wall) |
+| venv-tax tests (install cluster, per test) | 35.54-45.92s | ~3.1-3.3s (user-config), 5.4s (dirty-tree) |
+| receipt tests (full cut per test) | 26-37s | 16.4s / 31.0s |
+| CI test-job wall (run 42934413101 / 42983142965) | 307s (3.12) / 264s (3.13) | 204s (3.12) / 260s (3.13) |
+| CI install step (the lock install) | 24s / 12s | 8s / 14s (shared wheel cache, keyed on the lock sha256) |
+
+The 3.13 CI row is suite-bound (its suite wall barely moves; the
+suite itself is T4 of a later release). The 3.12 row's ~100s drop is
+the rustup step going (an inert toolchain install) plus the cache
+hitting the install step. One local -n 8 run during the measurement
+window hit a load flake in the heavyweight LLM-outage recovery test
+(isolated rerun green; both CI rows green; the non-forced runner
+start path is untouched by T1) — recorded for the record, not a
+regression of this change set.
+
+
 ## 0.15.0
 
 The upgrade release.
