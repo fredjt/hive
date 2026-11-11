@@ -2443,3 +2443,110 @@ class TestTicketHumanFace:
         r = self._cli(seeded, str(cd), "ticket", "list", "rd")
         assert r.returncode == 0, r.stderr
         assert "5 ticket(s) in rd" in r.stdout
+
+
+class TestChatHumanFace:
+    """T1 (0.17): `hive chat` — the transcript by default; --json is
+    the 0.16.0 envelope. `hive chat read --json` was a no-op in 0.16
+    (advertised in the parser, never consulted) because the default
+    already WAS the raw envelope — it is the machine face now, and the
+    default is human. Tests run in definition order: reads before the
+    send (which appends to the channel)."""
+
+    CHANNEL_MD = """# Channel: general
+
+---
+**[2026-11-11T09:30:00] user (general)**
+sprint 3 starting
+
+---
+**[2026-11-11T09:45:00] Eng-1 (rd)**
+on it
+"""
+
+    @staticmethod
+    def _cli(cwd: Path, company_dir: str, *argv: str) -> subprocess.CompletedProcess:
+        return subprocess.run(
+            [sys.executable, "-m", "hive_cli.main", *argv],
+            capture_output=True, text=True, timeout=120,
+            cwd=str(cwd),
+            env={**os.environ,
+                 "PYTHONPATH": str(Path(__file__).resolve()
+                                   .parent.parent / "lib"),
+                 "HIVE_MCP_PORT": "1",
+                 "COMPANY_DIR": company_dir})
+
+    @pytest.fixture(scope="class")
+    def seeded(self, tmp_path_factory):
+        root = tmp_path_factory.mktemp("chat-human")
+        cd = root / ".company"
+        (cd / "chat").mkdir(parents=True)
+        (cd / "org-chart.json").write_text(json.dumps({
+            "departments": {"rd": {"name": "R&D", "reporting_to": None}},
+            "created_at": "2026-11-10T00:00:00Z"}))
+        (cd / "manifest.json").write_text(json.dumps({
+            "project_name": "chat-human", "mode": "build", "auto_mode": False}))
+        (cd / "chat" / "general.md").write_text(self.CHANNEL_MD)
+        return root
+
+    def test_read_human_transcript(self, seeded):
+        cd = seeded / ".company"
+        r = self._cli(seeded, str(cd), "chat", "read", "general")
+        assert r.returncode == 0, r.stderr
+        lines = r.stdout.strip().splitlines()
+        assert lines[0] == "#general — 2 message(s)"
+        assert lines[1] == "09:30 user: sprint 3 starting"
+        assert lines[2] == "09:45 Eng-1: on it"
+        for key in ("exit_code", "stderr", '"ok"', '"data"', '"messages"'):
+            assert key not in r.stdout
+
+    def test_read_json_is_the_016_envelope(self, seeded):
+        cd = seeded / ".company"
+        r = self._cli(seeded, str(cd), "chat", "read", "general", "--json")
+        assert r.returncode == 0, r.stderr
+        env = json.loads(r.stdout)
+        assert set(env.keys()) == {"ok", "exit_code", "stderr", "data"}
+        data = env["data"]
+        assert set(data.keys()) == {"channel", "count", "messages"}
+        assert data["channel"] == "general" and data["count"] == 2
+        assert data["messages"][0]["role"] == "user"
+        assert data["messages"][0]["message"] == "sprint 3 starting"
+        assert data["messages"][1]["timestamp"] == "2026-11-11T09:45:00"
+
+    def test_read_last_honored_human_and_json(self, seeded):
+        cd = seeded / ".company"
+        r = self._cli(seeded, str(cd), "chat", "read", "general", "--last", "1")
+        assert r.returncode == 0, r.stderr
+        lines = r.stdout.strip().splitlines()
+        assert lines[0] == "#general — 1 message(s)"
+        assert lines[1] == "09:45 Eng-1: on it"
+        assert "sprint 3 starting" not in r.stdout
+
+    def test_read_missing_channel_is_an_error(self, seeded):
+        cd = seeded / ".company"
+        r = self._cli(seeded, str(cd), "chat", "read", "no-such-channel")
+        assert r.returncode == 1
+        assert "not found" in r.stderr
+        r = self._cli(seeded, str(cd), "chat", "read", "no-such-channel", "--json")
+        assert r.returncode == 1
+        env = json.loads(r.stdout)
+        assert env["ok"] is False and "not found" in env["stderr"]
+
+    def test_send_human_confirmation(self, seeded):
+        cd = seeded / ".company"
+        r = self._cli(seeded, str(cd), "chat", "send", "general", "user",
+                      "rd", "third message lands here")
+        assert r.returncode == 0, r.stderr
+        assert r.stdout.strip() == "✓ sent to general"
+        content = (cd / "chat" / "general.md").read_text()
+        assert "third message lands here" in content
+
+    def test_send_json_envelope(self, seeded):
+        cd = seeded / ".company"
+        r = self._cli(seeded, str(cd), "chat", "send", "general", "user",
+                      "rd", "fourth message", "--json")
+        assert r.returncode == 0, r.stderr
+        env = json.loads(r.stdout)
+        assert set(env.keys()) == {"ok", "exit_code", "stderr", "stdout"}
+        assert env["ok"] is True
+        assert env["stdout"].startswith("Message sent to #general by user")

@@ -140,12 +140,15 @@ def _add_chat(sub) -> None:
     ps = sp.add_parser("send", help="Send a message")
     ps.add_argument("channel"); ps.add_argument("author")
     ps.add_argument("department"); ps.add_argument("message")
+    ps.add_argument("--json", action="store_true",
+                    help="Print the raw MCP envelope (machine contract; human by default)")
 
     pr = sp.add_parser("read", help="Read messages")
     pr.add_argument("channel")
     pr.add_argument("--last", type=int)
     pr.add_argument("--since")
-    pr.add_argument("--json", action="store_true")
+    pr.add_argument("--json", action="store_true",
+                    help="Print the raw MCP envelope (machine contract; human by default)")
 
     p.set_defaults(_handler=chat.handle)
 
