@@ -3187,7 +3187,6 @@ class TestStartLlmPreflight:
         return proc
 
     def test_unconfigured_llm_warns_but_starts(self, tmp_path, monkeypatch, capsys):
-        import subprocess as sp
         from hive_cli.commands import company
         (tmp_path / ".company").mkdir(exist_ok=True)
         monkeypatch.setattr(company.subprocess, "Popen",

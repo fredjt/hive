@@ -67,12 +67,14 @@ class TestRun:
         assert result.ok is False
         assert "Usage" in result.stderr or "usage" in result.stderr.lower()
 
-    def test_run_ticket_list_shows_usage(self, install_dir):
+    def test_run_ticket_list_no_args_is_company_wide(self, install_dir):
+        """T2 (0.17): no args is the company-wide view (the 0.16 usage
+        error is gone by design); an empty company names itself."""
         import tempfile
         with tempfile.TemporaryDirectory() as td:
             result = run("ticket-list", company_dir=td)
-        assert result.ok is False
-        assert "Usage" in result.stderr or "usage" in result.stderr.lower()
+        assert result.ok is True, result.stderr
+        assert "No departments found" in result.stdout
 
     def test_run_adds_sh_extension(self, install_dir):
         import tempfile

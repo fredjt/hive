@@ -10,7 +10,8 @@
           "orgChart": null,
           "path": "<PROJECT_ROOT>/company-degenerate"
         },
-        "started_at": 0
+        "started_at": 0,
+        "version": "0.17.0"
       }
     },
     "departments": {
