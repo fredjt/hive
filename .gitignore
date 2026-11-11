@@ -53,3 +53,6 @@ RELEASE_GOALS.md
 #   !.hive/agents/ceo.md       # track your customized CEO prompt
 #   !.hive/lib/tools/custom-*.sh
 # Or wholesale track the scaffold by commenting out the `.hive` line above.
+
+# Local test scratch (suite logs, cut receipts) — never committed
+.scratch/

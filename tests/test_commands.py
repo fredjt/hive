@@ -1198,7 +1198,7 @@ class TestCliCompanyDirEnv:
         # release_status returns the sprint state dict directly (no
         # shell-run data wrapper).
         out = self._cli(tmp_path, str(self._fixture_company()),
-                        "release", "status")
+                        "release", "status", "--json")  # T1: machine face
         assert out.get("sprint_id") == "sprint-20261103T000000Z", (
             "release status read the CWD company, not $COMPANY_DIR: "
             f"{out}")
