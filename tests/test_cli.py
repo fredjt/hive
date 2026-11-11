@@ -86,10 +86,16 @@ class TestBuildParser:
             assert args.action == action
 
     def test_parser_has_chat(self):
+        # 0.18 T3: send takes channel + message; author/department are flags
         p = _make_parser()
-        args = p.parse_args(["chat", "send", "general", "user", "it", "Hello"])
+        args = p.parse_args(["chat", "send", "general", "Hello"])
         assert args.cmd == "chat"
         assert args.action == "send"
+        assert args.channel == "general" and args.message == "Hello"
+        assert args.author is None and args.dept is None
+        args = p.parse_args(["chat", "send", "general", "Hello",
+                             "--author", "user", "--dept", "rd"])
+        assert args.author == "user" and args.dept == "rd"
 
     def test_parser_has_agent(self):
         p = _make_parser()

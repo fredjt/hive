@@ -649,7 +649,8 @@ class TestCLIDocs:
             "hive ticket get <dept> <ticket-id> [--json]",
             "hive ticket list [dept] [status] [--json]",
             "hive ticket move <dept> <ticket-id> <new-status> <comment> <author> [reason] [--force] [--json]",
-            "hive chat send <channel> <author> <department> <message> [--json]",
+            "hive chat send <channel> <message> [--author NAME] [--dept DEPT] [--json]",
+            "hive roster [dept] [--active] [--json]",  # T2 (0.18)
             "hive chat read <channel> [--last N] [--since ISO_TIMESTAMP] [--json]",
             "hive chat channels [--json]",  # trailing comment in the doc
             "hive backlog prioritize <dept> [--limit N] [--json]",

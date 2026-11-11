@@ -1027,6 +1027,86 @@ class TestRosterCommand:
         assert not (cd / "roster.json").exists()
 
 
+class TestChatSendDefaults:
+    """T3 (0.18): `hive chat send` takes the channel and the message —
+    saying hello to the company is one argument. author defaults to
+    the OS user running the command, department to the channel's own
+    department (dept-rd → rd; a named channel → itself); the MCP
+    payload shape (and the file content) is unchanged, so the test
+    asserts on the channel file — the commit point. The pinned docs
+    line moved in the same commit (test_dashboard.py)."""
+
+    @staticmethod
+    def _cli(cwd: Path, company_dir: str, *argv: str) -> subprocess.CompletedProcess:
+        return subprocess.run(
+            [sys.executable, "-m", "hive_cli.main", *argv],
+            capture_output=True, text=True, timeout=120,
+            cwd=str(cwd),
+            env={**os.environ,
+                 "PYTHONPATH": str(Path(__file__).resolve()
+                                   .parent.parent / "lib"),
+                 # dead port — force the stdio MCP fallback
+                 "HIVE_MCP_PORT": "1",
+                 "COMPANY_DIR": company_dir})
+
+    @pytest.fixture(scope="class")
+    def seeded(self, tmp_path_factory):
+        root = tmp_path_factory.mktemp("chat-send-defaults")
+        (root / ".company").mkdir()
+        return root
+
+    def test_one_arg_form_posts_as_os_user_channel_dept(self, seeded):
+        import getpass
+        cd = seeded / ".company"
+        r = self._cli(seeded, str(cd), "chat", "send", "general",
+                      "hello world from the terminal")
+        assert r.returncode == 0, r.stderr
+        assert "✓ sent to general" in r.stdout
+        text = (cd / "chat" / "general.md").read_text()
+        # the commit point: the file carries the OS user and the
+        # channel's own department
+        assert f"] {getpass.getuser()} (general)**" in text
+        assert "hello world from the terminal" in text
+
+    def test_dept_channel_uses_the_department_name(self, seeded):
+        cd = seeded / ".company"
+        r = self._cli(seeded, str(cd), "chat", "send", "dept-rd", "hi team")
+        assert r.returncode == 0, r.stderr
+        text = (cd / "chat" / "dept-rd.md").read_text()
+        assert f" (rd)**" in text
+        assert "hi team" in text
+
+    def test_flags_override_the_defaults(self, seeded):
+        cd = seeded / ".company"
+        r = self._cli(seeded, str(cd), "chat", "send", "general", "x",
+                      "--author", "Bob", "--dept", "it")
+        assert r.returncode == 0, r.stderr
+        text = (cd / "chat" / "general.md").read_text()
+        assert "Bob (it)**" in text
+
+    def test_send_without_a_message_names_its_error(self, seeded):
+        # a channel no earlier test touched — the send must not create
+        # the channel file when it refuses
+        cd = seeded / ".company"
+        r = self._cli(seeded, str(cd), "chat", "send", "leadership")
+        assert r.returncode == 1
+        assert "a message is required" in r.stderr
+        assert "usage: hive chat send" in r.stderr
+        assert not (cd / "chat" / "leadership.md").exists()
+
+    def test_json_envelope_shape_unchanged(self, seeded):
+        cd = seeded / ".company"
+        r = self._cli(seeded, str(cd), "chat", "send", "incidents",
+                      "all clear", "--json")
+        assert r.returncode == 0, r.stderr
+        env = json.loads(r.stdout)
+        # chat-send.sh prints a human line (not JSON) — the envelope
+        # carries it on stdout, exactly as in 0.17
+        assert set(env.keys()) == {"ok", "exit_code", "stderr", "stdout"}
+        assert env["ok"] is True
+        assert "Message sent to #incidents" in env["stdout"]
+
+
 class TestLlmTestCommand:
     """B1: `hive llm test` — one small round trip through the exact resolver
     path the harness uses. Prints provider, model, base_url, the key's
@@ -2943,18 +3023,23 @@ on it
         assert env["ok"] is False and "not found" in env["stderr"]
 
     def test_send_human_confirmation(self, seeded):
+        # 0.18 T3: the one-arg form — author/department ride the flags
+        # (the 0.17 positional form moved with the change)
         cd = seeded / ".company"
-        r = self._cli(seeded, str(cd), "chat", "send", "general", "user",
-                      "rd", "third message lands here")
+        r = self._cli(seeded, str(cd), "chat", "send", "general",
+                      "third message lands here", "--author", "user",
+                      "--dept", "rd")
         assert r.returncode == 0, r.stderr
         assert r.stdout.strip() == "✓ sent to general"
         content = (cd / "chat" / "general.md").read_text()
         assert "third message lands here" in content
+        assert "] user (rd)**" in content
 
     def test_send_json_envelope(self, seeded):
         cd = seeded / ".company"
-        r = self._cli(seeded, str(cd), "chat", "send", "general", "user",
-                      "rd", "fourth message", "--json")
+        r = self._cli(seeded, str(cd), "chat", "send", "general",
+                      "fourth message", "--author", "user",
+                      "--dept", "rd", "--json")
         assert r.returncode == 0, r.stderr
         env = json.loads(r.stdout)
         assert set(env.keys()) == {"ok", "exit_code", "stderr", "stdout"}

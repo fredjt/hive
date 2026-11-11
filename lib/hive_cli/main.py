@@ -147,9 +147,14 @@ def _add_chat(sub) -> None:
     p = sub.add_parser("chat", help="Chat operations")
     sp = p.add_subparsers(dest="action", required=True)
 
-    ps = sp.add_parser("send", help="Send a message")
-    ps.add_argument("channel"); ps.add_argument("author")
-    ps.add_argument("department"); ps.add_argument("message")
+    ps = sp.add_parser("send", help="Send a message (one arg: the channel)")
+    ps.add_argument("channel")
+    ps.add_argument("message", nargs="?",
+                    help="The message text")
+    ps.add_argument("--author", help="The message's author (default: the "
+                                     "OS user running the command)")
+    ps.add_argument("--dept", help="The sender's department (default: the "
+                                   "channel's department — dept-rd → rd)")
     ps.add_argument("--json", action="store_true",
                     help="Print the raw MCP envelope (machine contract; human by default)")
 

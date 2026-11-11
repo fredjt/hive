@@ -120,7 +120,7 @@ with the known departments.
 ## Chat
 
 ```
-hive chat send <channel> <author> <department> <message> [--json]
+hive chat send <channel> <message> [--author NAME] [--dept DEPT] [--json]
 hive chat read <channel> [--last N] [--since ISO_TIMESTAMP] [--json]
 hive chat channels [--json]                    # every channel: message count + last message time
 ```
@@ -129,10 +129,14 @@ hive chat channels [--json]                    # every channel: message count + 
 lines, honoring `--last`/`--since`); `--json` is the envelope — the flag
 is no longer a no-op (in 0.16 the default output already WAS the
 envelope, so the flag was wired but never consulted). `chat send`
-prints `✓ sent to <channel>`. `chat channels` lists every channel in
-`.company/chat/` with its message count and last-message time (the
-empty board says "No channels yet — the first 'hive chat send' creates
-one").
+prints `✓ sent to <channel>`. `chat send` takes the channel and the
+message — author defaults to the OS user running the command
+(`--author` overrides) and department to the channel's own department
+(`--dept` overrides: `dept-rd` → `rd`, a named channel → itself). A
+send without a message names its usage error (exit 1). `chat channels`
+lists every channel in `.company/chat/` with its message count and
+last-message time (the empty board says "No channels yet — the first
+'hive chat send' creates one").
 
 Channels: `general | engineering | leadership | incidents | dept-<name>`
 
