@@ -2667,3 +2667,81 @@ class TestGatesHumanFace:
         obj = json.loads(r.stdout)
         assert set(obj.keys()) == {"ok", "exit_code", "stderr", "stdout"}
         assert obj["ok"] is True
+
+
+class TestBacklogHumanFace:
+    """T1 (0.17): `hive backlog prioritize` — the top-N table by
+    default; --json is the 0.16.0 envelope (the ranked ids on stdout,
+    byte-for-byte — sprint-fill rides that contract)."""
+
+    @staticmethod
+    def _cli(cwd: Path, company_dir: str, *argv: str) -> subprocess.CompletedProcess:
+        return subprocess.run(
+            [sys.executable, "-m", "hive_cli.main", *argv],
+            capture_output=True, text=True, timeout=120,
+            cwd=str(cwd),
+            env={**os.environ,
+                 "PYTHONPATH": str(Path(__file__).resolve()
+                                   .parent.parent / "lib"),
+                 "HIVE_MCP_PORT": "1",
+                 "COMPANY_DIR": company_dir})
+
+    @staticmethod
+    def _ticket(tid, pri, title="t"):
+        return {"id": tid, "type": "feature", "title": title,
+                "description": f"d {tid}", "created_by": "user",
+                "filed_by_department": "rd", "source": "manual",
+                "priority": pri, "status": "backlog",
+                "created_at": f"2026-11-10T00:00:0{int(tid[-1])}Z",
+                "updated_at": "2026-11-10T00:00:00Z", "comments": []}
+
+    @pytest.fixture(scope="class")
+    def seeded(self, tmp_path_factory):
+        root = tmp_path_factory.mktemp("backlog-human")
+        cd = root / ".company"
+        bl = cd / "departments" / "rd" / "tickets" / "backlog"
+        bl.mkdir(parents=True)
+        (cd / "departments" / "it" / "tickets" / "backlog").mkdir(parents=True)
+        for tid, pri, title in [("RD-0201", "high", "High ticket"),
+                                ("RD-0202", "medium", "Medium ticket"),
+                                ("RD-0203", "low", "Low ticket")]:
+            (bl / f"{tid}.json").write_text(json.dumps(self._ticket(tid, pri, title)))
+        return root
+
+    def test_top_n_table_human(self, seeded):
+        cd = seeded / ".company"
+        r = self._cli(seeded, str(cd), "backlog", "prioritize", "rd", "--limit", "2")
+        assert r.returncode == 0, r.stdout + r.stderr
+        assert "Top 2 ticket(s) from rd's backlog:" in r.stdout
+        # header order per the goals doc: priority, type, title, id
+        header = r.stdout.splitlines()[1]
+        assert header.split() == ["PRI", "TYPE", "TITLE", "ID"]
+        # rank order: high before medium; ids on the matching rows
+        rows = r.stdout.splitlines()[2:]
+        assert rows[0].split() == ["high", "feature", "High", "ticket", "RD-0201"]
+        assert rows[1].split() == ["medium", "feature", "Medium", "ticket", "RD-0202"]
+        assert "RD-0203" not in r.stdout
+
+    def test_limit_one(self, seeded):
+        cd = seeded / ".company"
+        r = self._cli(seeded, str(cd), "backlog", "prioritize", "rd")
+        assert r.returncode == 0, r.stdout + r.stderr
+        assert "Top 1 ticket(s)" in r.stdout
+        assert "RD-0201" in r.stdout and "RD-0202" not in r.stdout
+
+    def test_json_is_the_016_envelope(self, seeded):
+        cd = seeded / ".company"
+        r = self._cli(seeded, str(cd), "backlog", "prioritize", "rd",
+                      "--limit", "2", "--json")
+        assert r.returncode == 0, r.stderr
+        obj = json.loads(r.stdout)
+        # plain-text script output — 0.16's envelope carried it on stdout
+        assert set(obj.keys()) == {"ok", "exit_code", "stderr", "stdout"}
+        assert obj["ok"] is True
+        assert obj["stdout"].splitlines() == ["RD-0201", "RD-0202"]
+
+    def test_empty_backlog_is_named(self, seeded):
+        cd = seeded / ".company"
+        r = self._cli(seeded, str(cd), "backlog", "prioritize", "it")
+        assert r.returncode == 0, r.stdout + r.stderr
+        assert "Backlog for it is empty." in r.stdout

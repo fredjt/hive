@@ -196,6 +196,8 @@ def _add_backlog(sub) -> None:
     sp = p.add_subparsers(dest="action", required=True)
     pp = sp.add_parser("prioritize", help="Get top N tickets from backlog")
     pp.add_argument("dept"); pp.add_argument("--limit", type=int, default=1)
+    pp.add_argument("--json", action="store_true",
+                    help="Print the raw MCP envelope (machine contract; human by default)")
     p.set_defaults(_handler=backlog.handle)
 
 
