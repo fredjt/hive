@@ -81,10 +81,17 @@ if [ -n "$PRIOR_PID" ] && [ "$PRIOR_PID" != "$$" ] && kill -0 "$PRIOR_PID" 2>/de
     exit 1
   fi
   echo "HIVE_RUNNER_FORCE=1: taking over from live runner pid=$PRIOR_PID" >&2
+  # T1 (0.16): the death check is 0.1s x 10 — a 1s cap, down from the
+  # 0.15 5s cap. A TERM'd bash runner dies in 0.03s (measured); a 5s
+  # "graceful" window cost every takeover a full second on a promptly
+  # reaping supervisor and the whole cap when the prior was a zombie
+  # (kill -0 cannot tell a zombie from live — that worst case is pinned
+  # ONCE by the dedicated unreaped test, not multiplied across N). The
+  # KILL backstop below is the safety net, not the expected path.
   kill -TERM "$PRIOR_PID" 2>/dev/null || true
   for _ in 1 2 3 4 5 6 7 8 9 10; do
     kill -0 "$PRIOR_PID" 2>/dev/null || break
-    sleep 0.5
+    sleep 0.1
   done
   if kill -0 "$PRIOR_PID" 2>/dev/null; then
     kill -KILL "$PRIOR_PID" 2>/dev/null || true
@@ -107,6 +114,21 @@ atomic_commit() {
   fi
 }
 exec 9>"$RUNNER_LOCK"
+# T1 (0.16): on a FORCED takeover the prior is already verified dead
+# (death check + KILL backstop above), but its orphaned children can
+# still hold the INHERITED lock fd — the state-layer python (~100ms),
+# any long-lived child that did not close fd 9. A lock held by the
+# prior's children is not a live second runner, so wait (bounded) for
+# it to clear instead of refusing. The 0.15 5s death cap masked this:
+# the flock always landed seconds after the TERM, when the orphans
+# were gone; with the 1s cap the refusal fired on the orphans
+# (observed: 20% of forced takeovers refused on a live python child).
+# A third LIVE runner still wins: the wait expires and the refusal
+# below fires unchanged. The non-forced path is untouched (immediate
+# refusal is its contract — the prior is live there, not dead).
+if [ "${HIVE_RUNNER_FORCE:-0}" = "1" ] && [ -n "$PRIOR_PID" ] && [ "$PRIOR_PID" != "$$" ]; then
+  flock -w 10 9 || true
+fi
 if ! flock -n 9; then
   echo "Refusing to start: another sprint-lifecycle holds the runner lock." >&2
   exit 1
