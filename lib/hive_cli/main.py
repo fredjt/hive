@@ -160,10 +160,14 @@ def _add_agent(sub) -> None:
     pc = sp.add_parser("spawn-ceo", help="Spawn the CEO for initial build")
     pc.add_argument("project_dir", nargs="?", default=".")
     pc.add_argument("--mode", default="FRESH", choices=["FRESH", "RESUME"])
+    pc.add_argument("--json", action="store_true",
+                    help="Print the raw MCP result (machine contract; human by default)")
 
     pv = sp.add_parser("run-vp", help="Run one cycle of a VP agent")
     pv.add_argument("dept")
     pv.add_argument("project_dir", nargs="?", default=".")
+    pv.add_argument("--json", action="store_true",
+                    help="Print the raw MCP result (machine contract; human by default)")
 
     # NOTE: a `verify` subcommand used to exist here; it called the
     # agent_verify MCP tool, which was removed under the sprint-staged

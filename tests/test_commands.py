@@ -2745,3 +2745,97 @@ class TestBacklogHumanFace:
         r = self._cli(seeded, str(cd), "backlog", "prioritize", "it")
         assert r.returncode == 0, r.stdout + r.stderr
         assert "Backlog for it is empty." in r.stdout
+
+
+class TestAgentHumanFace:
+    """T1 (0.17): `hive agent spawn-ceo` / `run-vp` — the default is a
+    one-line confirmation (agent id + the log file to tail); --json is
+    the 0.16.0 result dict byte-for-byte (agent-spawn's stdout is
+    stream-json — that raw face is the machine contract). The error
+    face surfaces the harness's real error (it reports on the
+    envelope's stdout; its own stderr is spawn plumbing)."""
+
+    @staticmethod
+    def _env_clean(tmp_path) -> dict:
+        env = {k: v for k, v in os.environ.items()
+               if not k.startswith("HIVE_")}
+        env.update({
+            "HOME": str(tmp_path / "home"),
+            "HIVE_CONFIG": str(tmp_path / "home" / "no-config.toml"),
+            "HIVE_MCP_PORT": "1",
+            "PYTHONPATH": str(Path(__file__).resolve().parent.parent / "lib"),
+        })
+        (tmp_path / "home").mkdir(exist_ok=True)
+        return env
+
+    def test_spawn_ceo_success_confirmation(self, tmp_path, monkeypatch, capsys):
+        from hive_cli.commands import agent
+        cd = tmp_path / ".company"
+        cd.mkdir()
+        monkeypatch.setenv("COMPANY_DIR", str(cd))
+        monkeypatch.setattr(agent.mcp_client, "call_tool",
+                            lambda name, payload: {
+                                "ok": True, "exit_code": 0,
+                                "stdout": '{"type":"event"}\n', "stderr": ""})
+        import argparse
+        rc = agent.handle(argparse.Namespace(
+            action="spawn-ceo", project_dir=str(tmp_path),
+            mode="FRESH", json=False))
+        out = capsys.readouterr().out
+        assert rc == 0
+        assert "ceo spawned (mode=FRESH)" in out
+        assert f"log: {cd}/logs/spawns.log" in out
+        assert '{"type":"event"}' not in out  # the stream stays out of the human face
+
+    def test_spawn_ceo_json_is_the_016_face(self, tmp_path, monkeypatch, capsys):
+        from hive_cli.commands import agent
+        cd = tmp_path / ".company"
+        cd.mkdir()
+        monkeypatch.setenv("COMPANY_DIR", str(cd))
+        monkeypatch.setattr(agent.mcp_client, "call_tool",
+                            lambda name, payload: {
+                                "ok": True, "exit_code": 0,
+                                "stdout": '{"type":"event"}\n',
+                                "stderr": "venv warning"})
+        import argparse
+        rc = agent.handle(argparse.Namespace(
+            action="spawn-ceo", project_dir=str(tmp_path),
+            mode="FRESH", json=True))
+        out = capsys.readouterr().out
+        assert rc == 0
+        obj = json.loads(out)
+        assert set(obj) == {"ok", "exit_code", "stdout", "stderr"}
+        assert obj["stdout"] == '{"type":"event"}\n'
+
+    def test_run_vp_success_confirmation(self, tmp_path, monkeypatch, capsys):
+        from hive_cli.commands import agent
+        monkeypatch.delenv("COMPANY_DIR", raising=False)
+        monkeypatch.setattr(agent.mcp_client, "call_tool",
+                            lambda name, payload: {
+                                "ok": True, "exit_code": 0,
+                                "stdout": "", "stderr": ""})
+        import argparse
+        rc = agent.handle(argparse.Namespace(
+            action="run-vp", dept="rd", project_dir=str(tmp_path),
+            json=False))
+        out = capsys.readouterr().out
+        assert rc == 0
+        assert "VP cycle started for rd (agent vp-rd)" in out
+
+    def test_spawn_ceo_unconfigured_llm_names_the_fix(self, tmp_path):
+        # End-to-end: no LLM anywhere (clean HOME, no HIVE_*), so the
+        # harness fails fast — the human error face must carry the
+        # harness's real error (which names the config file), not the
+        # spawn plumbing warning that fills the envelope stderr.
+        cd = tmp_path / "proj" / ".company"
+        cd.mkdir(parents=True)
+        (cd / "manifest.json").write_text(
+            json.dumps({"project_name": "probe", "mode": "build"}))
+        r = subprocess.run(
+            [sys.executable, "-m", "hive_cli.main",
+             "agent", "spawn-ceo", str(tmp_path / "proj")],
+            capture_output=True, text=True, timeout=180,
+            cwd=str(tmp_path / "proj"), env=self._env_clean(tmp_path))
+        assert r.returncode == 1, r.stdout + r.stderr
+        assert "no LLM provider configured" in r.stderr
+        assert "config.toml" in r.stderr

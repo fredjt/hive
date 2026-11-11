@@ -65,13 +65,15 @@ def envelope(res: dict) -> str:
     return json.dumps(res, indent=2)
 
 
-def finish(res: dict, args: Any, render: Callable[[dict], str] | None = None) -> int:
+def finish(res: dict, args: Any, render: Callable[[dict], str] | None = None,
+           error: Callable[[dict], str] | None = None) -> int:
     """Print the right face for a workhorse command's MCP result.
 
     ``--json`` → the raw envelope (byte-identical to 0.16.0). Default →
-    ``render(res)``. A non-empty envelope ``stderr`` is always shown
-    (passthrough unchanged). The exit-code matrix is unchanged: 0 iff
-    ``res.ok``.
+    ``render(res)``; on failure the message is ``error(res)`` when
+    given, else the envelope stderr, then the client-side error field.
+    A non-empty envelope ``stderr`` is always shown (passthrough
+    unchanged). The exit-code matrix is unchanged: 0 iff ``res.ok``.
     """
     err = (res.get("stderr") or "").strip()
     as_json = bool(getattr(args, "json", False))
@@ -80,7 +82,11 @@ def finish(res: dict, args: Any, render: Callable[[dict], str] | None = None) ->
     elif res.get("ok"):
         print(render(res) if render else envelope(res))
     else:
-        print(err or res.get("error") or "unknown error", file=sys.stderr)
+        if error is not None:
+            msg = error(res)
+        else:
+            msg = err or res.get("error") or "unknown error"
+        print(msg, file=sys.stderr)
     if not as_json and err and res.get("ok"):
         print(err, file=sys.stderr)
     return 0 if res.get("ok") else 1
