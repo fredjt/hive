@@ -255,13 +255,19 @@ def _add_llm(sub) -> None:
 def _add_gh(sub) -> None:
     p = sub.add_parser("gh", help="GitHub integration (status / issues / PR ops)")
     sp = p.add_subparsers(dest="action", required=True)
-    sp.add_parser("status", help="gh CLI / auth / remote / default branch")
+    pg = sp.add_parser("status", help="gh CLI / auth / remote / default branch")
+    pg.add_argument("--json", action="store_true",
+                    help="Print the raw MCP result (machine contract; human by default)")
     pr = sp.add_parser("pr", help="PR operations")
     pr_sp = pr.add_subparsers(dest="pr_action", required=True)
     po = pr_sp.add_parser("open",   help="Open a PR for a branch")
     po.add_argument("branch"); po.add_argument("ticket")
+    po.add_argument("--json", action="store_true",
+                    help="Print the raw MCP envelope (machine contract; human by default)")
     pm = pr_sp.add_parser("merge",  help="Merge an open PR (verification IC GO path)")
     pm.add_argument("branch"); pm.add_argument("--method", default="merge", choices=["merge","squash","rebase"])
+    pm.add_argument("--json", action="store_true",
+                    help="Print the raw MCP envelope (machine contract; human by default)")
     # Item 5: per-company push/PR opt-in (the field run's company was
     # never asked to touch a remote).
     pu = sp.add_parser("push", help="Per-company push/PR opt-in")

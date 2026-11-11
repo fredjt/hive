@@ -2839,3 +2839,94 @@ class TestAgentHumanFace:
         assert r.returncode == 1, r.stdout + r.stderr
         assert "no LLM provider configured" in r.stderr
         assert "config.toml" in r.stderr
+
+
+class TestGHHumanFace:
+    """T1 (0.17): `hive gh status/pr open/pr merge` — the aligned
+    lines and the one-line confirmations by default; --json is the
+    0.16.0 output byte-for-byte (the raw dict for status, the shell
+    envelope for pr ops). In-process: the MCP result is canned, so no
+    git remote is needed."""
+
+    @staticmethod
+    def _ns(**kw):
+        import argparse
+        base = {"action": "status", "json": False, "pr_action": "open",
+                "branch": "feature/T-1", "ticket": "T-1", "method": "merge"}
+        base.update(kw)
+        return argparse.Namespace(**base)
+
+    def test_status_human_aligned_lines(self, tmp_path, monkeypatch, capsys):
+        from hive_cli.commands import gh
+        monkeypatch.setattr(gh.mcp_client, "call_tool",
+                            lambda name, payload: {
+                                "installed": True, "authed": True,
+                                "remote": "git@github.com:acme/widget.git",
+                                "default_branch": "main"})
+        rc = gh.handle(self._ns())
+        out = capsys.readouterr().out
+        assert rc == 0
+        assert "gh CLI:" in out and "installed" in out
+        assert "authenticated" in out
+        assert "git@github.com:acme/widget.git" in out
+        assert "main" in out
+
+    def test_status_human_names_the_missing_gh(self, tmp_path, monkeypatch, capsys):
+        from hive_cli.commands import gh
+        monkeypatch.setattr(gh.mcp_client, "call_tool",
+                            lambda name, payload: {
+                                "installed": False, "authed": False,
+                                "remote": None, "default_branch": None})
+        rc = gh.handle(self._ns())
+        out = capsys.readouterr().out
+        assert rc == 0  # a reported state, not an error
+        assert "not installed" in out
+
+    def test_status_json_is_the_raw_dict(self, tmp_path, monkeypatch, capsys):
+        from hive_cli.commands import gh
+        data = {"installed": True, "authed": False, "remote": None,
+                "default_branch": None}
+        monkeypatch.setattr(gh.mcp_client, "call_tool",
+                            lambda name, payload: data)
+        rc = gh.handle(self._ns(json=True))
+        out = capsys.readouterr().out
+        assert rc == 0
+        assert json.loads(out) == data  # byte-for-byte the 0.16 face
+
+    def test_pr_open_human_confirmation(self, tmp_path, monkeypatch, capsys):
+        from hive_cli.commands import gh
+        env = {"ok": True, "exit_code": 0, "stderr": "",
+               "stdout": ("gh-pr-open: opening PR for feature/T-1 -> main (ticket=T-1)\n"
+                          "gh-pr-open: opened PR #5 (https://github.com/acme/widget/pull/5)\n"
+                          "5")}
+        monkeypatch.setattr(gh.mcp_client, "call_tool",
+                            lambda name, payload: env)
+        rc = gh.handle(self._ns(action="pr"))
+        out = capsys.readouterr().out
+        assert rc == 0
+        assert "opened PR #5" in out
+        assert "https://github.com/acme/widget/pull/5" in out
+
+    def test_pr_open_json_is_the_envelope(self, tmp_path, monkeypatch, capsys):
+        from hive_cli.commands import gh
+        env = {"ok": True, "exit_code": 0, "stderr": "",
+               "stdout": "gh-pr-open: opened PR #5 (https://github.com/acme/widget/pull/5)\n5"}
+        monkeypatch.setattr(gh.mcp_client, "call_tool",
+                            lambda name, payload: env)
+        rc = gh.handle(self._ns(action="pr", json=True))
+        assert rc == 0
+        obj = json.loads(capsys.readouterr().out)
+        assert set(obj) == {"ok", "exit_code", "stderr", "stdout"}
+
+    def test_pr_open_failure_is_exit_1_with_the_reason(self, tmp_path,
+                                                       monkeypatch, capsys):
+        from hive_cli.commands import gh
+        monkeypatch.setattr(gh.mcp_client, "call_tool",
+                            lambda name, payload: {
+                                "ok": False, "exit_code": 1,
+                                "stderr": "gh pr create failed: not a git repo",
+                                "stdout": ""})
+        rc = gh.handle(self._ns(action="pr"))
+        err = capsys.readouterr().err
+        assert rc == 1
+        assert "gh pr create failed" in err
