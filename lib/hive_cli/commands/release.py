@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 
-from hive_cli import mcp_client
+from hive_cli import mcp_client, present
 from hive_cli.commands import company_dir as _company_dir
 
 
@@ -29,12 +29,20 @@ def handle(args) -> int:
     if args.action == "status":
         payload = dict(base)
         if getattr(args, "version", None): payload["version"] = args.version
-        _print(mcp_client.call_tool("release_status", payload))
+        res = mcp_client.call_tool("release_status", payload)
+        if getattr(args, "json", False):
+            print(present.envelope(res))
+        else:
+            print(present.render_release_status(res))
         return 0
 
     if args.action == "list":
-        _print(mcp_client.call_tool("release_history",
-            {**base, "limit": getattr(args, "limit", 20)}))
+        res = mcp_client.call_tool("release_history",
+            {**base, "limit": getattr(args, "limit", 20)})
+        if getattr(args, "json", False):
+            print(present.envelope(res))
+        else:
+            print(present.render_release_history(res))
         return 0
 
     print(f"unknown release action: {args.action}")

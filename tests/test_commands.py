@@ -2930,3 +2930,90 @@ class TestGHHumanFace:
         err = capsys.readouterr().err
         assert rc == 1
         assert "gh pr create failed" in err
+
+
+class TestReleaseHumanFace:
+    """T1 (0.17): hive release status/list render human by default;
+    --json is the 0.16.0 raw dict byte-for-byte (these MCP tools
+    return plain dicts, not shell envelopes)."""
+
+    @staticmethod
+    def _ns(**kw):
+        import argparse
+        base = {"action": "status", "version": None, "limit": 20, "json": False}
+        base.update(kw)
+        return argparse.Namespace(**base)
+
+    def test_status_human(self, monkeypatch, capsys):
+        from hive_cli.commands import release
+        monkeypatch.setenv("COMPANY_DIR", "/tmp/no-such-company-t1h")
+        monkeypatch.setattr(
+            release.mcp_client, "call_tool",
+            lambda name, payload: {"sprint_id": "sprint-1", "stage": "release-verify",
+                                   "release": {"version": "0.17.0",
+                                               "publish_status": "pending"}})
+        rc = release.handle(self._ns())
+        out = capsys.readouterr().out
+        assert rc == 0
+        assert "sprint=sprint-1" in out
+        assert "version: 0.17.0" in out
+        assert "publish_status: pending" in out
+        assert "stage" in out
+
+    def test_status_json_raw_dict(self, monkeypatch, capsys):
+        from hive_cli.commands import release
+        monkeypatch.setenv("COMPANY_DIR", "/tmp/no-such-company-t1h")
+        payload = {"sprint_id": "sprint-1", "stage": "build-and-test",
+                   "release": {"version": "0.16.0"}}
+        monkeypatch.setattr(release.mcp_client, "call_tool",
+                            lambda name, p: payload)
+        rc = release.handle(self._ns(json=True))
+        out = capsys.readouterr().out
+        assert rc == 0
+        assert json.loads(out) == payload  # byte-for-byte face, same keys
+
+    def test_status_no_record_named(self, monkeypatch, capsys):
+        from hive_cli.commands import release
+        monkeypatch.setenv("COMPANY_DIR", "/tmp/no-such-company-t1h")
+        monkeypatch.setattr(release.mcp_client, "call_tool",
+                            lambda name, p: {"error": "no release record found"})
+        rc = release.handle(self._ns())
+        out = capsys.readouterr().out
+        assert rc == 0
+        assert "No release record found" in out
+
+    def test_list_human_table(self, monkeypatch, capsys):
+        from hive_cli.commands import release
+        monkeypatch.setenv("COMPANY_DIR", "/tmp/no-such-company-t1h")
+        monkeypatch.setattr(
+            release.mcp_client, "call_tool",
+            lambda name, p: {"releases": [
+                {"sprint_id": "sprint-2", "version": "0.16.0",
+                 "publish_status": "published",
+                 "tarball": "hive-0.16.0.tar.gz",
+                 "ended_at": "2026-11-01T00:00:00Z"}]})
+        rc = release.handle(self._ns(action="list"))
+        out = capsys.readouterr().out
+        assert rc == 0
+        assert "0.16.0" in out and "published" in out
+        assert "sprint-2" in out
+
+    def test_list_empty_named(self, monkeypatch, capsys):
+        from hive_cli.commands import release
+        monkeypatch.setenv("COMPANY_DIR", "/tmp/no-such-company-t1h")
+        monkeypatch.setattr(release.mcp_client, "call_tool",
+                            lambda name, p: {"releases": []})
+        rc = release.handle(self._ns(action="list"))
+        out = capsys.readouterr().out
+        assert rc == 0
+        assert "No releases" in out
+
+    def test_list_json_raw_dict(self, monkeypatch, capsys):
+        from hive_cli.commands import release
+        monkeypatch.setenv("COMPANY_DIR", "/tmp/no-such-company-t1h")
+        payload = {"releases": []}
+        monkeypatch.setattr(release.mcp_client, "call_tool",
+                            lambda name, p: payload)
+        rc = release.handle(self._ns(action="list", json=True))
+        assert json.loads(capsys.readouterr().out) == payload
+        assert rc == 0

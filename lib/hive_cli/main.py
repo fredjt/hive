@@ -288,8 +288,12 @@ def _add_release(sub) -> None:
     ps.add_argument("version", help="vX.Y.Z (or X.Y.Z)")
     pst = sp.add_parser("status", help="Print a release record")
     pst.add_argument("version", nargs="?")
+    pst.add_argument("--json", action="store_true",
+                     help="Print the raw MCP result (machine contract; human by default)")
     pl = sp.add_parser("list",   help="List recent releases")
     pl.add_argument("--limit", type=int, default=20)
+    pl.add_argument("--json", action="store_true",
+                    help="Print the raw MCP result (machine contract; human by default)")
     pp = sp.add_parser("publish", help="Commit GO/NO-GO (release-ic uses this; admin can too)")
     pp.add_argument("verdict", choices=["GO","NO-GO"])
     pp.add_argument("version")
