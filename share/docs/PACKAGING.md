@@ -366,6 +366,21 @@ re-dispatch run [42924409622](https://github.com/fredjt/hive/actions/runs/429244
 (commit `9add042`) is **green — 1,392 passed, 3 skipped in
 257.02s** (full suite, Python 3.13, GitHub ubuntu-latest).
 
+**The 0.16.0 cut** (recorded per R3 — the figure lives in the tree):
+v0.16.0 was cut from commit `178ce58` (tag `v0.16.0`) with
+`--upgrade-from v0.15.0` — gate 8 ran the LIVE upgrade on a scratch
+install (the published v0.15.0 tarball, the v0.16.0 entry set
+overlaid, doctor green) and the receipt carries it:
+`gate-8: PASS (live upgrade from v0.15.0 verified)`. The operator-side
+verification re-ran the same path end to end: the v0.15.0 tarball
+scratch-installed, the v0.16.0 tarball installed on top, then
+`verify-release.sh v0.16.0 --from v0.15.0 <dir>` — **OK**: the tree is
+exactly the v0.16.0 entry set, the venv is in the exact set, and the
+v0.15.0 receipt is valid (the chain holds). The CI push rows for the
+cut commit run both full suites (3.12 + 3.13); the scheduled row's
+next dispatch re-checks the cut CACHE-FREE (the T3 exception) — its
+result is recorded here when it lands (the reproducibility number).
+
 ## Verifying a published release (one command)
 
 `packaging/verify-release.sh <tag>` fetches a release's three assets
