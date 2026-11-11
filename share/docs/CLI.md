@@ -28,8 +28,26 @@ also refuses a `.company/` without the init artifacts (a missing
 `manifest.json` means the directory was never initialized).
 
 
+`hive start` preflights the LLM: if no provider is configured it warns on
+stderr (`LLM not configured — agents will fail to spawn; ...`) with the
+canonical hint (the `[llm]` config file and the one-shot env vars), but
+still starts the company — the runner halts with a clear reason at the
+first LLM call.
+
 `hive status` reads the derived `status.json` files and prints per-department
-health, ticket counts, velocity, and stuck-ticket count.
+health, ticket counts, velocity, and stuck-ticket count. Its empty states
+are named (0.17):
+
+* a fresh company lists its org-chart departments with zero counts, then
+  `Sprint: none — no sprint state yet (run 'hive start' ...)` and
+  `Daemons: none running — run 'hive start' to start the company`; if the
+  LLM is unconfigured, the canonical hint is appended (the same one doctor
+  prints);
+* an idle sprint reads as a state: `idle — no work to pick up (runner polls
+  the backlog — file a ticket or run 'hive start')`;
+* a named department that does not exist is an error (`Department '<dept>'
+  not found`, exit 1; `--json` carries the error envelope); a directory
+  that was never `hive init`'d says `No departments found — run 'hive init'`.
 
 ## Tickets
 

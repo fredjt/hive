@@ -665,6 +665,10 @@ class TestCLIDocs:
         # T2: the company-wide contract is documented
         assert "dept` is optional (0.17)" in content
         assert "company-wide" in content
+        # T3: the empty states and the start preflight are documented
+        assert "LLM not configured — agents will fail to spawn" in content
+        assert "no work to pick up" in content
+        assert "No departments found — run 'hive init'" in content
 
 
 class TestLicense:
