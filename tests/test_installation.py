@@ -413,25 +413,26 @@ class TestInstallScaffoldsUserConfig:
     $HOME/.config/hive/env.sh for shell-level env only, and stop
     recommending the retired ANTHROPIC_*/LLM_TINY_* variable names."""
 
-    @staticmethod
-    def _run_install(home: Path, tmp_path: Path,
-                     extra_env: dict | None = None) -> subprocess.CompletedProcess:
-        repo = _repo_root()
-        # Stage a minimal tree — the same surface the release tarball
-        # carries — so the test is fast and deterministic, and local
-        # scratch state (venv/, dist/, scratch projects) in a dev checkout
-        # can't drag along a 100MB+ copy or a stale venv.
+    @pytest.fixture()
+    def install_tree(self, tmp_path, _installed_base):
+        """T2 (0.16): a per-test copy of the session install base (the
+        S5 contract — the base is a read-only copy source, no
+        cross-test state). install.sh against the copy REUSES the
+        copied venv (the 0.15 T1 upgrade branch — idempotent lock
+        re-install, exact-set prune) instead of paying a fresh
+        python -m venv + pip install -r lock per test; the user-config
+        assertions run under a fresh scratch HOME exactly as before."""
         tree = tmp_path / "hive-src"
-        tree.mkdir(exist_ok=True)
-        for d in ("bin", "lib", "etc", "packaging", "share"):
-            dst = tree / d
-            if not dst.exists():
-                subprocess.run(["cp", "-r", str(repo / d), str(dst)], check=True)
-            for junk in dst.rglob("__pycache__"):
-                subprocess.run(["rm", "-rf", str(junk)])
-        (tree / "VERSION").write_text(
-            (repo / "VERSION").read_text() if (repo / "VERSION").is_file()
-            else "0.0.0-dev\n")
+        shutil.copytree(_installed_base, tree)
+        return tree
+
+    @staticmethod
+    def _run_install(tree: Path, home: Path,
+                     extra_env: dict | None = None) -> subprocess.CompletedProcess:
+        # T2 (0.16): the tree is the per-test install_tree (a copy of
+        # the session _installed_base) — the venv is REUSED by the
+        # install, not rebuilt per test. The user-config branch (the
+        # subject of this class) is independent of the venv.
         env = {**os.environ, "HOME": str(home)}
         if extra_env:
             env.update(extra_env)
@@ -443,10 +444,10 @@ class TestInstallScaffoldsUserConfig:
             env=env,
         )
 
-    def test_install_creates_user_config_from_template(self, tmp_path):
+    def test_install_creates_user_config_from_template(self, tmp_path, install_tree):
         home = tmp_path / "home"
         home.mkdir()
-        r = self._run_install(home, tmp_path)
+        r = self._run_install(install_tree, home)
         assert r.returncode == 0, r.stdout + "\n" + r.stderr
         user = home / ".config" / "hive" / "config.toml"
         assert user.is_file(), \
@@ -461,25 +462,25 @@ class TestInstallScaffoldsUserConfig:
         assert set(data["llm"]) == {"provider", "model", "base_url", "api_key",
                                     "api_style", "verification_model"}
 
-    def test_install_never_overwrites_existing_user_config(self, tmp_path):
+    def test_install_never_overwrites_existing_user_config(self, tmp_path, install_tree):
         home = tmp_path / "home"
         user = home / ".config" / "hive" / "config.toml"
         user.parent.mkdir(parents=True)
         edited = '[llm]\nprovider = "ollama"\nmodel = "my-model"\n'
         user.write_text(edited)
-        r = self._run_install(home, tmp_path)
+        r = self._run_install(install_tree, home)
         assert r.returncode == 0, r.stdout + "\n" + r.stderr
         assert user.read_text() == edited, \
             "an existing user config holds operator edits — install must keep it"
 
-    def test_install_honors_hive_config_env(self, tmp_path):
+    def test_install_honors_hive_config_env(self, tmp_path, install_tree):
         """A2: install.sh reads HIVE_CONFIG — the spelling doctor and
         release-publish-runner.sh already use."""
         home = tmp_path / "home"
         home.mkdir()
         target = tmp_path / "scratch" / "c.toml"
         target.parent.mkdir()
-        r = self._run_install(home, tmp_path,
+        r = self._run_install(install_tree, home,
                               extra_env={"HIVE_CONFIG": str(target)})
         assert r.returncode == 0, r.stdout + "\n" + r.stderr
         assert target.is_file(), \
@@ -487,14 +488,14 @@ class TestInstallScaffoldsUserConfig:
         assert not (home / ".config" / "hive" / "config.toml").exists(), \
             "the default location must not also be scaffolded"
 
-    def test_install_hive_user_config_alias_still_works(self, tmp_path):
+    def test_install_hive_user_config_alias_still_works(self, tmp_path, install_tree):
         """A2: HIVE_USER_CONFIG keeps working as a deprecated alias —
         with a one-time note pointing at the new spelling."""
         home = tmp_path / "home"
         home.mkdir()
         target = tmp_path / "scratch" / "alias.toml"
         target.parent.mkdir()
-        r = self._run_install(home, tmp_path,
+        r = self._run_install(install_tree, home,
                               extra_env={"HIVE_USER_CONFIG": str(target)})
         assert r.returncode == 0, r.stdout + "\n" + r.stderr
         assert target.is_file(), \
@@ -502,13 +503,13 @@ class TestInstallScaffoldsUserConfig:
         assert "HIVE_USER_CONFIG" in r.stdout and "deprecated" in r.stdout, \
             "the alias use must print a deprecation note naming the new var"
 
-    def test_install_hive_config_wins_over_alias(self, tmp_path):
+    def test_install_hive_config_wins_over_alias(self, tmp_path, install_tree):
         home = tmp_path / "home"
         home.mkdir()
         primary = tmp_path / "scratch" / "primary.toml"
         alias = tmp_path / "scratch" / "alias.toml"
         primary.parent.mkdir()
-        r = self._run_install(home, tmp_path,
+        r = self._run_install(install_tree, home,
                               extra_env={"HIVE_CONFIG": str(primary),
                                          "HIVE_USER_CONFIG": str(alias)})
         assert r.returncode == 0, r.stdout + "\n" + r.stderr
@@ -1592,12 +1593,17 @@ class TestInstallCopyToEntrySet:
             "README.md must be share/docs/README.md verbatim"
 
     def test_dirty_tree_copy_to_is_a_clean_install(self, dirty_tree,
-                                                   tmp_path):
+                                                   tmp_path, _installed_base):
         """Full flow (real venv): dirty source → clean install, hive
         version correct, nothing outside the entry set in the tree."""
         home = tmp_path / "home"
         home.mkdir()
         install_dir = tmp_path / "install"
+        # T2 (0.16): seed the destination venv from the session base —
+        # the upgrade's venv-reuse branch (the fresh venv is the
+        # dedicated test's path). Tree pruning is venv-independent; the
+        # assertions below are unchanged.
+        shutil.copytree(_installed_base / "venv", install_dir / "venv")
         r = self._run_install(dirty_tree, install_dir, home)
         assert r.returncode == 0, r.stdout + "\n" + r.stderr
         version = (dirty_tree / "VERSION").read_text().strip()
