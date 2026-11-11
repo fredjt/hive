@@ -91,9 +91,13 @@ def _add_ticket(sub) -> None:
     pc.add_argument("title"); pc.add_argument("description")
     pc.add_argument("--created-by", default="user"); pc.add_argument("--source", default="manual")
     pc.add_argument("--estimate")
+    pc.add_argument("--json", action="store_true",
+                    help="Print the raw MCP envelope (machine contract; human by default)")
 
     pg = sp.add_parser("get", help="Read a ticket")
     pg.add_argument("dept"); pg.add_argument("ticket_id")
+    pg.add_argument("--json", action="store_true",
+                    help="Print the raw MCP envelope (machine contract; human by default)")
 
     pl = sp.add_parser("list", help="List tickets")
     pl.add_argument("--priority", help="Filter by priority (critical|high|medium|low)")
@@ -105,18 +109,26 @@ def _add_ticket(sub) -> None:
     pm.add_argument("dept"); pm.add_argument("ticket_id"); pm.add_argument("new_status")
     pm.add_argument("comment"); pm.add_argument("author")
     pm.add_argument("reason", nargs="?"); pm.add_argument("--force", action="store_true")
+    pm.add_argument("--json", action="store_true",
+                    help="Print the raw MCP envelope (machine contract; human by default)")
 
     pcl = sp.add_parser("claim", help="Claim a ticket for an IC")
     pcl.add_argument("dept"); pcl.add_argument("ticket_id"); pcl.add_argument("role")
     pcl.add_argument("agent_id"); pcl.add_argument("agent_name")
     pcl.add_argument("--worktree-path")
+    pcl.add_argument("--json", action="store_true",
+                     help="Print the raw MCP envelope (machine contract; human by default)")
 
     pco = sp.add_parser("comment", help="Add a comment")
     pco.add_argument("dept"); pco.add_argument("ticket_id"); pco.add_argument("author"); pco.add_argument("comment")
+    pco.add_argument("--json", action="store_true",
+                     help="Print the raw MCP envelope (machine contract; human by default)")
 
     pa = sp.add_parser("approve", help="Verification IC approval (>=30 char rationale)")
     pa.add_argument("dept"); pa.add_argument("ticket_id"); pa.add_argument("verifier")
     pa.add_argument("rationale")
+    pa.add_argument("--json", action="store_true",
+                    help="Print the raw MCP envelope (machine contract; human by default)")
 
     p.set_defaults(_handler=ticket.handle)
 

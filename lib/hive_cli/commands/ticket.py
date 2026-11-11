@@ -1,11 +1,16 @@
-"""hive ticket ..."""
+"""hive ticket ...
+
+Two faces (T1): the default is the human rendering from
+lib/hive_cli/present.py; --json prints the raw MCP envelope
+byte-identical to 0.16.0. The exit-code matrix is unchanged
+(0 iff res.ok); a non-empty envelope stderr is always shown.
+"""
 
 from __future__ import annotations
 
-import json
 import sys
 
-from hive_cli import mcp_client
+from hive_cli import mcp_client, present
 from hive_cli.commands import company_dir as _company_dir
 
 
@@ -22,10 +27,14 @@ def handle(args) -> int:
             payload["estimate"] = args.estimate
         if cd: payload["company_dir"] = cd
         res = mcp_client.call_tool("ticket_create", payload)
+        return present.finish(res, args,
+                              lambda r: present.render_ticket_create(r, args))
     elif action == "get":
         payload = {"dept": args.dept, "ticket_id": args.ticket_id}
         if cd: payload["company_dir"] = cd
         res = mcp_client.call_tool("ticket_get", payload)
+        return present.finish(res, args,
+                              lambda r: present.render_ticket_card(r.get("data") or {}))
     elif action == "list":
         payload = {}
         if args.dept: payload["dept"] = args.dept
@@ -37,6 +46,8 @@ def handle(args) -> int:
             print("ERROR: 'hive ticket list' requires a department argument", file=sys.stderr)
             return 1
         res = mcp_client.call_tool("ticket_list", payload)
+        return present.finish(res, args,
+                              lambda r: present.render_ticket_list(r.get("data") or {}))
     elif action == "move":
         payload = {
             "dept": args.dept, "ticket_id": args.ticket_id,
@@ -46,6 +57,7 @@ def handle(args) -> int:
         if args.reason: payload["reason"] = args.reason
         if cd: payload["company_dir"] = cd
         res = mcp_client.call_tool("ticket_move", payload)
+        return present.finish(res, args, present.render_action)
     elif action == "claim":
         payload = {
             "dept": args.dept, "ticket_id": args.ticket_id,
@@ -54,19 +66,19 @@ def handle(args) -> int:
         if args.worktree_path: payload["worktree_path"] = args.worktree_path
         if cd: payload["company_dir"] = cd
         res = mcp_client.call_tool("ticket_claim", payload)
+        return present.finish(res, args, present.render_action)
     elif action == "comment":
         payload = {"dept": args.dept, "ticket_id": args.ticket_id,
                    "author": args.author, "comment": args.comment}
         if cd: payload["company_dir"] = cd
         res = mcp_client.call_tool("ticket_comment", payload)
+        return present.finish(res, args, present.render_action)
     elif action == "approve":
         payload = {"dept": args.dept, "ticket_id": args.ticket_id,
                    "verifier": args.verifier, "rationale": args.rationale}
         if cd: payload["company_dir"] = cd
         res = mcp_client.call_tool("ticket_approve", payload)
+        return present.finish(res, args, present.render_action)
     else:
         print(f"unknown ticket action: {action}", file=sys.stderr)
         return 1
-
-    print(json.dumps(res, indent=2))
-    return 0 if res.get("ok") else 1

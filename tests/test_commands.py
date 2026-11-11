@@ -2219,3 +2219,227 @@ class TestLlmDocEnvShConsistency:
                   "export HIVE_API_BASE=http://old.example\n"
                   "```")
         assert "HIVE_API_BASE" in self._offenders(stale2)
+
+
+class TestTicketHumanFace:
+    """T1 (0.17): `hive ticket` speaks human by default; --json is the
+    0.16.0 envelope byte-for-byte — the machine contract does not move.
+
+    End-to-end through the real CLI + stdio MCP server + bash scripts
+    on a seeded workspace (the dead HIVE_MCP_PORT forces the stdio
+    transport, so a live HTTP server can never answer). Tests run in
+    definition order: the read paths first (3 seeded tickets), then the
+    mutations (create -> move -> claim -> comment on the new ticket,
+    approve on the seeded in-review one)."""
+
+    # The documented ticket-list.sh --json summary schema — the golden
+    # pin: a field added/renamed upstream fails the --json contract.
+    SUMMARY_KEYS = {"id", "title", "status", "type", "priority", "assignee",
+                    "gates_passed", "verified_by", "skip_tdd_red",
+                    "comment_count", "last_comment"}
+
+    @staticmethod
+    def _cli(cwd: Path, company_dir: str, *argv: str) -> subprocess.CompletedProcess:
+        return subprocess.run(
+            [sys.executable, "-m", "hive_cli.main", *argv],
+            capture_output=True, text=True, timeout=120,
+            cwd=str(cwd),
+            env={**os.environ,
+                 "PYTHONPATH": str(Path(__file__).resolve()
+                                   .parent.parent / "lib"),
+                 # dead port — force the stdio MCP fallback
+                 "HIVE_MCP_PORT": "1",
+                 "COMPANY_DIR": company_dir,
+                 "DASHBOARD_PORT": "3456"})
+
+    @staticmethod
+    def _ticket(tid, title, status, pri, typ, assignee=None, **kw):
+        t = {
+            "id": tid, "type": typ, "title": title,
+            "description": f"Description of {title}.",
+            "created_by": "user", "filed_by_department": "rd",
+            "source": "manual", "priority": pri, "status": status,
+            "created_at": "2026-11-10T09:00:00Z",
+            "updated_at": "2026-11-11T09:00:00Z",
+            "assignee": assignee or {},
+            "comments": [],
+            "gates_passed": False, "verified_by": "", "skip_tdd_red": False,
+        }
+        t.update(kw)
+        return t
+
+    @pytest.fixture(scope="class")
+    def seeded(self, tmp_path_factory):
+        root = tmp_path_factory.mktemp("ticket-human")
+        cd = root / ".company"
+        cd.mkdir()
+        (cd / "org-chart.json").write_text(json.dumps({
+            "departments": {"rd": {"name": "R&D", "reporting_to": None},
+                            "it": {"name": "IT", "reporting_to": None}},
+            "created_at": "2026-11-10T00:00:00Z"}))
+        (cd / "manifest.json").write_text(json.dumps({
+            "project_name": "ticket-human", "mode": "build", "auto_mode": False}))
+        base = cd / "departments" / "rd" / "tickets"
+        for st in ("backlog", "sprint-current", "in-progress", "in-review", "done"):
+            (base / st).mkdir(parents=True)
+        (base / "backlog" / "RD-0102.json").write_text(json.dumps(
+            self._ticket("RD-0102", "Fix nav overflow", "backlog", "medium", "bug"),
+            indent=2))
+        (base / "in-progress" / "RD-0101.json").write_text(json.dumps(
+            self._ticket("RD-0101", "Add login flow", "in-progress", "high", "feature",
+                         assignee={"agent_id": "ic-RD-0101", "name": "Eng-1",
+                                   "role": "engineer"}),
+            indent=2))
+        (base / "in-review" / "RD-0103.json").write_text(json.dumps(
+            self._ticket("RD-0103", "Upgrade toolchain", "in-review", "critical",
+                         "infrastructure", gates_passed=True,
+                         gates_passed_at="2026-11-11T08:00:00Z"),
+            indent=2))
+        return root
+
+    # -- read paths (the 3 seeded tickets) --------------------------------
+
+    def test_list_human_is_the_answer_not_the_envelope(self, seeded):
+        cd = seeded / ".company"
+        r = self._cli(seeded, str(cd), "ticket", "list", "rd")
+        assert r.returncode == 0, r.stderr
+        out = r.stdout
+        # The answer is on the screen: title, status, assignee
+        assert "Add login flow" in out and "in-progress" in out and "Eng-1" in out
+        # The envelope keys are NOT
+        for key in ("exit_code", "stderr", '"ok"', '"data"'):
+            assert key not in out
+        # Count line at the end, board order (backlog before in-progress)
+        assert out.strip().splitlines()[-1] == "3 ticket(s) in rd"
+        assert out.index("RD-0102") < out.index("RD-0101") < out.index("RD-0103")
+
+    def test_list_json_is_the_016_envelope(self, seeded):
+        cd = seeded / ".company"
+        r = self._cli(seeded, str(cd), "ticket", "list", "rd", "--json")
+        assert r.returncode == 0, r.stderr
+        env = json.loads(r.stdout)
+        assert set(env.keys()) == {"ok", "exit_code", "stderr", "data"}
+        assert env["ok"] is True and env["exit_code"] == 0
+        data = env["data"]
+        # The per-dept document, byte-shape: the 0.16.0 fields, no more
+        assert set(data.keys()) == {"department", "count", "tickets", "mode"}
+        assert data["department"] == "rd" and data["count"] == 3
+        assert data["mode"] == "summary"
+        ids = {t["id"] for t in data["tickets"]}
+        assert ids == {"RD-0101", "RD-0102", "RD-0103"}
+        for t in data["tickets"]:
+            assert set(t.keys()) == self.SUMMARY_KEYS
+
+    def test_list_with_status_filter(self, seeded):
+        cd = seeded / ".company"
+        r = self._cli(seeded, str(cd), "ticket", "list", "rd", "backlog")
+        assert r.returncode == 0, r.stderr
+        assert "RD-0102" in r.stdout and "RD-0101" not in r.stdout
+        assert r.stdout.strip().splitlines()[-1] == "1 ticket(s) in rd"
+
+    def test_get_human_card(self, seeded):
+        cd = seeded / ".company"
+        r = self._cli(seeded, str(cd), "ticket", "get", "rd", "RD-0101")
+        assert r.returncode == 0, r.stderr
+        out = r.stdout
+        assert out.splitlines()[0] == "RD-0101 — Add login flow"
+        assert "status:    in-progress" in out
+        assert "priority:  high" in out
+        assert "assignee:  Eng-1" in out
+        assert "Description:" in out
+        for key in ("exit_code", "stderr", '"ok"'):
+            assert key not in out
+
+    def test_get_json_is_the_full_document(self, seeded):
+        cd = seeded / ".company"
+        r = self._cli(seeded, str(cd), "ticket", "get", "rd", "RD-0101", "--json")
+        assert r.returncode == 0, r.stderr
+        env = json.loads(r.stdout)
+        assert set(env.keys()) == {"ok", "exit_code", "stderr", "data"}
+        assert env["data"]["id"] == "RD-0101"
+        assert env["data"]["description"] == "Description of Add login flow."
+
+    def test_get_missing_is_an_error_not_a_silent_empty(self, seeded):
+        cd = seeded / ".company"
+        r = self._cli(seeded, str(cd), "ticket", "get", "rd", "RD-9999")
+        assert r.returncode == 1
+        assert "not found" in r.stderr
+        r = self._cli(seeded, str(cd), "ticket", "get", "rd", "RD-9999", "--json")
+        assert r.returncode == 1
+        env = json.loads(r.stdout)
+        assert env["ok"] is False
+        assert "not found" in env["stderr"]
+
+    # -- mutations (in definition order) ----------------------------------
+
+    def test_create_human_line_and_hint(self, seeded):
+        cd = seeded / ".company"
+        r = self._cli(seeded, str(cd), "ticket", "create", "rd", "feature", "high",
+                      "New ticket from the human face", "Needs doing",
+                      "--created-by", "user", "--source", "manual")
+        assert r.returncode == 0, r.stderr
+        lines = r.stdout.strip().splitlines()
+        assert lines[0] == "✓ RD-0104 (feature, high) in rd — backlog"
+        assert lines[1].strip() == "watch it at http://localhost:3456/"
+        assert (cd / "departments" / "rd" / "tickets" / "backlog"
+                / "RD-0104.json").is_file()
+
+    def test_create_json_envelope(self, seeded):
+        cd = seeded / ".company"
+        r = self._cli(seeded, str(cd), "ticket", "create", "rd", "bug", "low",
+                      "Second human ticket", "Also needs doing",
+                      "--json")
+        assert r.returncode == 0, r.stderr
+        env = json.loads(r.stdout)
+        assert set(env.keys()) == {"ok", "exit_code", "stderr", "stdout"}
+        assert env["ok"] is True
+        assert env["stdout"].strip() == "RD-0105"
+
+    def test_move_human_resulting_state(self, seeded):
+        cd = seeded / ".company"
+        r = self._cli(seeded, str(cd), "ticket", "move", "rd", "RD-0104",
+                      "sprint-current", "into the sprint", "user")
+        assert r.returncode == 0, r.stderr
+        assert r.stdout.strip().splitlines()[0] == \
+            "✓ Moved RD-0104: backlog -> sprint-current"
+
+    def test_move_json_envelope(self, seeded):
+        cd = seeded / ".company"
+        r = self._cli(seeded, str(cd), "ticket", "move", "rd", "RD-0105",
+                      "sprint-current", "into the sprint", "user", "--json")
+        assert r.returncode == 0, r.stderr
+        env = json.loads(r.stdout)
+        assert set(env.keys()) == {"ok", "exit_code", "stderr", "stdout"}
+        assert "Moved RD-0105" in env["stdout"]
+
+    def test_claim_human(self, seeded):
+        cd = seeded / ".company"
+        r = self._cli(seeded, str(cd), "ticket", "claim", "rd", "RD-0104",
+                      "engineer", "ic-RD-0104", "Eng-4")
+        assert r.returncode == 0, r.stderr
+        assert "Claimed RD-0104 by Eng-4 (engineer)" in r.stdout
+        assert "in-progress" in r.stdout
+
+    def test_comment_human(self, seeded):
+        cd = seeded / ".company"
+        r = self._cli(seeded, str(cd), "ticket", "comment", "rd", "RD-0104",
+                      "user", "on it")
+        assert r.returncode == 0, r.stderr
+        assert r.stdout.strip() == "✓ Comment added to RD-0104 by user"
+
+    def test_approve_human_and_json(self, seeded):
+        cd = seeded / ".company"
+        r = self._cli(seeded, str(cd), "ticket", "approve", "rd", "RD-0103",
+                      "Verification-IC",
+                      "Verified: toolchain upgrades applied and the suite passes")
+        assert r.returncode == 0, r.stderr
+        assert "RD-0103 approved by Verification-IC" in r.stdout
+        # The move to done committed (gates_passed was seeded true)
+        assert (cd / "departments" / "rd" / "tickets" / "done"
+                / "RD-0103.json").is_file()
+
+    def test_list_after_mutations_still_reads(self, seeded):
+        cd = seeded / ".company"
+        r = self._cli(seeded, str(cd), "ticket", "list", "rd")
+        assert r.returncode == 0, r.stderr
+        assert "5 ticket(s) in rd" in r.stdout

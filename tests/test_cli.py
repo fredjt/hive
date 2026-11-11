@@ -336,8 +336,9 @@ class TestTicketListPriority:
         self._mk(company, "P-HIGH", "high")
         self._mk(company, "P-LOW", "low")
         r = subprocess.run([sys.executable, "-m", "hive_cli.main",
-                            "ticket", "list", "it", "--priority", "high"],
-                           capture_output=True, text=True, timeout=90,
+                            "ticket", "list", "it", "--priority", "high",
+                            "--json"],  # T1 (0.17): --json is the machine face
+        capture_output=True, text=True, timeout=90,
                            cwd=str(tmp_path), env=self._env(tmp_path))
         assert r.returncode == 0, r.stdout + r.stderr
         out = r.stdout
@@ -345,6 +346,13 @@ class TestTicketListPriority:
         data = obj.get("data", obj)
         ids = [t.get("id") for t in data.get("tickets", [])]
         assert ids == ["P-HIGH"], ids
+        # And the human face carries the same filter, in English
+        r = subprocess.run([sys.executable, "-m", "hive_cli.main",
+                            "ticket", "list", "it", "--priority", "high"],
+                           capture_output=True, text=True, timeout=90,
+                           cwd=str(tmp_path), env=self._env(tmp_path))
+        assert r.returncode == 0, r.stdout + r.stderr
+        assert "P-HIGH" in r.stdout and "P-LOW" not in r.stdout
 
     def test_list_without_priority_lists_all(self, tmp_path, monkeypatch,
                                              capsys):
@@ -352,7 +360,7 @@ class TestTicketListPriority:
         self._mk(company, "A-HIGH", "high")
         self._mk(company, "B-LOW", "low")
         r = subprocess.run([sys.executable, "-m", "hive_cli.main",
-                            "ticket", "list", "it"],
+                            "ticket", "list", "it", "--json"],  # T1 (0.17)
                            capture_output=True, text=True, timeout=90,
                            cwd=str(tmp_path), env=self._env(tmp_path))
         assert r.returncode == 0, r.stdout + r.stderr
