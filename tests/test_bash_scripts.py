@@ -661,10 +661,88 @@ class TestCompanyStopScript:
 class TestTicketListScript:
     """Test ticket-list.sh."""
 
-    def test_ticket_list_no_args_shows_usage(self):
-        result = run_script(f"{SCRIPTS_DIR}/ticket-list.sh")
-        assert result.returncode != 0
-        assert "Usage" in result.stderr or "usage" in result.stderr.lower()
+    def test_ticket_list_no_args_is_company_wide(self, tmp_company_dir):
+        """T2 (0.17): the department argument is optional — no args is
+        the company-wide view (the 0.16 usage error is gone by design;
+        an empty company names itself instead of staying silent)."""
+        env = {"COMPANY_DIR": str(tmp_company_dir)}
+        result = run_script(f"{SCRIPTS_DIR}/ticket-list.sh", env=env)
+        assert result.returncode == 0, result.stderr
+        assert "No departments found" in result.stdout
+
+
+
+
+class TestTicketListCompanyWide:
+    """T2 (0.17): ticket-list.sh without a department lists the whole
+    company, grouped; a named missing department is an error distinct
+    from an existing-but-empty one (count 0, exit 0)."""
+
+    def _seed(self, company):
+        for dept, tid, pri in [("rd", "RD-0101", "high"),
+                               ("rd", "RD-0102", "low"),
+                               ("it", "IT-0101", "medium")]:
+            d = company / "departments" / dept / "tickets" / "backlog"
+            d.mkdir(parents=True, exist_ok=True)
+            (d / f"{tid}.json").write_text(json.dumps(
+                {"id": tid, "title": tid, "status": "backlog",
+                 "type": "feature", "priority": pri}))
+        empty = company / "departments" / "hr" / "tickets" / "backlog"
+        empty.mkdir(parents=True, exist_ok=True)
+
+    def test_company_wide_json_groups_by_department(self, tmp_company_dir):
+        self._seed(tmp_company_dir)
+        r = run_script(f"{SCRIPTS_DIR}/ticket-list.sh", ["--json"],
+                       env={"COMPANY_DIR": str(tmp_company_dir)})
+        assert r.returncode == 0, r.stderr
+        d = json.loads(r.stdout)
+        assert set(d.keys()) == {"departments", "total", "mode"}
+        assert d["total"] == 3  # rd 2 + it 1 + hr 0
+        assert set(d["departments"].keys()) == {"rd", "it", "hr"}
+        assert d["departments"]["rd"]["count"] == 2
+        assert d["departments"]["it"]["count"] == 1
+        # The per-dept docs keep the 0.16 schema
+        rd = d["departments"]["rd"]
+        assert rd["department"] == "rd" and rd["mode"] == "summary"
+        assert set(rd["tickets"][0].keys()) == {
+            "id", "title", "status", "type", "priority", "assignee",
+            "gates_passed", "verified_by", "skip_tdd_red",
+            "comment_count", "last_comment"}
+
+    def test_per_dept_json_unchanged(self, tmp_company_dir):
+        self._seed(tmp_company_dir)
+        r = run_script(f"{SCRIPTS_DIR}/ticket-list.sh", ["rd", "--json"],
+                       env={"COMPANY_DIR": str(tmp_company_dir)})
+        assert r.returncode == 0, r.stderr
+        d = json.loads(r.stdout)
+        assert set(d.keys()) == {"department", "count", "tickets", "mode"}
+        assert d["count"] == 2
+
+    def test_missing_department_is_an_error(self, tmp_company_dir):
+        self._seed(tmp_company_dir)
+        r = run_script(f"{SCRIPTS_DIR}/ticket-list.sh", ["nope", "--json"],
+                       env={"COMPANY_DIR": str(tmp_company_dir)})
+        assert r.returncode == 1
+        assert "Department 'nope' not found" in r.stderr
+
+    def test_existing_empty_department_is_count_zero(self, tmp_company_dir):
+        self._seed(tmp_company_dir)
+        r = run_script(f"{SCRIPTS_DIR}/ticket-list.sh", ["hr", "--json"],
+                       env={"COMPANY_DIR": str(tmp_company_dir)})
+        assert r.returncode == 0, r.stderr
+        d = json.loads(r.stdout)
+        assert d["count"] == 0 and d["tickets"] == []
+
+    def test_company_wide_priority_filter(self, tmp_company_dir):
+        self._seed(tmp_company_dir)
+        r = run_script(f"{SCRIPTS_DIR}/ticket-list.sh",
+                       ["--priority", "high", "--json"],
+                       env={"COMPANY_DIR": str(tmp_company_dir)})
+        assert r.returncode == 0, r.stderr
+        d = json.loads(r.stdout)
+        assert d["total"] == 1
+        assert d["departments"]["rd"]["count"] == 1
+        assert d["departments"]["it"]["count"] == 0
 
 
 class TestTicketMoveScript:
