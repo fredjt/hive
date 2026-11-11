@@ -36,7 +36,7 @@ health, ticket counts, velocity, and stuck-ticket count.
 ```
 hive ticket create <dept> <type> <priority> <title> <description> [--created-by NAME] [--source SRC] [--estimate EST] [--json]
 hive ticket get <dept> <ticket-id> [--json]
-hive ticket list <dept> [status] [--json]
+hive ticket list [dept] [status] [--json]
 hive ticket move <dept> <ticket-id> <new-status> <comment> <author> [reason] [--force] [--json]
 hive ticket claim <dept> <ticket-id> <role> <agent-id> <agent-name> [--worktree-path PATH] [--json]
 hive ticket comment <dept> <ticket-id> <author> <comment> [--json]
@@ -56,7 +56,7 @@ always shown. Affected: `ticket *`, `chat *`, `backlog prioritize`,
 
 The `ticket list` table: ID / TYPE / PRI / STATUS / TITLE (truncated) /
 ASSIGNEE, ordered `backlog → sprint-current → in-progress → in-review →
-done`, with a count line. `ticket get` prints the card: header line
+done`, with a count line. `dept` is optional (0.17): omitted, the whole company is listed, grouped — one table per department under `<dept>:` headers, per-dept count lines, and the company total; existing-but-empty departments stay visible (count 0). A named department that does not exist is an error (`Department '<dept>' not found`, exit 1); an existing one with zero tickets is a count-0 listing (exit 0) — the "no tickets" vs "doesn't exist" distinction. `--json` is the per-dept doc or the company-wide doc `{"departments": {...}, "total": N, "mode": ...}`. `ticket get` prints the card: header line
 (status, type, priority, assignee), the description, the comments as
 `author (timestamp): body`, and a verification block (gates_passed /
 verified_by + rationale) when present.

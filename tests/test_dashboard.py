@@ -647,7 +647,7 @@ class TestCLIDocs:
         for line in [
             "hive ticket create <dept> <type> <priority> <title> <description> [--created-by NAME] [--source SRC] [--estimate EST] [--json]",
             "hive ticket get <dept> <ticket-id> [--json]",
-            "hive ticket list <dept> [status] [--json]",
+            "hive ticket list [dept] [status] [--json]",
             "hive ticket move <dept> <ticket-id> <new-status> <comment> <author> [reason] [--force] [--json]",
             "hive chat send <channel> <author> <department> <message> [--json]",
             "hive chat read <channel> [--last N] [--since ISO_TIMESTAMP] [--json]",
@@ -661,6 +661,9 @@ class TestCLIDocs:
             "hive release list [--limit N] [--json]",
         ]:
             assert line in content, f"undocumented: {line}"
+        # T2: the company-wide contract is documented
+        assert "dept` is optional (0.17)" in content
+        assert "company-wide" in content
 
 
 class TestLicense:
