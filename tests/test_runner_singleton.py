@@ -240,6 +240,36 @@ def test_forced_takeover_commits_within_cap_when_parent_holds_zombie(
                     p.kill()
 
 
+def test_takeover_tick_granularity_is_0_1s():
+    """T1 (0.16) — the tick guard, next to the pin it protects.
+
+    No sleep coarser than 0.1s between the kill -TERM and the KILL
+    backstop in the forced-takeover section. The 0.15 5s cap
+    (sleep 0.5 x 10) cost every takeover a full second on a reaping
+    supervisor and the whole cap when the prior was a zombie —
+    103.03s of the 266.72s suite wall through the hammer. The cap is
+    0.1s x 10 (1s) now; this guard makes the regression loud. Red
+    while the 0.5s literal exists.
+    """
+    content = LIFECYCLE.read_text()
+    i_term = content.find('kill -TERM "$PRIOR_PID"')
+    i_kill = content.find('kill -KILL "$PRIOR_PID"')
+    assert i_term != -1 and i_kill != -1, \
+        "the forced-takeover TERM/KILL section is missing from " \
+        "lib/tools/sprint-lifecycle.sh"
+    assert i_term < i_kill, \
+        "the TERM must precede the KILL backstop in the takeover section"
+    section = content[i_term:i_kill]
+    sleeps = re.findall(r"sleep\s+([0-9.]+)", section)
+    assert sleeps, \
+        "no sleep tick between the TERM and the KILL backstop — the " \
+        "death check must poll, not fire-and-forget"
+    coarse = [s for s in sleeps if float(s) > 0.1 + 1e-9]
+    assert not coarse, (
+        f"takeover death check has a tick coarser than 0.1s: {coarse} — "
+        "every such tick is a cost on EVERY takeover (the 0.15 5s cap "
+        "was 38.7% of the suite wall through the hammer)")
+
 
 def test_health_restarts_runner_into_real_log_file():
     """Static guard: company-health.sh maps the sprint-lifecycle role to
