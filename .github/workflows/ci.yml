@@ -59,14 +59,19 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip setuptools wheel
-          # Install Rust toolchain for building pydantic-core, cffi, etc.
-          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain none
-          export PATH="$HOME/.cargo/bin:$PATH"
           # Core runtime deps: the LOCK (the released Python environment,
           # T1 0.14) — the push rows verify the lock installs and goes
           # green TODAY; the scheduled row (scheduled.yml) re-checks the
           # same lock weeks later (reproducibility over time, T4 0.15).
-          pip install -r packaging/requirements.lock.txt
+          # T3 (0.16): --only-binary :all: — the wheel-only contract in
+          # EVERY push: a lock line that loses wheel coverage fails the
+          # row, naming the line (the fix is a pin with wheels, or a
+          # documented exception in share/docs/PACKAGING.md). The inert
+          # toolchain step is gone: a --default-toolchain none install
+          # ships NO compiler (it enabled no build), and the lock's
+          # closure needs none — it resolves 100% as wheels
+          # (TestLockWheelOnly; TestCIWheelOnlyContract pins both).
+          pip install --only-binary :all: -r packaging/requirements.lock.txt
           # Test deps (xdist: the suite is xdist-safe, -n auto parallelizes
           # across the runner's cores)
           pip install pytest anyio pytest-xdist

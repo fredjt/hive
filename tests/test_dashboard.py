@@ -825,6 +825,57 @@ class TestCINodeVersion:
                 f"node-check pins EOL Node {major} — bump to the current major"
 
 
+class TestCIWheelOnlyContract:
+    """T3 (0.16): the lock is wheels-only — the contract lives in every
+    push, and the inert toolchain step can never silently reappear.
+
+    Both workflows used to install a Rust toolchain "for building
+    pydantic-core, cffi, etc." — with `--default-toolchain none`, which
+    installs NO compiler: the step was inert and could enable no build.
+    The build it claimed to enable was not needed anyway: the lock's
+    full closure resolves 100% as wheels (TestLockWheelOnly pins it),
+    and the rows install the lock with `--only-binary :all:` — a lock
+    line that loses wheel coverage fails the row, naming the line. The
+    snowball pattern (a static guard per retired regression): the
+    inert step's ABSENCE and the contract's PRESENCE are both pinned
+    here, so neither drifts back silently.
+    """
+
+    # The push rows (ci.yml) carry the contract from T3 (0.16); the
+    # scheduled row (scheduled.yml) gets the same --only-binary
+    # contract (cache-less) in this release — the guard's parameter
+    # list grows with it (the snowball: each row's contract, pinned).
+    WORKFLOWS = [
+        Path(".github/workflows/ci.yml"),
+    ]
+
+    @pytest.mark.parametrize("wf", WORKFLOWS)
+    def test_no_rustup_in_ci_workflows(self, wf):
+        assert wf.exists(), f"{wf} is missing"
+        text = wf.read_text()
+        assert "rustup" not in text, (
+            f"{wf.name} installs a Rust toolchain — the lock's closure "
+            "resolves wheel-only (TestLockWheelOnly) and the lock is "
+            "installed with --only-binary :all:, so no compiler can be "
+            "enabled or needed (and a --default-toolchain none install "
+            "is inert: it ships no compiler at all)")
+
+    @pytest.mark.parametrize("wf", WORKFLOWS)
+    def test_lock_install_is_wheel_only(self, wf):
+        text = wf.read_text()
+        assert "--only-binary :all:" in text, (
+            f"{wf.name} does not install the lock with --only-binary "
+            ":all: — the wheel-coverage contract must live in every row "
+            "(a lock line that loses wheel coverage fails the row, "
+            "naming the line)")
+        i_lock = text.find("-r packaging/requirements.lock.txt")
+        assert i_lock != -1, (
+            f"{wf.name} does not install the venv lock — nothing "
+            "verifies the released Python environment")
+        assert "--only-binary :all:" in text[:i_lock], (
+            f"{wf.name} installs the lock without --only-binary :all:")
+
+
 class TestPullRequestTemplate:
     """Test the PR template."""
 
