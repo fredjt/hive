@@ -408,7 +408,7 @@ if [ -n "$UPGRADE_FROM" ]; then
   # a configured provider. The UPGRADE surface is the named checks.
   DOC_JSON="$(mktemp -t hive-cut-doctor-XXXXXX)"
   HIVE_INSTALL_DIR="$UINSTALL" bash "$UINSTALL/bin/hive" doctor --json \
-    > "$DOC_JSON" 2>/dev/null
+    > "$DOC_JSON" 2>/dev/null || true
   DOCTOR_BAD="$( "$UINSTALL/venv/bin/python" - "$DOC_JSON" <<'PYEOF'
 import json, sys
 try:
