@@ -663,12 +663,14 @@ class TestTicketListScript:
 
     def test_ticket_list_no_args_is_company_wide(self, tmp_company_dir):
         """T2 (0.17): the department argument is optional — no args is
-        the company-wide view (the 0.16 usage error is gone by design;
-        an empty company names itself instead of staying silent)."""
+        the company-wide view (the 0.16 usage error is gone by design).
+        T3: a fresh company's org-chart depts are listed (empty blocks)
+        instead of 'No departments found'."""
         env = {"COMPANY_DIR": str(tmp_company_dir)}
         result = run_script(f"{SCRIPTS_DIR}/ticket-list.sh", env=env)
         assert result.returncode == 0, result.stderr
-        assert "No departments found" in result.stdout
+        assert "=== it ===" in result.stdout
+        assert "=== rd ===" in result.stdout
 
 
 

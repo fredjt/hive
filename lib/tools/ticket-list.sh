@@ -48,10 +48,28 @@ done
 [ "${#POSITIONAL[@]}" -ge 2 ] && STATUS="${POSITIONAL[1]}"
 
 if [ -n "$DEPT" ]; then
+  # Exists = a runtime department dir OR an org-chart entry (a fresh
+  # company's depts are listed before any runtime state is derived).
   DEPT_DIR="$DEPTS_DIR/$DEPT"
   if [ ! -d "$DEPT_DIR" ]; then
-    echo "Department '$DEPT' not found" >&2
-    exit 1
+    IN_ORG="false"
+    if [ -f "$COMPANY_DIR/org-chart.json" ]; then
+      TL_ORG_CHECK="$DEPT" python3 -c "
+import json, os
+try:
+    d = json.load(open(os.path.join(os.environ['COMPANY_DIR'], 'org-chart.json')))
+except Exception:
+    pass
+else:
+    depts = d.get('departments')
+    if isinstance(depts, dict) and os.environ['TL_ORG_CHECK'] in depts:
+        print('yes')
+" | grep -q yes && IN_ORG="true"
+    fi
+    if [ "$IN_ORG" != "true" ]; then
+      echo "Department '$DEPT' not found" >&2
+      exit 1
+    fi
   fi
 fi
 
@@ -61,6 +79,27 @@ else
   STATUSES="backlog sprint-current in-progress in-review done"
 fi
 
+
+# Union of the org-chart depts and the runtime dept dirs (sorted) —
+# a fresh company's depts are listed before any runtime state exists.
+known_depts() {
+  TL_DEPTS_DIR="$DEPTS_DIR" TL_ORG_FILE="$COMPANY_DIR/org-chart.json" python3 - <<'KDEOF'
+import json, os
+depts = set()
+dd = os.environ.get('TL_DEPTS_DIR', '')
+if os.path.isdir(dd):
+    depts |= {d for d in os.listdir(dd) if os.path.isdir(os.path.join(dd, d))}
+try:
+    oc = json.load(open(os.environ['TL_ORG_FILE']))
+    d = oc.get('departments')
+    if isinstance(d, dict):
+        depts |= set(d)
+except Exception:
+    pass
+for n in sorted(depts):
+    print(n)
+KDEOF
+}
 
 if [ "$JSON" = true ]; then
   if [ -z "$DEPT" ]; then
@@ -115,10 +154,23 @@ def dept_doc(dept):
             'mode': 'full' if full else 'summary'}
 
 departments = {}
+# The dept set is the org-chart union the runtime dirs (a fresh
+# company's depts are listed before any runtime state is derived).
+org_depts = set()
+try:
+    oc = json.load(open(os.path.join(
+        os.path.dirname(DEPTS_DIR.rstrip('/')) or '.', 'org-chart.json')))
+    od = oc.get('departments')
+    if isinstance(od, dict):
+        org_depts = set(od)
+except Exception:
+    pass
+runtime = set()
 if os.path.isdir(DEPTS_DIR):
-    for entry in sorted(os.listdir(DEPTS_DIR)):
-        if os.path.isdir(os.path.join(DEPTS_DIR, entry)):
-            departments[entry] = dept_doc(entry)
+    runtime = {e for e in os.listdir(DEPTS_DIR)
+               if os.path.isdir(os.path.join(DEPTS_DIR, e))}
+for entry in sorted(org_depts | runtime):
+    departments[entry] = dept_doc(entry)
 total = sum(doc['count'] for doc in departments.values())
 print(json.dumps({'departments': departments, 'total': total,
                   'mode': 'full' if full else 'summary'}, indent=2))
@@ -204,18 +256,14 @@ PYEOF
 }
 
 if [ -z "$DEPT" ]; then
-  # Company-wide human face: one labeled block per department.
-  found_any=0
-  if [ -d "$DEPTS_DIR" ]; then
-    for d in "$DEPTS_DIR"/*/; do
-      [ -d "$d" ] || continue
-      dept_name="$(basename "$d")"
-      found_any=1
-      echo "=== $dept_name ==="
-      list_dept_human "$dept_name"
-    done
-  fi
-  [ "$found_any" -eq 1 ] || echo "No departments found in $DEPTS_DIR"
+  listed=0
+  while IFS= read -r dept; do
+    [ -n "$dept" ] || continue
+    echo "=== $dept ==="
+    list_dept_human "$dept"
+    listed=1
+  done < <(known_depts)
+  [ "$listed" -eq 1 ] || echo "No departments found"
 else
   list_dept_human "$DEPT"
 fi

@@ -149,6 +149,9 @@ def _add_chat(sub) -> None:
     pr.add_argument("--since")
     pr.add_argument("--json", action="store_true",
                     help="Print the raw MCP envelope (machine contract; human by default)")
+    pch = sp.add_parser("channels", help="List channels (message count + last message time)")
+    pch.add_argument("--json", action="store_true",
+                     help="Print the raw MCP result (machine contract; human by default)")
 
     p.set_defaults(_handler=chat.handle)
 

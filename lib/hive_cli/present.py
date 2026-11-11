@@ -31,6 +31,7 @@ __all__ = [
     "render_company_wide",
     "render_ticket_card",
     "render_chat_read",
+    "render_chat_channels",
     "render_chat_send",
     "render_ticket_create",
     "render_action",
@@ -229,6 +230,21 @@ def render_chat_read(data: dict) -> str:
     for m in messages:
         lines.append(f"{_hhmm(m.get('timestamp', ''))} {m.get('role', '?')}: {m.get('message', '')}")
     return "\n".join(lines)
+
+
+def render_chat_channels(data: dict) -> str:
+    """chat_channels → the channel table (name, message count, last
+    message time); an empty board names itself (T3)."""
+    channels = data.get("channels") or []
+    if not channels:
+        return ("No channels yet — the first 'hive chat send' creates one.")
+    rows = [
+        [c.get("channel", "?"),
+         str(c.get("messages", 0)),
+         str(c.get("last_at") or "—")]
+        for c in channels
+    ]
+    return "\n".join(_table(["CHANNEL", "MESSAGES", "LAST"], rows))
 
 
 def render_chat_send(channel: str) -> str:

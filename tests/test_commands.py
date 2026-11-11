@@ -3213,3 +3213,69 @@ class TestStartLlmPreflight:
         captured = capsys.readouterr()
         assert rc == 0
         assert "LLM not configured" not in captured.err
+
+
+class TestChatChannels:
+    """T3 (0.17): `hive chat channels` — the board's channels with
+    message counts and last-message times; an empty board names itself
+    instead of printing nothing."""
+
+    @staticmethod
+    def _cli(cwd: Path, company_dir: str, *argv: str) -> subprocess.CompletedProcess:
+        return subprocess.run(
+            [sys.executable, "-m", "hive_cli.main", *argv],
+            capture_output=True, text=True, timeout=120,
+            cwd=str(cwd),
+            env={**os.environ,
+                 "PYTHONPATH": str(Path(__file__).resolve()
+                                   .parent.parent / "lib"),
+                 "HIVE_MCP_PORT": "1",
+                 "COMPANY_DIR": company_dir})
+
+    @pytest.fixture(scope="class")
+    def seeded(self, tmp_path_factory):
+        root = tmp_path_factory.mktemp("chat-channels")
+        cd = root / ".company"
+        (cd / "chat").mkdir(parents=True)
+        (cd / "chat" / "general.md").write_text(
+            "# Channel: general\n\n---\n"
+            "**[2026-11-11T09:30:00Z] user (general)** hi\n\n---\n"
+            "**[2026-11-11T09:45:00Z] Eng-1 (rd)** hello\n")
+        (cd / "chat" / "engineering.md").write_text(
+            "# Channel: engineering\n\n---\n"
+            "**[2026-11-11T10:00:00Z] Infra (it)** build green\n")
+        return root
+
+    def test_channels_human_table(self, seeded):
+        cd = seeded / ".company"
+        r = self._cli(seeded, str(cd), "chat", "channels")
+        assert r.returncode == 0, r.stderr
+        assert "general" in r.stdout
+        assert "engineering" in r.stdout
+        # counts and last-message times
+        assert "2" in r.stdout
+        assert "2026-11-11T09:45:00Z" in r.stdout
+        assert "2026-11-11T10:00:00Z" in r.stdout
+        assert '"ok"' not in r.stdout
+
+    def test_channels_json(self, seeded):
+        cd = seeded / ".company"
+        r = self._cli(seeded, str(cd), "chat", "channels", "--json")
+        assert r.returncode == 0, r.stderr
+        d = json.loads(r.stdout)
+        data = d["data"]
+        assert set(data.keys()) == {"channels", "total_messages"}
+        by = {c["channel"]: c for c in data["channels"]}
+        assert by["general"]["messages"] == 2
+        assert by["general"]["last_at"] == "2026-11-11T09:45:00Z"
+        assert by["engineering"]["messages"] == 1
+        assert data["total_messages"] == 3
+
+    def test_no_chat_dir_names_the_empty_board(self, tmp_path):
+        (tmp_path / ".company").mkdir()
+        r = self._cli(tmp_path, str(tmp_path / ".company"), "chat", "channels")
+        assert r.returncode == 0, r.stderr
+        assert "No channels yet" in r.stdout
+        d = json.loads(self._cli(tmp_path, str(tmp_path / ".company"),
+                                 "chat", "channels", "--json").stdout)
+        assert d["data"]["channels"] == []

@@ -42,3 +42,38 @@ def register(server: Server) -> None:
             args += ["--since", since]
         args.append("--json")
         return run("chat-read", *args, company_dir=company_dir).to_dict()
+
+    @server.tool()
+    def chat_channels(
+        company_dir: str | None = None,
+    ) -> dict:
+        """List every chat channel with its message count and the
+        timestamp of its last message (0.17). An empty board is
+        visible, not silent: channels exist from the first send, and
+        a company with no chat dir at all returns ok with zero
+        channels (the CLI says so)."""
+        import re
+        from os import environ
+        from pathlib import Path
+
+        cd = (company_dir or environ.get("COMPANY_DIR")
+              or str(Path.cwd() / ".company"))
+        chat_dir = Path(cd) / "chat"
+        block = re.compile(
+            r"\*\*\[([^\]]*)\]\s*([^\(]*)\(([^)]*)\)\*\*", re.DOTALL)
+        channels = []
+        if chat_dir.is_dir():
+            for f in sorted(chat_dir.glob("*.md")):
+                try:
+                    text = f.read_text()
+                except OSError:
+                    continue
+                stamps = block.findall(text)
+                channels.append({
+                    "channel": f.stem,
+                    "messages": len(stamps),
+                    "last_at": stamps[-1][0].strip() if stamps else None,
+                })
+        return {"ok": True, "data": {"channels": channels,
+                                     "total_messages": sum(
+                                         c["messages"] for c in channels)}}

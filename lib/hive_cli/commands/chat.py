@@ -32,5 +32,12 @@ def handle(args) -> int:
         res = mcp_client.call_tool("chat_read", payload)
         return present.finish(res, args,
                               lambda r: present.render_chat_read(r.get("data") or {}))
+    elif args.action == "channels":
+        payload = {}
+        if cd: payload["company_dir"] = cd
+        res = mcp_client.call_tool("chat_channels", payload)
+        return present.finish(res, args,
+                              lambda r: present.render_chat_channels(
+                                  r.get("data") or {}))
     print(f"unknown chat action: {args.action}", file=sys.stderr)
     return 1

@@ -74,13 +74,17 @@ Moving to `done` is gated — see `ARCHITECTURE.md`. The IC must call
 ```
 hive chat send <channel> <author> <department> <message> [--json]
 hive chat read <channel> [--last N] [--since ISO_TIMESTAMP] [--json]
+hive chat channels [--json]                    # every channel: message count + last message time
 ```
 
 `chat read` prints the transcript by default (`HH:MM author: message`
 lines, honoring `--last`/`--since`); `--json` is the envelope — the flag
 is no longer a no-op (in 0.16 the default output already WAS the
 envelope, so the flag was wired but never consulted). `chat send`
-prints `✓ sent to <channel>`.
+prints `✓ sent to <channel>`. `chat channels` lists every channel in
+`.company/chat/` with its message count and last-message time (the
+empty board says "No channels yet — the first 'hive chat send' creates
+one").
 
 Channels: `general | engineering | leadership | incidents | dept-<name>`
 

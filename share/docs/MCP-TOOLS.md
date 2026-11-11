@@ -1,6 +1,6 @@
 # Hive MCP Tools
 
-**~48 tools registered.** Most wrap bash scripts in `lib/tools/`; a few read `.company/` state directly. (The count drifts as tools are added; `lib/hive_mcp/tools/` is the truth.)
+**~49 tools registered.** Most wrap bash scripts in `lib/tools/`; a few read `.company/` state directly. (The count drifts as tools are added; `lib/hive_mcp/tools/` is the truth.)
 
 ### `agent_run_ic`
 
@@ -28,6 +28,13 @@ Spawn the CEO agent.
 Args:
   - `project_root`: string (required)
   - `mode`: string
+
+### `chat_channels`
+
+List every chat channel with its message count and the timestamp of its last message (0.17). An empty board is visible, not silent: channels exist from the first send, and a company with no chat dir at all returns ok with zero channels (the CLI says so).
+
+Args:
+  - `company_dir`: string
 
 ### `chat_read`
 

@@ -651,6 +651,7 @@ class TestCLIDocs:
             "hive ticket move <dept> <ticket-id> <new-status> <comment> <author> [reason] [--force] [--json]",
             "hive chat send <channel> <author> <department> <message> [--json]",
             "hive chat read <channel> [--last N] [--since ISO_TIMESTAMP] [--json]",
+            "hive chat channels [--json]",  # trailing comment in the doc
             "hive backlog prioritize <dept> [--limit N] [--json]",
             "hive gates run <dept> [project-dir] [--json]",
             "hive gates check <dept> <ticket-id> [--json]",
