@@ -11,6 +11,7 @@ tr '-' '_' produced 'sprint-lifecycle_log', an orphan file).
 """
 import json
 import os
+import re
 import subprocess
 import sys
 import time
@@ -182,6 +183,62 @@ def test_forced_takeover_pid_never_empty_under_hammer(tmp_path):
             except subprocess.TimeoutExpired:
                 p.kill()
     assert total_reads > 0, "the hammer never read the pidfile"
+
+
+def test_forced_takeover_commits_within_cap_when_parent_holds_zombie(
+        tmp_path):
+    """T1 (0.16) — the production worst case, pinned ONCE, not twenty.
+
+    The hammer models a REAPING supervisor (prev.poll() inside the
+    window — bash reaps background jobs, an orphaned runner is
+    re-parented to init and reaped immediately). The realistic worst
+    case is a parent that does NOT reap: the dead prior stays a
+    ZOMBIE, kill -0 succeeds on it (a zombie is not "dead" to kill -0),
+    and the production death check must burn the FULL cap before the
+    KILL backstop and the atomic pid commit. The hammer's N=20 would
+    multiply that payment twenty times if the parent ever held a
+    zombie; this test pays it exactly once and pins the end-to-end
+    worst case: the new pid commits to runner.pid inside the cap
+    (1s death check + 0.3s KILL backstop + commit — well under the
+    ~8s allowance).
+    """
+    h = LifecycleHarness(tmp_path, mode="noop")
+    p1 = _spawn_runner(h)
+    p2 = None
+    try:
+        _wait_for_runner_files(h)
+        pidfile = h.project / ".company" / "rounds" / "runner.pid"
+        assert pidfile.read_text().strip() == str(p1.pid), \
+            "the prior runner must own the pidfile before the takeover"
+        t0 = time.time()
+        p2 = _spawn_runner(h, env_extra={"HIVE_RUNNER_FORCE": "1"})
+        deadline = time.time() + 15
+        committed = False
+        while time.time() < deadline:
+            # NOTE: deliberately NO p1.poll() in this window — holding
+            # the zombie IS the test (the unreaped worst case).
+            if pidfile.read_text().strip() == str(p2.pid):
+                committed = True
+                break
+            time.sleep(0.01)
+        committed_in = time.time() - t0
+        assert committed, (
+            "the takeover must commit to runner.pid while the parent "
+            "holds the prior's zombie")
+        assert p1.poll() is not None, \
+            "HIVE_RUNNER_FORCE=1 must terminate the prior runner"
+        assert committed_in < 8, (
+            "the unreaped worst case must stay inside the cap (1s death "
+            f"check + 0.3s KILL backstop + commit); took {committed_in:.2f}s")
+    finally:
+        for p in (p1, p2):
+            if p is not None:
+                p.terminate()
+                try:
+                    p.wait(timeout=15)
+                except subprocess.TimeoutExpired:
+                    p.kill()
+
 
 
 def test_health_restarts_runner_into_real_log_file():
