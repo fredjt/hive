@@ -822,6 +822,211 @@ class TestConfigMasking:
             "the unknown-key warnings stay on stderr"
 
 
+class TestRosterCommand:
+    """T2 (0.18): `hive roster [dept] [--active] [--json]` — who is
+    working on what, in the terminal. Read-only and CLI-only: it rides
+    the existing roster_get MCP tool (the same script path,
+    roster-update.sh list, rebuild before read) — no wire change, no
+    agent-side diff. The human face is the NAME / ROLE / DEPT / STATUS
+    / TICKET / LAST ACTIVE table (active first, then claimed, then
+    inactive) with the count line; --json is the .agents array exactly
+    as roster_get returns it. The empty states are named: no .company
+    → the init hint (rc 1); rebuild failed → the named error (rc 1 —
+    today: silent `[]`, rc 0); derived-but-empty → the count-0 listing
+    (rc 0); a named-missing dept → exit 1 + the known-dept list.
+    End-to-end through the real CLI + stdio MCP server + bash scripts
+    (dead HIVE_MCP_PORT forces the stdio transport)."""
+
+    DEPTS = ("finance", "hr", "it", "legal", "marketing", "rd")
+
+    @staticmethod
+    def _cli(cwd: Path, company_dir: str | None, *argv: str,
+             extra: dict | None = None) -> subprocess.CompletedProcess:
+        env = {**os.environ,
+               "PYTHONPATH": str(Path(__file__).resolve().parent.parent / "lib"),
+               # dead port — force the stdio MCP fallback
+               "HIVE_MCP_PORT": "1"}
+        if company_dir is not None:
+            env["COMPANY_DIR"] = company_dir
+        else:
+            env.pop("COMPANY_DIR", None)
+        env.update(extra or {})
+        return subprocess.run(
+            [sys.executable, "-m", "hive_cli.main", *argv],
+            capture_output=True, text=True, timeout=180,
+            cwd=str(cwd), env=env)
+
+    @staticmethod
+    def _workspace(root: Path, name: str, *, logs: bool = False,
+                   ticket: bool = False) -> Path:
+        cd = root / ".company"
+        (cd / "logs").mkdir(parents=True, exist_ok=True)
+        (cd / "org-chart.json").write_text(json.dumps({
+            "departments": {d: {"name": d.title()} for d in
+                            TestRosterCommand.DEPTS},
+            "created_at": "2026-11-10T00:00:00Z"}))
+        (cd / "manifest.json").write_text(
+            json.dumps({"project_name": name, "mode": "build",
+                        "auto_mode": False}))
+        if logs:
+            # A fresh VP log (mtime = now): the rebuild reads it as
+            # active (inside the 30-minute window).
+            (cd / "logs" / "vp-rd.log").write_text("[cycle] rd cycle 1\n")
+        if ticket:
+            # An in-progress ticket with a paper claim (no live spawn
+            # record → the IC row reads 'claimed').
+            base = cd / "departments" / "rd" / "tickets" / "in-progress"
+            base.mkdir(parents=True, exist_ok=True)
+            (base / "RD-7777.json").write_text(json.dumps({
+                "id": "RD-7777", "type": "feature",
+                "title": "Implement the roster command",
+                "description": "The terminal face of the roster.",
+                "created_by": "user", "source": "manual",
+                "priority": "high", "status": "in-progress",
+                "created_at": "2026-11-10T09:00:00Z",
+                "updated_at": "2026-11-11T09:00:00Z",
+                "assignee": "Eng-42", "comments": [],
+                "gates_passed": False, "verified_by": "",
+                "branch": "feature/RD-7777"}))
+        return cd
+
+    @pytest.fixture(scope="class")
+    def running(self, tmp_path_factory):
+        """A company that IS running: fresh VP-rd log + claimed IC."""
+        root = tmp_path_factory.mktemp("roster-running")
+        return self._workspace(root, "roster-running",
+                               logs=True, ticket=True)
+
+    @pytest.fixture(scope="class")
+    def never_run(self, tmp_path_factory):
+        """A fresh, never-run workspace: org-chart only."""
+        root = tmp_path_factory.mktemp("roster-never")
+        return self._workspace(root, "roster-never")
+
+    # -- the running workspace -------------------------------------------
+
+    def test_running_workspace_row_on_screen(self, running):
+        r = self._cli(running.parent, str(running), "roster")
+        assert r.returncode == 0, r.stderr
+        out = r.stdout
+        # The IC row: name, dept, the ticket id, and the claimed state
+        assert "Eng-42" in out, "the assignee's name must be on screen"
+        assert "RD-7777" in out, "the ticket id must be on screen"
+        assert "claimed" in out
+        # The fresh VP log: an active row for rd
+        rd_rows = [ln for ln in out.splitlines()
+                   if ln.startswith("VP-RD ")]
+        assert rd_rows and "active" in rd_rows[0], \
+            "a fresh VP log must read as an active row"
+        # The envelope keys are NOT the human face
+        for key in ('"ok"', '"data"', 'exit_code'):
+            assert key not in out
+        # Count line at the end: 6 VPs + 1 IC, one active
+        assert out.strip().splitlines()[-1] == "7 agent(s) — 1 active"
+        # Active rows first, then claimed, then inactive
+        lines = out.splitlines()
+        assert lines.index([l for l in lines if l.startswith("VP-RD ")][0]) \
+            < lines.index([l for l in lines if l.startswith("Eng-42")][0]) \
+            < lines.index([l for l in lines if l.startswith("VP-FINANCE")][0])
+
+    def test_json_equals_roster_get_document(self, running):
+        r = self._cli(running.parent, str(running), "roster", "--json")
+        assert r.returncode == 0, r.stderr
+        got = json.loads(r.stdout)
+        # The MCP side for the same call (the golden)
+        tool = self._cli(running.parent, str(running), "tool", "roster_get",
+                         "--arg", f"company_dir={running}")
+        assert tool.returncode == 0, tool.stderr
+        env = json.loads(tool.stdout)
+        assert env["ok"] is True
+        assert got == env["data"], \
+            "--json must be the .agents array exactly as roster_get " \
+            "returns it — one byte-identical contract"
+        assert isinstance(got, list) and len(got) == 7
+
+    def test_filters_active_and_dept(self, running):
+        r = self._cli(running.parent, str(running), "roster", "--active")
+        assert r.returncode == 0, r.stderr
+        assert "VP-RD" in r.stdout
+        assert "VP-MARKETING" not in r.stdout, \
+            "--active must drop the inactive rows"
+        assert r.stdout.strip().splitlines()[-1] == "1 agent(s) — 1 active"
+
+        r = self._cli(running.parent, str(running), "roster", "marketing")
+        assert r.returncode == 0, r.stderr
+        assert "VP-MARKETING" in r.stdout
+        assert "VP-RD" not in r.stdout
+        assert "Eng-42" not in r.stdout
+        assert r.stdout.strip().splitlines()[-1] == "1 agent(s) — 0 active"
+
+        # --dept on the JSON face filters as the MCP tool does
+        r = self._cli(running.parent, str(running), "roster", "rd", "--json")
+        got = json.loads(r.stdout)
+        assert {a["department"] for a in got} == {"rd"}
+
+    def test_named_missing_dept_is_an_error(self, running):
+        r = self._cli(running.parent, str(running), "roster", "nosuchdept")
+        assert r.returncode == 1, \
+            "a named department that does not exist is an error"
+        assert "Department 'nosuchdept' not found" in r.stderr
+        # the known-dept list (the 0.17 T2 contract, same family)
+        assert "available:" in r.stderr
+        for d in ("finance", "marketing", "rd"):
+            assert d in r.stderr
+
+    # -- the never-run workspace ------------------------------------------
+
+    def test_never_run_workspace_lists_inactive_vps(self, never_run):
+        r = self._cli(never_run.parent, str(never_run), "roster")
+        assert r.returncode == 0, r.stderr
+        out = r.stdout
+        for d in self.DEPTS:
+            assert f"VP-{d.upper()}" in out, \
+                f"the {d} VP row must be on screen"
+        assert "active" not in out.split("\n")[1:], \
+            "a never-run workspace has no active rows"
+        # the count line says the state: the company is not running
+        assert out.strip().splitlines()[-1] == "6 agent(s) — 0 active"
+
+    # -- the named empty states -------------------------------------------
+
+    def test_no_workspace_says_run_init(self, tmp_path):
+        r = self._cli(tmp_path, None, "roster")
+        assert r.returncode == 1, \
+            "a no-workspace dir must not land on the silent `[]`, rc 0"
+        assert "hive init" in r.stderr, \
+            "the init hint must name the next step"
+
+    @staticmethod
+    def _no_jq_path(tmp: Path) -> str:
+        """A PATH with every tool the rebuild path needs EXCEPT jq —
+        the deterministic forced rebuild failure (the script's `||
+        true` swallows it exactly as in production)."""
+        bindir = tmp / "nojq-bin"
+        bindir.mkdir(exist_ok=True)
+        for name in ("bash", "sh", "mkdir", "date", "stat", "git", "cat",
+                     "touch", "rm", "mv", "cp", "ln", "sort", "sed", "awk",
+                     "grep", "tr", "head", "tail", "wc", "basename",
+                     "dirname", "mktemp", "flock", "readlink", "python3"):
+            src = shutil.which(name)
+            if src and not (bindir / name).exists():
+                (bindir / name).symlink_to(src)
+        assert not (bindir / "jq").exists()
+        return str(bindir)
+
+    def test_forced_rebuild_failure_is_named(self, tmp_path):
+        cd = self._workspace(tmp_path, "roster-broken")
+        r = self._cli(tmp_path, str(cd), "roster",
+                      extra={"PATH": self._no_jq_path(tmp_path)})
+        assert r.returncode == 1, \
+            "a failed rebuild must not land on the silent `[]`, rc 0"
+        assert "roster unavailable" in r.stderr, \
+            "the rebuild failure must be named, not indistinguishable " \
+            "from 'no agents'"
+        assert "hive doctor" in r.stderr
+        assert not (cd / "roster.json").exists()
+
+
 class TestLlmTestCommand:
     """B1: `hive llm test` — one small round trip through the exact resolver
     path the harness uses. Prints provider, model, base_url, the key's

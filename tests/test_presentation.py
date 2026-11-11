@@ -187,6 +187,59 @@ class TestRenderChat:
         assert present.render_chat_send("engineering") == "✓ sent to engineering"
 
 
+class TestRenderRoster:
+    """T2 (0.18): the roster table — the document's own fields, active
+    rows first, then claimed, then inactive, count line at the end;
+    a derived-but-empty roster is a count-0 listing (visible, not
+    silent)."""
+
+    @staticmethod
+    def _agent(name, role, dept, status, ticket=None, last=None):
+        return {"agent_id": f"{role.lower()}-{dept}", "name": name,
+                "role": role, "department": dept, "status": status,
+                "assigned_ticket": ticket, "worktree_path": None,
+                "last_active": last}
+
+    def test_columns_and_count_line(self):
+        out = present.render_roster([
+            self._agent("VP-RD", "VP", "rd", "inactive"),
+            self._agent("VP-IT", "VP", "it", "active", last="2026-11-11T09:00:00Z"),
+        ])
+        import re
+        lines = out.splitlines()
+        assert re.split(r"\s{2,}", lines[0]) == \
+            ["NAME", "ROLE", "DEPT", "STATUS", "TICKET", "LAST ACTIVE"]
+        assert lines[-1] == "2 agent(s) — 1 active"
+
+    def test_active_first_then_claimed_then_inactive(self):
+        out = present.render_roster([
+            self._agent("VP-IT", "VP", "it", "inactive"),
+            self._agent("Eng-1", "IC", "rd", "claimed", ticket="RD-7777"),
+            self._agent("VP-RD", "VP", "rd", "active"),
+        ])
+        lines = out.splitlines()[1:-1]
+        assert lines[0].startswith("VP-RD"), "active rows come first"
+        assert lines[1].startswith("Eng-1"), "then claimed"
+        assert lines[2].startswith("VP-IT"), "then inactive"
+        assert "RD-7777" in lines[1]
+
+    def test_null_fields_render_as_dashes(self):
+        out = present.render_roster([
+            self._agent("Eng-1", "IC", "rd", "claimed", ticket="RD-7777"),
+        ])
+        row = re.split(r"\s{2,}", out.splitlines()[1])
+        assert row[3] == "claimed"
+        assert row[4] == "RD-7777"
+        assert row[-1] == "—", "missing cells render as dashes"
+
+    def test_empty_roster_is_a_count_zero_listing(self):
+        out = present.render_roster([])
+        lines = out.splitlines()
+        assert lines[0] == "NAME  ROLE  DEPT  STATUS  TICKET  LAST ACTIVE"
+        assert lines[-1] == "0 agent(s) — 0 active"
+        assert len(lines) == 2, "the listing names itself; it is not silent"
+
+
 class TestRenderTicketCreateAndAction:
     def test_create_line_and_hint(self, monkeypatch):
         monkeypatch.setenv("DASHBOARD_PORT", "9999")

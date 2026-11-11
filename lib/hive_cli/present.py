@@ -43,6 +43,8 @@ __all__ = [
     "MASKED",
     "mask_secrets",
     "render_config_show",
+    "ROSTER_STATUS_ORDER",
+    "render_roster",
     "render_agent_spawn",
     "render_agent_run_vp",
     "render_gh_status",
@@ -301,6 +303,40 @@ def render_chat_channels(data: dict) -> str:
 
 def render_chat_send(channel: str) -> str:
     return f"✓ sent to {channel}"
+
+
+# The roster's status order (0.18 T2): active rows first, then claimed
+# (a paper assignment with no live process), then inactive.
+ROSTER_STATUS_ORDER = {"active": 0, "claimed": 1, "inactive": 2}
+
+
+def render_roster(agents: list[dict]) -> str:
+    """A roster document's `.agents` array → the NAME / ROLE / DEPT /
+    STATUS / TICKET / LAST ACTIVE table (the roster document's own
+    fields), active rows first, then claimed, then inactive, with the
+    count line. On a never-run workspace the listing IS the state:
+    inactive VPs + the count line say 'company not running' without a
+    dead-end branch; a derived-but-empty roster is a count-0 listing
+    (visible, not silent — the 0.17 T2 contract)."""
+    ordered = sorted(
+        agents,
+        key=lambda a: (ROSTER_STATUS_ORDER.get(str(a.get("status")), 9),
+                       str(a.get("department") or ""),
+                       str(a.get("name") or "")),
+    )
+    rows = [
+        [str(a.get("name") or "?"),
+         str(a.get("role") or "?"),
+         str(a.get("department") or "?"),
+         str(a.get("status") or "?"),
+         str(a.get("assigned_ticket") or "—"),
+         str(a.get("last_active") or "—")]
+        for a in ordered
+    ]
+    lines = _table(["NAME", "ROLE", "DEPT", "STATUS", "TICKET", "LAST ACTIVE"], rows)
+    active = sum(1 for a in agents if a.get("status") == "active")
+    lines.append(f"{len(agents)} agent(s) — {active} active")
+    return "\n".join(lines)
 
 
 def dashboard_hint() -> str:

@@ -27,7 +27,7 @@ from hive_paths import version_file  # noqa: E402
 
 from hive_cli.commands import (  # noqa: E402
     company, dashboard, init, ticket, chat, agent, gates, backlog,
-    config, doctor, tool, killall, llm, selftest,
+    config, doctor, tool, killall, llm, selftest, roster,
     gh as gh_cmd, release as release_cmd,
     restart,
 )
@@ -72,6 +72,16 @@ def _add_status(sub) -> None:
     p.add_argument("--dept", help="Filter to one department")
     p.add_argument("--json", action="store_true", help="Emit JSON instead of formatted text")
     p.set_defaults(_handler=company.handle_status)
+
+
+def _add_roster(sub) -> None:
+    p = sub.add_parser("roster", help="Who is working on what (the derived roster)")
+    p.add_argument("dept", nargs="?", help="Filter to one department")
+    p.add_argument("--active", action="store_true",
+                   help="Only active agents (the MCP roster_get contract)")
+    p.add_argument("--json", action="store_true",
+                   help="Print the .agents array (machine contract; human table by default)")
+    p.set_defaults(_handler=roster.handle)
 
 
 def _add_dashboard(sub) -> None:
@@ -347,6 +357,7 @@ def build_parser() -> argparse.ArgumentParser:
     _add_start(sub)
     _add_stop(sub)
     _add_status(sub)
+    _add_roster(sub)
     _add_dashboard(sub)
     _add_ticket(sub)
     _add_chat(sub)

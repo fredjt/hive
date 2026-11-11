@@ -45,6 +45,16 @@ class TestBuildParser:
         args = p.parse_args(["status"])
         assert args.cmd == "status"
 
+    def test_parser_has_roster(self):
+        """T2 (0.18): the roster subcommand — [dept] positional,
+        --active, --json."""
+        p = _make_parser()
+        args = p.parse_args(["roster"])
+        assert args.cmd == "roster"
+        assert args.dept is None and args.active is False and args.json is False
+        args = p.parse_args(["roster", "rd", "--active"])
+        assert args.dept == "rd" and args.active is True
+
     def test_parser_has_dashboard(self):
         p = _make_parser()
         args = p.parse_args(["dashboard"])

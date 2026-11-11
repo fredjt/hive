@@ -87,6 +87,36 @@ verified_by + rationale) when present.
 Moving to `done` is gated — see `ARCHITECTURE.md`. The IC must call
 `ticket approve` first with a rationale ≥ 30 chars.
 
+## Roster
+
+```
+hive roster [dept] [--active] [--json]
+```
+
+Who is working on what: the derived roster (`.company/roster.json` —
+the in-progress tickets' assignees, the VP logs, and the worktrees;
+rebuilt by the roster-rebuild daemon every 60s while the company runs,
+and rebuilt again before every read). The command rides the same
+`roster_get` path the MCP tool uses — the script and the wire contract
+do not move; this is the terminal face of the dashboard's Agents panel.
+
+The default is a NAME / ROLE / DEPT / STATUS / TICKET / LAST ACTIVE
+table — active rows first, then claimed (a paper assignment with no
+live process), then inactive — ending in the count line (`N agent(s)
+— M active`). On a never-run workspace the table IS the state: the
+inactive VPs and `0 active` say the company is not running. `--active`
+and `dept` filter exactly as the MCP tool does. `--json` is the roster
+document's `.agents` array exactly as `roster_get` returns it — the
+CLI and the MCP side share one byte-identical contract.
+
+The empty states are named (the 0.17 family): a directory that was
+never `hive init`'d says `No .company here — run 'hive init'` (exit 1);
+a workspace whose rebuild failed (roster.json still absent after the
+read) says `roster unavailable — the rebuild failed; run 'hive doctor'`
+(exit 1); a present roster with zero agents is a count-0 listing
+(exit 0); a named department that does not exist is an error (exit 1)
+with the known departments.
+
 ## Chat
 
 ```
