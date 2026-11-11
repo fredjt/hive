@@ -3086,3 +3086,86 @@ class TestTicketListCompanyWideCli:
         data = json.loads(r.stdout)
         assert data["ok"] is False
         assert "not found" in data["stderr"]
+
+
+class TestStatusEmptyStates:
+    """T3 (0.17): `hive status` names its empty states.
+
+    A fresh company (org-chart scaffolded, no runtime state) reads as
+    healthy-and-waiting: the board at zero, the idle/missing sprint,
+    the missing daemons, and the LLM hint when the LLM is unconfigured.
+    A department that does not exist is an error that names it."""
+
+    @staticmethod
+    def _fresh(tmp_path):
+        cd = tmp_path / ".company"
+        (cd / "departments" / "it" / "tickets").mkdir(parents=True)
+        (cd / "org-chart.json").write_text(json.dumps(
+            {"departments": {"it": {"name": "IT"}, "rd": {"name": "R&D"}}}))
+        (cd / "manifest.json").write_text(json.dumps(
+            {"project_name": "fresh", "mode": "build"}))
+        return tmp_path
+
+    @staticmethod
+    def _args(tmp_path, dept=None, as_json=False):
+        import argparse
+        return argparse.Namespace(project_dir=str(tmp_path), dept=dept,
+                                  json=as_json)
+
+    def test_fresh_company_names_every_state(self, tmp_path, monkeypatch, capsys):
+        from hive_cli.commands import company
+        # The MCP reports 'no departments dir' (true: only it/ has a
+        # tickets dir... actually the dir exists) — use the empty-data
+        # success path plus the no-sprint, no-daemons, unconfigured-LLM
+        # states.
+        monkeypatch.setattr(company.mcp_client, "call_tool",
+                            lambda name, payload: {"ok": True, "data": {}})
+        monkeypatch.setattr(company, "_llm_hint",
+                            lambda cd: "LLM not configured — set the [llm] section")
+        rc = company.handle_status(self._args(self._fresh(tmp_path)))
+        out = capsys.readouterr().out
+        assert rc == 0
+        # Existing-but-empty departments are listed at zero
+        assert "it" in out and "rd" in out
+        assert "bl=0 sp=0 ip=0 ir=0 done=0" in out
+        assert "No tickets anywhere yet" in out
+        # The sprint and daemon empty states name themselves
+        assert "Sprint: none" in out
+        assert "hive start" in out
+        assert "Daemons: none running" in out
+        # The unconfigured LLM hint is the canonical one
+        assert "LLM not configured" in out
+
+    def test_missing_dept_is_a_named_error(self, tmp_path, monkeypatch, capsys):
+        from hive_cli.commands import company
+        monkeypatch.setattr(company.mcp_client, "call_tool",
+                            lambda name, payload: {"ok": True, "data": {}})
+        rc = company.handle_status(self._args(self._fresh(tmp_path),
+                                              dept="marketing"))
+        err = capsys.readouterr().err
+        assert rc == 1
+        assert "Department 'marketing' not found" in err
+        assert "it" in err and "rd" in err
+
+    def test_missing_dept_json_is_an_error_envelope(self, tmp_path, monkeypatch, capsys):
+        from hive_cli.commands import company
+        monkeypatch.setattr(company.mcp_client, "call_tool",
+                            lambda name, payload: {"ok": True, "data": {}})
+        rc = company.handle_status(self._args(self._fresh(tmp_path),
+                                              dept="marketing", as_json=True))
+        out = json.loads(capsys.readouterr().out)
+        assert rc == 1
+        assert out["ok"] is False
+        assert "Department 'marketing' not found" in out["stderr"]
+
+    def test_no_orgchart_is_the_init_hint(self, tmp_path, monkeypatch, capsys):
+        from hive_cli.commands import company
+        (tmp_path / ".company").mkdir()
+        monkeypatch.setattr(company.mcp_client, "call_tool",
+                            lambda name, payload: {
+                                "ok": False,
+                                "stderr": f"no departments dir at {tmp_path}"})
+        rc = company.handle_status(self._args(tmp_path))
+        out = capsys.readouterr().out
+        assert rc == 0, out
+        assert "hive init" in out

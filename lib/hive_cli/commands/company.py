@@ -82,8 +82,12 @@ def _daemon_table(company_dir: str) -> list[dict]:
 
 def _print_sprint(sprint: dict | None) -> None:
     """Human-readable sprint line for `hive status` (A1: idle must read as
-    a state, not as a hang; A2: a halt must read as an action needed)."""
-    if not sprint:
+    a state, not as a hang; A2: a halt must read as an action needed).
+    None (no sprint state at all — a fresh company) names itself."""
+    if sprint is None:
+        print()
+        print("  Sprint: none — no sprint state yet (run 'hive start'")
+        print("          to start the runner; it creates the sprint)")
         return
     if sprint.get("halted"):
         h = sprint["halted"]
@@ -95,7 +99,8 @@ def _print_sprint(sprint: dict | None) -> None:
         return
     stage = sprint.get("stage", "")
     if stage == "idle":
-        label = "idle — no work (runner polls the backlog; file a ticket to wake it)"
+        label = ("idle — no work to pick up (runner polls the backlog — "
+                 "file a ticket or run 'hive start')")
     else:
         label = f"stage={stage}"
     print()
@@ -103,8 +108,11 @@ def _print_sprint(sprint: dict | None) -> None:
 
 
 def _print_daemons(daemons: list[dict]) -> None:
-    """Human-readable daemon section for `hive status`."""
+    """Human-readable daemon section for `hive status`. An empty company
+    names its empty state (T3): no daemons is not a silent absence."""
     if not daemons:
+        print()
+        print("  Daemons: none running — run 'hive start' to start the company")
         return
     print()
     print("Daemons (supervisor-managed by company-health.sh):")
@@ -214,6 +222,32 @@ def handle_stop(args) -> int:
     return 1
 
 
+def _org_chart_depts(company_dir: str) -> list[str]:
+    """The org-chart's department names (the init-time truth for what
+    departments exist, before any runtime state has been derived)."""
+    oc = Path(company_dir) / "org-chart.json"
+    if not oc.is_file():
+        return []
+    try:
+        data = json.loads(oc.read_text())
+    except json.JSONDecodeError:
+        return []
+    depts = data.get("departments")
+    if isinstance(depts, dict):
+        return sorted(depts)
+    return []
+
+
+def _llm_hint(company_dir: str) -> str | None:
+    """The canonical unconfigured-LLM message (the same one doctor and
+    `hive llm test` use), or None when the LLM is configured."""
+    try:
+        from hive_cli.commands.init import _llm_unconfigured_hint
+        return _llm_unconfigured_hint(_HIVE_ROOT)
+    except Exception:
+        return None
+
+
 def _sprint_info(company_dir: str) -> dict | None:
     """A1/A2: sprint state straight from sprints/current.json — independent
     of the MCP server. 'idle' (a zero-ticket sprint waiting for work) and
@@ -280,6 +314,62 @@ def _config_drift_note(company_dir: str) -> str | None:
     return None
 
 
+def _known_depts(company_dir: str) -> list[str]:
+    """Every department that exists in this company: the org-chart's
+    (init-time) union the runtime departments/ directories."""
+    oc = set(_org_chart_depts(company_dir))
+    depts_dir = Path(company_dir) / "departments"
+    if depts_dir.is_dir():
+        oc |= {d.name for d in depts_dir.iterdir() if d.is_dir()}
+    return sorted(oc)
+
+
+def _print_board(company_dir: str, data: dict, dept: str | None) -> int | None:
+    """The department board with the T3 empty states. Returns a non-None
+    exit code when the dept argument names a department that does not
+    exist (the caller exits with it); None means 'rendered, continue'."""
+    known = _known_depts(company_dir)
+
+    if not known:
+        print("No departments found — run 'hive init' to scaffold this project.")
+        return None
+
+    if dept is not None:
+        if dept not in known:
+            avail = ", ".join(known)
+            print(f"ERROR: Department '{dept}' not found (available: {avail})",
+                  file=sys.stderr)
+            return 1
+        targets = [dept]
+    else:
+        targets = known
+
+    zero_everywhere = True
+    for d in targets:
+        st = data.get(d)
+        if st is None:
+            print(f"  \u00b7 {d:<30} bl=0 sp=0 ip=0 ir=0 done=0  "
+                  f"(no status derived yet \u2014 the rebuild runs every 60s)")
+            continue
+        if "error" in st:
+            print(f"  {d}: {st['error']}")
+            continue
+        health = st.get("health", "?")
+        sym = {"good": "\u2713", "warning": "\u26a0", "critical": "\u2717"}.get(health, "\u00b7")
+        tickets = st.get("tickets", {})
+        bl, sp, ip = tickets.get("backlog", 0), tickets.get("sprint_current", 0), tickets.get("in_progress", 0)
+        ir, dn = tickets.get("in_review", 0), tickets.get("done", 0)
+        velocity = st.get("velocity_per_window", 0)
+        stuck = st.get("stuck_tickets", 0)
+        if bl + sp + ip + ir + dn > 0:
+            zero_everywhere = False
+        print(f"  {sym} {d:<30} health={health:<8} bl={bl} sp={sp} ip={ip} ir={ir} done={dn} stuck={stuck} velocity={velocity}")
+    if dept is None and zero_everywhere:
+        print("No tickets anywhere yet \u2014 the board is empty (file a ticket,")
+        print("or the sprint lifecycle will fill the backlog).")
+    return None
+
+
 def handle_status(args) -> int:
     project_root = _project_root(args)
     company_dir = str(Path(project_root) / ".company")
@@ -298,6 +388,16 @@ def handle_status(args) -> int:
     # nothing picks up the new config).
     drift = _config_drift_note(company_dir)
     if args.json:
+        if isinstance(res, dict) and res.get("ok") and args.dept:
+            # T3: a named department that does not exist is an error, not
+            # an empty success (status_get cannot tell the two apart).
+            known = _known_depts(company_dir)
+            if args.dept not in known:
+                res = {"ok": False, "exit_code": 1,
+                       "stderr": f"Department '{args.dept}' not found "
+                                 f"(available: {', '.join(known)})",
+                       "daemons": daemons,
+                       "data": {}}
         if isinstance(res, dict):
             res["daemons"] = daemons
             if sprint:
@@ -307,33 +407,29 @@ def handle_status(args) -> int:
         print(json.dumps(res, indent=2))
         return 0 if res.get("ok") else 1
 
-    if drift:
-        print(f"\033[33m\u26a0 {drift}\033[0m")
-    if not res.get("ok"):
+    if not res.get("ok") and "no departments dir" not in (res.get("stderr") or ""):
+        # A real MCP failure — but the named states stay visible (the
+        # local reads do not depend on the server).
         print(f"ERROR: {res.get('stderr') or res.get('error')}", file=sys.stderr)
-        _print_sprint(sprint)
+        _print_sprint(sprint or None)
         _print_daemons(daemons)
+        if drift:
+            print(f"\033[33m\u26a0 {drift}\033[0m")
         return 1
 
-    data = res.get("data", {})
-    if not data:
-        print("No departments found.")
-    else:
-        # Pretty print
-        for dept, st in sorted(data.items()):
-            if "error" in st:
-                print(f"  {dept}: {st['error']}")
-                continue
-            health = st.get("health", "?")
-            sym = {"good": "✓", "warning": "⚠", "critical": "✗"}.get(health, "·")
-            tickets = st.get("tickets", {})
-            bl, sp, ip = tickets.get("backlog", 0), tickets.get("sprint_current", 0), tickets.get("in_progress", 0)
-            ir, dn = tickets.get("in_review", 0), tickets.get("done", 0)
-            velocity = st.get("velocity_per_window", 0)
-            stuck = st.get("stuck_tickets", 0)
-            print(f"  {sym} {dept:<30} health={health:<8} bl={bl} sp={sp} ip={ip} ir={ir} done={dn} stuck={stuck} velocity={velocity}")
-    _print_sprint(sprint)
+    data = res.get("data") or {}
+    rc = _print_board(company_dir, data, args.dept)
+    if rc is not None:
+        _print_sprint(sprint or None)
+        _print_daemons(daemons)
+        if drift:
+            print(f"\033[33m\u26a0 {drift}\033[0m")
+        return rc
+    _print_sprint(sprint or None)
     _print_daemons(daemons)
+    hint = _llm_hint(company_dir)
+    if hint:
+        print(f"\033[33m\u26a0 {hint}\033[0m")
     if drift:
         print(f"\033[33m\u26a0 {drift}\033[0m")
     return 0
