@@ -473,3 +473,51 @@ class TestPythonFloorConsistency:
         deps = " ".join(t["project"].get("dependencies", []))
         assert "tomli" not in deps, \
             f"pyproject still lists tomli under the 3.11 floor: {deps!r}"
+
+
+class TestLockWheelOnly:
+    """T3 (0.16): the lock's full closure is wheel-only — the contract
+    nobody was pinning.
+
+    `packaging/requirements.lock.txt` is the released Python environment
+    (T1, 0.14). The operator-facing guarantee behind the whole lock story
+    is that it installs WITHOUT compiling anything: `install.sh` on a
+    stranger's machine never needs gcc or Rust. A lock line (or anything
+    in its dependency closure) that loses wheel coverage would break that
+    silently — a future `pip install -r` would fall back to a source build
+    nobody is watching. This test pins the wheel-only property against the
+    checked-out lock with `--only-binary :all:`. Red on any requirement that
+    needs a source build, naming the line (pip names the offending
+    requirement in its error).
+
+    Session-scoped: ONE `pip download` round-trip per session (the
+    session-base pattern, S5) — the wheels land in the local pip cache, so
+    a warm re-run is a cache hit, not a network round-trip.
+    """
+
+    @pytest.fixture(scope="session")
+    def wheel_only_download(self, tmp_path_factory):
+        """One `pip download --only-binary :all: -r lock` per session.
+        Returns the CompletedProcess; the test asserts on it. The temp dir
+        is hive-* named under the basetemp scratch (T4 0.14 reaping)."""
+        repo = Path(__file__).resolve().parent.parent
+        lock = repo / "packaging" / "requirements.lock.txt"
+        assert lock.is_file(), "the venv lock is missing from the tree"
+        dest = tmp_path_factory.mktemp("hive-wheel-only")
+        r = subprocess.run(
+            [sys.executable, "-m", "pip", "download",
+             "--only-binary", ":all:",
+             "-r", str(lock), "-d", str(dest)],
+            capture_output=True, text=True, timeout=900)
+        return r
+
+    def test_lock_resolves_wheel_only(self, wheel_only_download):
+        r = wheel_only_download
+        out = (r.stderr or "") + "\n" + (r.stdout or "")
+        assert r.returncode == 0, (
+            "the lock's full closure must resolve as wheels only "
+            "(--only-binary :all:) — the released environment installs "
+            "without compiling anything (no gcc, no Rust on a stranger's "
+            "machine). A line that needs a source build breaks the "
+            "wheel-only guarantee; pip names the offending requirement: "
+            + out[-3000:])
