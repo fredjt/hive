@@ -192,6 +192,15 @@ def handle_start(args) -> int:
     print("  To stop:    hive stop")
     print("  To panic:   hive killall")
     print()
+    hint = _llm_hint(str(company_dir))
+    if hint:
+        # T3 preflight: starting without a configured LLM is valid — the
+        # company comes up and the runner halts with a clear reason at
+        # the first LLM call — so this warns (stderr) and the daemons
+        # still start. The hint is the canonical message (the one doctor
+        # and `hive llm test` use), extended with the spawn consequence.
+        print(f"\033[33m\u26a0 LLM not configured — agents will fail to spawn; "
+              f"{hint}\033[0m", file=sys.stderr)
     return 0
 
 

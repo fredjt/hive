@@ -3169,3 +3169,47 @@ class TestStatusEmptyStates:
         out = capsys.readouterr().out
         assert rc == 0, out
         assert "hive init" in out
+
+
+class TestStartLlmPreflight:
+    """T3 (0.17): `hive start` warns on stderr when the LLM is
+    unconfigured — the daemons still start (exit 0); the runner halts
+    with a clear reason at the first LLM call."""
+
+    @staticmethod
+    def _fake_start(tmp_path):
+        import types
+        proc = types.SimpleNamespace(wait=lambda timeout=120: 0)
+        (tmp_path / ".company" / "logs").mkdir(parents=True, exist_ok=True)
+        (tmp_path / ".company" / "processes.json").write_text(json.dumps(
+            {"processes": [{"pid": os.getpid(), "role": "hive-mcp"}],
+             "started_at": "2026-11-11T00:00:00Z"}))
+        return proc
+
+    def test_unconfigured_llm_warns_but_starts(self, tmp_path, monkeypatch, capsys):
+        import subprocess as sp
+        from hive_cli.commands import company
+        (tmp_path / ".company").mkdir(exist_ok=True)
+        monkeypatch.setattr(company.subprocess, "Popen",
+                            lambda *a, **k: self._fake_start(tmp_path))
+        monkeypatch.setattr(company, "_llm_hint",
+                            lambda cd: ("edit the [llm] section of "
+                                        "/cfg/config.toml (hive config edit)"))
+        rc = company.handle_start(type("A", (), {"project_dir": str(tmp_path)})())
+        captured = capsys.readouterr()
+        assert rc == 0
+        assert "Company started" in captured.out
+        assert "LLM not configured" in captured.err
+        assert "agents will fail to spawn" in captured.err
+        assert "config.toml" in captured.err
+
+    def test_configured_llm_is_silent(self, tmp_path, monkeypatch, capsys):
+        from hive_cli.commands import company
+        (tmp_path / ".company").mkdir(exist_ok=True)
+        monkeypatch.setattr(company.subprocess, "Popen",
+                            lambda *a, **k: self._fake_start(tmp_path))
+        monkeypatch.setattr(company, "_llm_hint", lambda cd: None)
+        rc = company.handle_start(type("A", (), {"project_dir": str(tmp_path)})())
+        captured = capsys.readouterr()
+        assert rc == 0
+        assert "LLM not configured" not in captured.err
