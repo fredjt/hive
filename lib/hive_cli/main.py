@@ -215,7 +215,10 @@ def _add_config(sub) -> None:
     pg = sp.add_parser("get"); pg.add_argument("key")
     psr = sp.add_parser("set"); psr.add_argument("key"); psr.add_argument("value")
     sp.add_parser("edit", help="Open ~/.config/hive/config.toml in $EDITOR")
-    sp.add_parser("show", help="Print effective config")
+    ps = sp.add_parser("show", help="Print effective config (human table by default)")
+    ps.add_argument("--json", action="store_true",
+                    help="Print the merged config as JSON, secrets masked "
+                         "(machine face; human table by default)")
     sp.add_parser("path", help="Print the effective user-config path and its state")
     p.set_defaults(_handler=config.handle)
 

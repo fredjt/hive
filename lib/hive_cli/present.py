@@ -39,6 +39,10 @@ __all__ = [
     "render_gates_check",
     "render_gates_run",
     "render_gates_status",
+    "SECRET_KEYS",
+    "MASKED",
+    "mask_secrets",
+    "render_config_show",
     "render_agent_spawn",
     "render_agent_run_vp",
     "render_gh_status",
@@ -59,6 +63,54 @@ STATUS_ORDER = {
 }
 
 GATE_SYM = {"pass": "✓", "fail": "✗", "skip": "–"}
+
+# The secret family (0.18 T1): the same keys the dashboard strips from
+# /api/config (the panel must render "without a key ever crossing the
+# wire a second time"), case-insensitive, at any section depth. The CLI
+# MASKS rather than strips — the key stays, the value becomes the
+# placeholder — so a masked document keeps the shape of the unmasked
+# one. This is the fix, not a presentation choice: before 0.18 the
+# config CLI was the one surface in the system that printed the key.
+SECRET_KEYS = frozenset({"api_key", "apikey", "authorization",
+                         "token", "password", "secret"})
+MASKED = "<set — masked>"
+
+
+def mask_secrets(value: Any) -> Any:
+    """A deep copy of `value` with every secret-family key's value
+    replaced by MASKED. Empty values stay empty — there is no secret to
+    mask (an unset key prints as unset, not as masked). Dicts mask by
+    key name; lists map; scalars pass through."""
+    if isinstance(value, dict):
+        out = {}
+        for k, v in value.items():
+            if isinstance(k, str) and k.lower() in SECRET_KEYS \
+                    and v not in (None, "", []):
+                out[k] = MASKED
+            else:
+                out[k] = mask_secrets(v)
+        return out
+    if isinstance(value, list):
+        return [mask_secrets(v) for v in value]
+    return value
+
+
+def render_config_show(rows: list[dict]) -> str:
+    """The config table (0.18 T1): SECTION / KEY / VALUE / SOURCE.
+    `rows` carry the value (already masked where it is a secret) and
+    the layer that WON per key — the documented precedence (HIVE_* env
+    > user config > install defaults) made visible.
+    """
+    if not rows:
+        return "No config found (the install defaults are missing — run 'hive doctor')."
+
+    def cell(v: Any) -> str:
+        return v if isinstance(v, str) else json.dumps(v)
+
+    table = _table(
+        ["SECTION", "KEY", "VALUE", "SOURCE"],
+        [[r["section"], r["key"], cell(r["value"]), r["source"]] for r in rows])
+    return "\n".join(table)
 
 
 def envelope(res: dict) -> str:

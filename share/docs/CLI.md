@@ -169,15 +169,34 @@ like JSON (numbers, bools, lists) are parsed; everything else is a string.
 ## Config
 
 ```
-hive config show
-hive config get <key>             # e.g. mcp.port
+hive config show                  # SECTION / KEY / VALUE / SOURCE table (secrets masked)
+hive config show --json           # the merged config as JSON, secrets masked
+hive config get <key>             # e.g. mcp.port (a set secret prints '<set — masked>')
 hive config set <key> <value>
 hive config edit                  # opens ~/.config/hive/config.toml in $EDITOR
 hive config path                  # print the effective user-config path and its state
 ```
 
 Config layers: `etc/config.defaults.toml` (shipped) → `~/.config/hive/config.toml`
-(your overrides).
+(your overrides) → the `HIVE_*` env vars, which win per key over both
+file layers.
+
+`show` answers the question the JSON dump couldn't: which layer WON
+for each key. The table is SECTION / KEY / VALUE / SOURCE, where
+SOURCE is `env <HIVE_*>` (the env value is shown) when the override is
+set, else `user config`, else `default`. `show --json` is the merged
+document with the secrets masked — the key's shape is unchanged (the
+value is replaced, the key stays), and unknown-key warnings stay on
+stderr.
+
+Secret keys (api_key, apikey, authorization, token, password, secret —
+case-insensitive, at any section depth — the same family the dashboard
+strips from `/api/config`) never print their value on any face: `get`
+and the table read `<set — masked>` for a set key, and an unset key
+prints as unset, not as masked (there is no secret to mask). The
+standard is the one LLM-PROVIDERS.md pins — never the key itself, on
+every surface. Exit codes: `show` is 0 (unknown keys included);
+`get` is 0 when set, 1 with `(unset: <key>)` on stderr when unset.
 
 `set` types the value from the key's type in the defaults schema: ints and
 bools go bare, strings are quoted, and a **list-typed** key (e.g.

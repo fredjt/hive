@@ -5,6 +5,7 @@ import json
 import re
 import shutil
 import subprocess
+import tomllib  # stdlib (3.11+; the 0.15 floor)
 from pathlib import Path
 # Ensure lib/ is on the path when running from within hive/ directory
 _hive_lib = str(Path(__file__).resolve().parent.parent / "lib")
@@ -558,16 +559,20 @@ class TestConfigIntegrity:
         assert "unknown section" not in r.stdout
 
     def test_config_show_marks_unknown_keys(self, tmp_path):
+        # 0.18 T1: the human table is the default face; the machine
+        # marking moved to `show --json` (same top-level contract).
         self._write_user_config(tmp_path, '[llms]\nprovder = "openai"\n')
-        r = self._run(tmp_path, "config", "show")
+        r = self._run(tmp_path, "config", "show", "--json")
         assert r.returncode == 0
         data = json.loads(r.stdout)
         assert "llms.provder" in data.get("_unknown_keys", []), \
-            "unknown keys must be marked in the show output"
+            "unknown keys must be marked in the show --json output"
+        assert "warning: unknown key llms.provder" in r.stderr, \
+            "the unknown-key warnings stay on stderr on every face"
 
     def test_config_show_clean_has_no_unknowns(self, tmp_path):
         self._write_user_config(tmp_path, '[llm]\nprovider = "openai"\n')
-        r = self._run(tmp_path, "config", "show")
+        r = self._run(tmp_path, "config", "show", "--json")
         assert r.returncode == 0
         data = json.loads(r.stdout)
         assert data.get("_unknown_keys", []) == []
@@ -615,6 +620,206 @@ class TestConfigPath:
         assert "missing" in r.stdout
         assert "hive config edit" in r.stdout, \
             "the missing variant must point at the command that creates it"
+
+
+class TestConfigMasking:
+    """T1 (0.18): the config command never prints the key — the one
+    leak in the system (doctor, `llm test`, and the dashboard all name
+    only the source) closed on every face. A seeded user config with a
+    fake key: the key's bytes appear NOWHERE in the stdout of `config
+    show`, `config show --json`, or `config get llm.api_key` (rc 0 +
+    the masked placeholder present). Non-secret `get` is byte-
+    identical to 0.17. The human face names the layer that WON per
+    key; `--json` is the 0.17.0 document with only the mask.
+    Driven against a scratch HOME + HIVE_CONFIG (the one spelling
+    doctor and the publish runner read)."""
+
+    KEY = "sk-test-fake-key-1"
+    install_dir = Path(__file__).resolve().parent.parent
+
+    @staticmethod
+    def _run(home, *args, extra=None):
+        env = {**os.environ, "HOME": str(home),
+               "HIVE_ROOT": str(TestConfigMasking.install_dir),
+               "PYTHONPATH": str(TestConfigMasking.install_dir / "lib")
+               + os.pathsep + os.environ.get("PYTHONPATH", "")}
+        env.update(extra or {})
+        return subprocess.run(
+            [sys.executable, "-m", "hive_cli.main", "config", *args],
+            capture_output=True, text=True, env=env,
+            cwd=str(TestConfigMasking.install_dir), timeout=120,
+        )
+
+    @staticmethod
+    def _seed(home, text):
+        """The HIVE_CONFIG override — a seeded user config with the fake key."""
+        cfg = home / "cfg" / "config.toml"
+        cfg.parent.mkdir(parents=True, exist_ok=True)
+        cfg.write_text(text)
+        return cfg
+
+    @staticmethod
+    def _row(ln: str):
+        """A table line → (section, key, value, source). Columns are
+        separated by 2+ spaces; the VALUE cell re-joins any split
+        middle parts (values with embedded double spaces)."""
+        parts = re.split(r"\s{2,}", ln.strip())
+        if len(parts) < 4:
+            return None
+        return (parts[0], parts[1], "  ".join(parts[2:-1]), parts[-1])
+
+    @staticmethod
+    def _rows(r: subprocess.CompletedProcess):
+        """The table lines of a `config show` run, parsed."""
+        rows = []
+        for ln in r.stdout.splitlines()[1:]:
+            row = TestConfigMasking._row(ln)
+            if row:
+                rows.append(row)
+        return rows
+
+    SEED = ('[llm]\nprovider = "openai"\nmodel = "gpt-test"\n'
+            'api_key = "sk-test-fake-key-1"\n')
+
+    def test_key_never_reaches_stdout(self, tmp_path):
+        cfg = self._seed(tmp_path, self.SEED)
+        extra = {"HIVE_CONFIG": str(cfg)}
+        show = self._run(tmp_path, "show", extra=extra)
+        show_json = self._run(tmp_path, "show", "--json", extra=extra)
+        get = self._run(tmp_path, "get", "llm.api_key", extra=extra)
+        for r in (show, show_json, get):
+            assert r.returncode == 0, r.stderr
+            assert self.KEY not in r.stdout, \
+                "the key's bytes must not appear on any face — " \
+                f"face: {r.args}"
+        # the human faces print the raw placeholder
+        assert "<set — masked>" in show.stdout
+        assert "<set — masked>" in get.stdout
+        assert get.stdout.strip() == "<set — masked>"
+        # --json carries the mask as the value (the document's bytes keep
+        # 0.17's json.dumps escaping — assert on the parsed value)
+        assert json.loads(show_json.stdout)["llm"]["api_key"] == "<set — masked>"
+
+    def test_get_non_secret_byte_identical(self, tmp_path):
+        cfg = self._seed(tmp_path, self.SEED)
+        extra = {"HIVE_CONFIG": str(cfg)}
+        r = self._run(tmp_path, "get", "llm.provider", extra=extra)
+        assert r.returncode == 0, r.stderr
+        assert r.stdout == "openai\n", "non-secret keys print exactly as 0.17"
+        r = self._run(tmp_path, "get", "mcp.port", extra=extra)
+        assert r.returncode == 0, r.stderr
+        assert r.stdout == "7891\n", "an un-overridden default prints exactly as 0.17"
+
+    def test_get_unset_unchanged(self, tmp_path):
+        r = self._run(tmp_path, "get", "nosuch.key")
+        assert r.returncode == 1
+        assert "(unset: nosuch.key)" in r.stderr
+        assert r.stdout == ""
+
+    def test_get_empty_secret_prints_empty_not_masked(self, tmp_path):
+        # An empty value is not a secret — it prints as set to empty,
+        # exactly as 0.17 did (masking a hole would be a lie).
+        cfg = self._seed(tmp_path, '[llm]\napi_key = ""\n')
+        r = self._run(tmp_path, "get", "llm.api_key",
+                      extra={"HIVE_CONFIG": str(cfg)})
+        assert r.returncode == 0, r.stderr
+        assert r.stdout == "\n"
+
+    def test_show_human_table_names_source_per_key(self, tmp_path):
+        cfg = self._seed(tmp_path, self.SEED)
+        r = self._run(tmp_path, "show", extra={"HIVE_CONFIG": str(cfg)})
+        assert r.returncode == 0, r.stderr
+        lines = r.stdout.splitlines()
+        assert lines[0].startswith("SECTION"), \
+            "the human face is the table, not the JSON dump"
+        rows = self._rows(r)
+        # a user-config override is 'user config'
+        prov = [row for row in rows if row[1] == "provider"]
+        assert prov and prov[0][3] == "user config", \
+            "an overridden key must name the user config as its source"
+        assert prov[0][2] == "openai"
+        # an un-overridden key is 'default'
+        port = [row for row in rows if row[0] == "mcp" and row[1] == "port"]
+        assert port and port[0][3] == "default" and port[0][2] == "7891", \
+            "an un-overridden key must name the install default"
+        # the secret's value cell is the mask, not the key
+        key_rows = [row for row in rows if row[1] == "api_key"]
+        assert key_rows and key_rows[0][2] == "<set — masked>"
+        assert self.KEY not in r.stdout
+
+    def test_show_env_override_named_per_key(self, tmp_path):
+        # With HIVE_MODEL exported, llm.model's SOURCE names the env var
+        # and the env value is shown (env wins over both file layers).
+        cfg = self._seed(tmp_path, self.SEED)
+        r = self._run(tmp_path, "show",
+                      extra={"HIVE_CONFIG": str(cfg),
+                             "HIVE_MODEL": "env-model-xyz"})
+        assert r.returncode == 0, r.stderr
+        rows = self._rows(r)
+        model_rows = [row for row in rows
+                      if row[0] == "llm" and row[1] == "model"]
+        assert model_rows, "the llm.model row must be present"
+        assert model_rows[0][2] == "env-model-xyz", \
+            "the env value must be the shown value"
+        assert model_rows[0][3] == "env HIVE_MODEL", \
+            "the env var must be named as the winning layer"
+        # and a non-env key keeps its file-layer source
+        prov_rows = [row for row in rows
+                     if row[0] == "llm" and row[1] == "provider"]
+        assert prov_rows and prov_rows[0][3] == "user config"
+
+    def test_show_env_secret_value_is_masked(self, tmp_path):
+        # A secret's ENV value wins the layer race — and is masked like
+        # every other layer's: the bytes never reach stdout.
+        env_key = "sk-env-fake-key-1"
+        cfg = self._seed(tmp_path, self.SEED)
+        r = self._run(tmp_path, "show",
+                      extra={"HIVE_CONFIG": str(cfg),
+                             "HIVE_API_KEY": env_key})
+        assert r.returncode == 0, r.stderr
+        assert env_key not in r.stdout, \
+            "the env layer's secret value must be masked too"
+        key_rows = [row for row in self._rows(r)
+                    if row[0] == "llm" and row[1] == "api_key"]
+        assert key_rows and key_rows[0][3] == "env HIVE_API_KEY"
+        assert key_rows[0][2] == "<set — masked>"
+
+    def test_json_golden_is_the_017_document_with_the_mask(self, tmp_path):
+        # --json equals the 0.17.0 output with the key masked —
+        # nothing else in the document moves.
+        cfg = self._seed(tmp_path, self.SEED)
+        r = self._run(tmp_path, "show", "--json",
+                      extra={"HIVE_CONFIG": str(cfg)})
+        assert r.returncode == 0, r.stderr
+        got = json.loads(r.stdout)
+        defaults = tomllib.loads(
+            (self.install_dir / "etc" / "config.defaults.toml").read_text())
+        user = tomllib.loads(cfg.read_text())
+        for k, v in user.items():
+            if isinstance(v, dict) and isinstance(defaults.get(k), dict):
+                defaults[k].update(v)
+            else:
+                defaults[k] = v
+        defaults["llm"]["api_key"] = "<set — masked>"
+        assert got == defaults, \
+            "the --json document must be the 0.17 merged config with " \
+            "ONLY the mask — no key added, renamed, or dropped"
+
+    def test_json_unknown_keys_stay_top_level_and_masked(self, tmp_path):
+        # The A1 unknown-key marking stays top-level; the mask applies
+        # in the same document.
+        cfg = self._seed(
+            tmp_path, self.SEED + '\n[llms]\nprovder = "openai"\n')
+        r = self._run(tmp_path, "show", "--json",
+                      extra={"HIVE_CONFIG": str(cfg)})
+        assert r.returncode == 0, r.stderr
+        got = json.loads(r.stdout)
+        assert got.get("_unknown_keys") == ["llms.provder"], \
+            "the unknown-key list stays top-level in --json"
+        assert got["llm"]["api_key"] == "<set — masked>"
+        assert self.KEY not in r.stdout
+        assert "warning: unknown key llms.provder" in r.stderr, \
+            "the unknown-key warnings stay on stderr"
 
 
 class TestLlmTestCommand:

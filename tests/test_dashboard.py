@@ -670,6 +670,21 @@ class TestCLIDocs:
         assert "no work to pick up" in content
         assert "No departments found — run 'hive init'" in content
 
+    def test_cli_docs_document_the_config_mask(self):
+        """T1 (0.18): the config command's human face, the secret mask,
+        and the --json contract are documented where the command lives;
+        the standard in LLM-PROVIDERS.md now covers every surface."""
+        cli = Path("share/docs/CLI.md").read_text()
+        assert "hive config show --json" in cli, \
+            "the --json machine face of config show must be documented"
+        assert "SOURCE" in cli, "the per-key source column must be documented"
+        assert "<set — masked>" in cli, "the masked placeholder must be documented"
+        assert "never the key itself" in cli, \
+            "the no-key standard must be stated where the command lives"
+        llm = Path("share/docs/LLM-PROVIDERS.md").read_text()
+        assert "never the key itself, on every" in llm, \
+            "the standard must now cover every surface"
+
 
 class TestLicense:
     """Test the LICENSE file."""

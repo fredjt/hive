@@ -1,7 +1,19 @@
-"""hive config ..."""
+"""hive config ...
+
+Two faces (0.18 T1): the default `show` is the human table (SECTION /
+KEY / VALUE / SOURCE — which layer WON per key, the documented
+precedence made visible); `show --json` is the merged document with
+the secrets masked. `get` on a secret key prints the masked
+placeholder, not the value — the config CLI was the ONE surface in
+the system that printed the key in plaintext (doctor, `llm test`, and
+the dashboard all deliberately name only the source); 0.18 closes it.
+Exit codes unchanged: show 0 (unknown keys included, as before); get 0
+when set, 1 with `(unset: <key>)` on stderr when unset.
+"""
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import subprocess
@@ -11,6 +23,7 @@ from pathlib import Path
 
 
 from hive_paths import install_root
+from hive_cli import present
 
 HIVE_ROOT = install_root()
 USER_CONFIG = Path.home() / ".config" / "hive" / "config.toml"
@@ -136,14 +149,71 @@ def _load() -> dict:
 
 
 def _user_cfg(path: Path | None = None) -> dict:
-    """Parse the user config file ({} when missing/unparseable)."""
+    """Parse the user config file ({} when missing/unparseable) — the
+    EFFECTIVE path (HIVE_CONFIG wins, per A2's single spelling), so a
+    redirected config is seen by every layer that reads the user
+    layer."""
     path = path or _user_config_path()
     if path.is_file():
         try:
-            return tomllib.loads(USER_CONFIG.read_text()) or {}
+            return tomllib.loads(path.read_text()) or {}
         except Exception:
             return {}
     return {}
+
+
+# The canonical HIVE_* LLM env vars — the same mapping doctor's D1
+# list carries (doctor.py): per key, env wins over BOTH file layers.
+_ENV_LLM_KEYS = {
+    "HIVE_PROVIDER": "llm.provider",
+    "HIVE_MODEL": "llm.model",
+    "HIVE_API_BASE": "llm.base_url",
+    "HIVE_API_KEY": "llm.api_key",
+    "HIVE_API_STYLE": "llm.api_style",
+    "HIVE_VERIFICATION_MODEL": "llm.verification_model",
+}
+
+
+def _env_var_for(section: str, key: str) -> str | None:
+    """The HIVE_* env var that overrides `section.key`, if any."""
+    for var, dotted in _ENV_LLM_KEYS.items():
+        if dotted == f"{section}.{key}":
+            return var
+    return None
+
+
+def _show_rows() -> list[dict]:
+    """The rows for the human config table (0.18 T1): every key with
+    the layer that WON named as SOURCE — `env <HIVE_*>` (the env value
+    is shown; env wins over both file layers), `user config`, or
+    `default`. Secret values arrive already masked."""
+    merged = _load()
+    user = _user_cfg()
+    rows = []
+    for section, body in merged.items():
+        if section == "_unknown_keys" or not isinstance(body, dict):
+            continue
+        for key, value in body.items():
+            env_var = _env_var_for(section, key)
+            if env_var:
+                env_val = (os.environ.get(env_var) or "").strip()
+                if env_val:
+                    # The env value wins — and a secret's env value is
+                    # masked exactly like the file layers' (the key's
+                    # bytes never reach stdout from any layer).
+                    rows.append({"section": section, "key": key,
+                                 "value": present.mask_secrets(
+                                     {key: env_val})[key],
+                                 "source": f"env {env_var}"})
+                    continue
+            if isinstance(user.get(section), dict) and key in user[section]:
+                source = "user config"
+            else:
+                source = "default"
+            rows.append({"section": section, "key": key,
+                         "value": present.mask_secrets({key: value})[key],
+                         "source": source})
+    return rows
 
 
 def _unknown_keys() -> list:
@@ -179,22 +249,41 @@ def handle(args) -> int:
             print(f"{user_cfg_path} (missing — run 'hive config edit' to create it)")
         return 0
     if args.action == "show":
-        import json as _json
-        merged = _load()
+        if getattr(args, "json", False):
+            # The machine face: the 0.17.0 merged document with the
+            # secrets masked — nothing else in the document moves.
+            merged = _load()
+            unknowns = _unknown_keys()
+            if unknowns:
+                merged["_unknown_keys"] = unknowns
+                for u in unknowns:
+                    print(f"warning: unknown key {u} — edit {user_cfg_path}",
+                          file=sys.stderr)
+            print(json.dumps(present.mask_secrets(merged), indent=2))
+            return 0
+        # The human face: SECTION / KEY / VALUE / SOURCE (the layer
+        # that WON per key); secrets masked; the unknown-key warnings
+        # stay on stderr.
         unknowns = _unknown_keys()
-        if unknowns:
-            merged["_unknown_keys"] = unknowns
-            for u in unknowns:
-                print(f"warning: unknown key {u} — edit {user_cfg_path}",
-                      file=sys.stderr)
-        print(_json.dumps(merged, indent=2))
+        for u in unknowns:
+            print(f"warning: unknown key {u} — edit {user_cfg_path}",
+                  file=sys.stderr)
+        print(present.render_config_show(_show_rows()))
         return 0
     if args.action == "get":
         v = _walk(_load(), args.key)
         if v is None:
             print(f"(unset: {args.key})", file=sys.stderr)
             return 1
-        print(v if not isinstance(v, (dict, list)) else __import__('json').dumps(v))
+        leaf = args.key.rsplit(".", 1)[-1].lower()
+        # A secret that IS set: the answer to 'is it set?' is yes —
+        # the value is not the answer (0.18 T1: the key never reaches
+        # stdout). An empty value is not a secret — it prints as set
+        # to empty, exactly as 0.17 did.
+        if leaf in present.SECRET_KEYS and v not in (None, "", []):
+            print(present.MASKED)
+            return 0
+        print(v if not isinstance(v, (dict, list)) else json.dumps(v))
         return 0
     if args.action == "set":
         if "." not in args.key or not args.key.partition(".")[0] or not args.key.partition(".")[2]:

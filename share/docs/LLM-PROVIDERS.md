@@ -27,7 +27,9 @@ verification_model = "" # model for verification agents (stage 5: verify)
 ```
 
 `hive doctor` reports the resolved provider/model and where the key came
-from (env var name or config) — never the key itself.
+from (env var name or config) — never the key itself, on every
+surface: `hive config show`/`get` mask it, the dashboard strips it
+from `/api/config`, and only the source label is ever printed.
 
 ## Registered providers
 
