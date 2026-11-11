@@ -155,6 +155,20 @@ def test_forced_takeover_pid_never_empty_under_hammer(tmp_path):
                     raise AssertionError(
                         f"takeover {i}: pid {p.pid} never committed "
                         f"to {pidfile}")
+                if prev is not None:
+                    # T1 (0.16): reap the dead prior runner INSIDE the poll
+                    # window. kill -0 succeeds on a zombie as well as a live
+                    # process, and this test's parent (pytest) only reaped
+                    # the corpse AFTER the commit (the assertion below) —
+                    # so the production death check saw a zombie and every
+                    # takeover ate the full cap. A healthy supervisor
+                    # reaps promptly (bash reaps background jobs at its
+                    # next iteration; an orphaned runner is re-parented to
+                    # init and reaped immediately): the hammer now models
+                    # that. The N=20 confidence, the 10 ms observer, and
+                    # every assertion are unchanged — the parent model
+                    # was the cost, not the pin.
+                    prev.poll()
                 time.sleep(0.01)
             if prev is not None:
                 assert prev.poll() is not None, (
