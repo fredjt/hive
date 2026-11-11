@@ -314,6 +314,28 @@ Two workflows, one question each:
   Triggers: weekly cron (`23 4 * * 1`, Mondays 04:23 UTC) +
   `workflow_dispatch` (`gh workflow run scheduled.yml`).
 
+**The wheel-only contract and the cache split (T3, 0.16).** The lock
+is wheels-only — `install.sh` never needs gcc or Rust on a stranger's
+machine — and the contract lives in every row. Both workflows install
+the lock with `--only-binary :all:`: a lock line that loses wheel
+coverage fails the row, naming the line (the fix is a pin with
+wheels, or a documented exception in this file), and the scheduled row
+re-checks the same contract weeks later — a wheel that rots by then
+surfaces there, on the schedule, naming the line. The inert Rust
+toolchain step (`--default-toolchain none` installs NO compiler, so it
+enabled no build — and the closure needs none) is gone from both
+workflows: `TestCIWheelOnlyContract` (tests/test_dashboard.py) pins
+its absence and the contract's presence; `TestLockWheelOnly`
+(tests/test_json_structures.py) pins the closure itself.
+The cache split is the same question split two ways: the push rows
+share a pip wheel cache keyed on sha256 of the lock + interpreter + OS
+— "installs and goes green TODAY", where the bytes are identical by
+key and a hit is a safe reuse (the install step drops from 24s/12s to
+a cache hit, run 42934413101 baseline); the scheduled row is the
+explicit exception — NO cache — "still holds NEXT MONTH", where a hit
+would turn "does PyPI still serve it" into "does our cache still hold
+it".
+
 0.14's scheduled row (the recurring 3.13 full, T2, 0.14) retires with
 the S4 split: 3.13 is now a full PUSH row, so the recurring full-3.13
 datum is already taken by every push; what the schedule uniquely adds

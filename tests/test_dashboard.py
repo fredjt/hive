@@ -841,12 +841,14 @@ class TestCIWheelOnlyContract:
     here, so neither drifts back silently.
     """
 
-    # The push rows (ci.yml) carry the contract from T3 (0.16); the
-    # scheduled row (scheduled.yml) gets the same --only-binary
-    # contract (cache-less) in this release — the guard's parameter
-    # list grows with it (the snowball: each row's contract, pinned).
+    # Every row carries the contract (T3, 0.16): the push rows
+    # (ci.yml) and the scheduled row (scheduled.yml) both install the
+    # lock with --only-binary :all: and neither may carry a toolchain
+    # install — the snowball: each row's contract, pinned, so the inert
+    # step can never silently reappear on either row.
     WORKFLOWS = [
         Path(".github/workflows/ci.yml"),
+        Path(".github/workflows/scheduled.yml"),
     ]
 
     @pytest.mark.parametrize("wf", WORKFLOWS)
