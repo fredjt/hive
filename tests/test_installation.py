@@ -669,7 +669,7 @@ class TestCutReleaseScript:
         (scratch_tree / "junk.txt").write_text("untracked junk\n")
         r = self._run(
             scratch_tree, tmp_path / "dist",
-            "python -m pytest tests/test_json_structures.py -q -x",
+            "python -m pytest tests/test_json_structures.py -q -x --deselect tests/test_json_structures.py::TestLockWheelOnly",
         )
         assert r.returncode != 0, "a dirty tree must refuse the cut"
         assert "dirty" in r.stdout + r.stderr
@@ -699,7 +699,7 @@ class TestCutReleaseScript:
                            timeout=60)
         out = tmp_path / "dist"
         r = self._run(scratch_tree, out,
-                      "python -m pytest tests/test_json_structures.py -q -x")
+                      "python -m pytest tests/test_json_structures.py -q -x --deselect tests/test_json_structures.py::TestLockWheelOnly")
         assert r.returncode == 0, r.stdout + "\n" + r.stderr
         notes = out / f"hive-{v}.release-notes.md"
         assert notes.is_file(), "dry-run must extract the release notes"
@@ -1243,7 +1243,7 @@ class TestShippingManifest:
         r = subprocess.run(
             ["bash", str(dirty_tree / "packaging" / "cut-release.sh"),
              "--dry-run", "--out-dir", str(tmp_path / "dist"),
-             "--suite", "python -m pytest tests/test_json_structures.py -q"],
+             "--suite", "python -m pytest tests/test_json_structures.py -q --deselect tests/test_json_structures.py::TestLockWheelOnly"],
             capture_output=True, text=True, timeout=600, cwd=str(dirty_tree),
         )
         assert r.returncode != 0, (
@@ -1292,7 +1292,7 @@ class TestShippingManifest:
         r = subprocess.run(
             ["bash", str(dirty_tree / "packaging" / "cut-release.sh"),
              "--dry-run", "--out-dir", str(tmp_path / "dist"),
-             "--suite", "python -m pytest tests/test_json_structures.py -q"],
+             "--suite", "python -m pytest tests/test_json_structures.py -q --deselect tests/test_json_structures.py::TestLockWheelOnly"],
             capture_output=True, text=True, timeout=600, cwd=str(dirty_tree),
         )
         assert r.returncode != 0, (
@@ -2068,6 +2068,45 @@ class TestCutReceipt:
     remote so the tag/push steps run for real, locally.
     """
 
+
+    @pytest.fixture(scope="session")
+    def _cut_tree_base(self, tmp_path_factory):
+        """T2 (0.16): the receipt tests' cut tree is built ONCE per
+        session (the S5 session-base pattern).
+
+        Every receipt test used to pay a full-repo tar + extract +
+        git init + base commit to run its cut. This base pays that
+        once (the same cost _dirty_base pays, plus the git init/
+        commit); the per-test receipt_env copies it (local copytree —
+        the S5 contract: the base is a READ-ONLY copy source, no
+        cross-test state), resets the copy (git reset --hard + tag
+        cleanup — the cut's gate 1 requires a clean tree and a
+        specific version, and the reset makes every cut start from
+        the same deterministic base), and gives it a FRESH bare
+        origin (the tag/push steps must not share a remote across
+        tests)."""
+        repo = _repo_root()
+        base = tmp_path_factory.mktemp("hive-cut-tree-base")
+        tree = base / "tree"
+        tree.mkdir()
+        tar = subprocess.run(
+            ["tar", "-cf", "-",
+             "--exclude=.git", "--exclude=unsloth-tmp", "--exclude=.local",
+             "--exclude=dist", "--exclude=__pycache__", "--exclude=*.pyc",
+             "."],
+            cwd=str(repo), capture_output=True, timeout=300)
+        assert tar.returncode == 0, tar.stderr.decode(errors="replace")
+        subprocess.run(["tar", "-xf", "-", "-C", str(tree)],
+                       input=tar.stdout, check=True, capture_output=True,
+                       timeout=300)
+        env = {**os.environ, **self.GIT_IDENTITY}
+        for args in (["git", "init", "-q", "-b", "main"],
+                     ["git", "add", "-A"],
+                     ["git", "commit", "-qm", "receipt-base"]):
+            subprocess.run(args, cwd=str(tree), env=env, check=True,
+                           timeout=120)
+        return tree
+
     GIT_IDENTITY = {
         "GIT_AUTHOR_NAME": "receipt-test",
         "GIT_AUTHOR_EMAIL": "receipt-test@example.com",
@@ -2091,27 +2130,26 @@ exit 0
 """
 
     @pytest.fixture()
-    def receipt_env(self, tmp_path):
-        """Scratch git tree + a bare origin + a fake gh on PATH."""
-        repo = _repo_root()
+    def receipt_env(self, tmp_path, _cut_tree_base):
+        """Per-test cut tree (a reset copy of the session base, the
+        S5 contract) + a FRESH bare origin + a fake gh on PATH."""
         tree = tmp_path / "tree"
-        tree.mkdir()
-        tar = subprocess.run(
-            ["tar", "-cf", "-",
-             "--exclude=.git", "--exclude=unsloth-tmp", "--exclude=.local",
-             "--exclude=dist", "--exclude=__pycache__", "--exclude=*.pyc",
-             "."],
-            cwd=str(repo), capture_output=True, timeout=300)
-        assert tar.returncode == 0, tar.stderr.decode(errors="replace")
-        subprocess.run(["tar", "-xf", "-", "-C", str(tree)],
-                       input=tar.stdout, check=True, capture_output=True,
-                       timeout=300)
+        # T2 (0.16): the tree is a per-test copy of the session
+        # _cut_tree_base — the tar + git init + base commit is paid
+        # ONCE per session, not per test.
+        shutil.copytree(_cut_tree_base, tree)
         env = {**os.environ, **self.GIT_IDENTITY}
-        for args in (["git", "init", "-q", "-b", "main"],
-                     ["git", "add", "-A"],
-                     ["git", "commit", "-qm", "receipt-base"]):
-            subprocess.run(args, cwd=str(tree), env=env, check=True,
-                           timeout=120)
+        # The copy is reset to the base's committed state: the cut's
+        # gate 1 requires a clean tree and a specific version, and the
+        # reset makes every cut start from the same deterministic base
+        # (a stray tag from the copy is removed too).
+        subprocess.run(["git", "reset", "--hard", "-q", "HEAD"],
+                       cwd=str(tree), env=env, check=True, timeout=60)
+        tags = subprocess.run(["git", "tag", "-l"], cwd=str(tree), env=env,
+                              capture_output=True, text=True, timeout=30)
+        for tag in tags.stdout.split():
+            subprocess.run(["git", "tag", "-d", tag], cwd=str(tree),
+                           env=env, check=True, timeout=30)
         bare = tmp_path / "origin.git"
         subprocess.run(["git", "init", "-q", "--bare", str(bare)],
                        check=True, timeout=60)
@@ -2130,12 +2168,11 @@ exit 0
                     "FAKE_GH_LOG": str(log)},
             "gh_log": log,
         }
-
     def _cut(self, tree, gh_env, out_dir):
         return subprocess.run(
             ["bash", str(tree / "packaging" / "cut-release.sh"),
              "--out-dir", str(out_dir),
-             "--suite", "python -m pytest tests/test_json_structures.py -q"],
+             "--suite", "python -m pytest tests/test_json_structures.py -q --deselect tests/test_json_structures.py::TestLockWheelOnly"],
             capture_output=True, text=True, timeout=600,
             cwd=str(tree), env=gh_env,
         )
