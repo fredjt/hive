@@ -81,6 +81,12 @@ if ! gh release download "$TAG" --dir "$WORKDIR" 2>/dev/null; then
   echo "    nothing to verify" >&2
   exit 1
 fi
+# TREE is used after the cd below: a relative path would resolve against
+# the workdir, not the caller's cwd. Validate and absolutize it first.
+if [ -n "${FROM:-}" ]; then
+  [ -d "$TREE" ] || { echo "FAIL: no such install dir: $TREE" >&2; exit 1; }
+  TREE="$(cd "$TREE" && pwd)"
+fi
 cd "$WORKDIR" || exit 1
 for f in "$TARBALL_NAME" "$SIDE_NAME" "$RECEIPT_NAME"; do
   [ -f "$f" ] || fail "asset $f is missing from release $TAG"
