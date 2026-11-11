@@ -179,9 +179,15 @@ def _add_gates(sub) -> None:
     sp = p.add_subparsers(dest="action", required=True)
     pr = sp.add_parser("run", help="Run gates against in-review tickets in a dept")
     pr.add_argument("dept"); pr.add_argument("project_dir", nargs="?", default=".")
+    pr.add_argument("--json", action="store_true",
+                    help="Print the raw MCP envelope (machine contract; human by default)")
     pc = sp.add_parser("check", help="Read most recent gate results for a ticket")
     pc.add_argument("dept"); pc.add_argument("ticket_id")
-    sp.add_parser("status", help="Show gate state for every in-review ticket (debug stuck tickets)")
+    pc.add_argument("--json", action="store_true",
+                    help="Print the raw MCP envelope (machine contract; human by default)")
+    ps = sp.add_parser("status", help="Show gate state for every in-review ticket (debug stuck tickets)")
+    ps.add_argument("--json", action="store_true",
+                    help="Print the structured envelope over the same data")
     p.set_defaults(_handler=gates.handle)
 
 

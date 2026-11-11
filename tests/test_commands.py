@@ -2550,3 +2550,120 @@ on it
         assert set(env.keys()) == {"ok", "exit_code", "stderr", "stdout"}
         assert env["ok"] is True
         assert env["stdout"].startswith("Message sent to #general by user")
+
+
+class TestGatesHumanFace:
+    """T1 (0.17): `hive gates` — per-gate / per-ticket summaries by
+    default; --json is the 0.16.0 face (the raw envelope for run/check,
+    the structured envelope over the same data for status, which was
+    already human). Exit codes unchanged on every path."""
+
+    GATES_JSON = {
+        "ticket_id": "RD-0103",
+        "gates": {
+            "worktree-exists": {"status": "pass", "detail": "/wt",
+                                "checked_at": "2026-11-11T10:00:00Z"},
+            "has-commits": {"status": "fail",
+                            "detail": "0 commits beyond main",
+                            "checked_at": "2026-11-11T10:00:01Z"},
+            "tests-pass": {"status": "skip",
+                           "detail": "no test framework detected",
+                           "checked_at": "2026-11-11T10:00:02Z"},
+        },
+    }
+
+    @staticmethod
+    def _cli(cwd: Path, company_dir: str, *argv: str) -> subprocess.CompletedProcess:
+        return subprocess.run(
+            [sys.executable, "-m", "hive_cli.main", *argv],
+            capture_output=True, text=True, timeout=120,
+            cwd=str(cwd),
+            env={**os.environ,
+                 "PYTHONPATH": str(Path(__file__).resolve()
+                                   .parent.parent / "lib"),
+                 "HIVE_MCP_PORT": "1",
+                 "COMPANY_DIR": company_dir})
+
+    @pytest.fixture(scope="class")
+    def seeded(self, tmp_path_factory):
+        root = tmp_path_factory.mktemp("gates-human")
+        cd = root / ".company"
+        (cd / "departments" / "rd" / "tickets" / "in-review").mkdir(parents=True)
+        (cd / "departments" / "rd" / "components" / "RD-0103").mkdir(parents=True)
+        ticket = {"id": "RD-0103", "type": "infrastructure",
+                  "title": "Blocked one", "status": "in-review",
+                  "priority": "high", "gates_passed": False,
+                  "verified_by": "", "comments": []}
+        (cd / "departments" / "rd" / "tickets" / "in-review" / "RD-0103.json").write_text(
+            json.dumps(ticket, indent=2))
+        (cd / "departments" / "rd" / "components" / "RD-0103" / "gates.json").write_text(
+            json.dumps(self.GATES_JSON, indent=2))
+        (cd / "gates.json").write_text(json.dumps({"require_lint": False}))
+        return root
+
+    def test_check_human_per_gate_lines(self, seeded):
+        cd = seeded / ".company"
+        r = self._cli(seeded, str(cd), "gates", "check", "rd", "RD-0103")
+        assert r.returncode == 0, r.stderr
+        assert "Gates for RD-0103:" in r.stdout
+        assert "\u2713 worktree-exists — /wt" in r.stdout
+        assert "has-commits — 0 commits beyond main" in r.stdout
+        assert "tests-pass — no test framework detected" in r.stdout
+        assert "exit_code" not in r.stdout and '"data"' not in r.stdout
+
+    def test_check_json_is_the_016_face(self, seeded):
+        cd = seeded / ".company"
+        r = self._cli(seeded, str(cd), "gates", "check", "rd", "RD-0103", "--json")
+        assert r.returncode == 0, r.stderr
+        obj = json.loads(r.stdout)
+        # gates_check returns a hand-built dict — 0.16 printed exactly
+        # {"ok", "data"}; that face does not move.
+        assert set(obj.keys()) == {"ok", "data"}
+        assert obj["ok"] is True
+        assert obj["data"]["gates"]["has-commits"]["status"] == "fail"
+
+    def test_check_missing_report_is_an_error(self, seeded):
+        cd = seeded / ".company"
+        r = self._cli(seeded, str(cd), "gates", "check", "rd", "RD-9999")
+        assert r.returncode == 1
+        assert "no gates report found" in r.stderr
+        r = self._cli(seeded, str(cd), "gates", "check", "rd", "RD-9999", "--json")
+        obj = json.loads(r.stdout)
+        assert obj.get("ok") is False
+
+    def test_status_human_unchanged_layout(self, seeded):
+        cd = seeded / ".company"
+        r = self._cli(seeded, str(cd), "gates", "status")
+        assert r.returncode == 0, r.stderr
+        assert "Gates config (" in r.stdout and str(cd / "gates.json") in r.stdout
+        assert "  mode:             (unset = relaxed)" in r.stdout
+        assert f"  {'require_lint':<17} False" in r.stdout
+        assert "  rd: 1 in-review" in r.stdout
+        expected_row = (f"    {'RD-0103':<25} BLOCKED (gates not passed)"
+                        "  [FAIL: has-commits]")
+        assert expected_row in r.stdout
+
+    def test_status_json_structured_envelope(self, seeded):
+        cd = seeded / ".company"
+        r = self._cli(seeded, str(cd), "gates", "status", "--json")
+        assert r.returncode == 0, r.stderr
+        obj = json.loads(r.stdout)
+        assert set(obj.keys()) == {"ok", "exit_code", "stderr", "data"}
+        assert obj["ok"] is True
+        rows = obj["data"]["departments"]
+        assert rows[0]["dept"] == "rd" and rows[0]["count"] == 1
+        t = rows[0]["tickets"][0]
+        assert t["id"] == "RD-0103"
+        assert t["state"] == "BLOCKED (gates not passed)"
+
+    def test_run_idle_human_and_json(self, tmp_path):
+        cd = tmp_path / ".company"
+        (cd / "departments" / "rd" / "tickets" / "in-review").mkdir(parents=True)
+        r = self._cli(tmp_path, str(cd), "gates", "run", "rd")
+        assert r.returncode == 0, r.stdout + r.stderr
+        assert "Nothing to gate" in r.stdout
+        assert "no in-review tickets in rd" in r.stdout
+        r = self._cli(tmp_path, str(cd), "gates", "run", "rd", "--json")
+        obj = json.loads(r.stdout)
+        assert set(obj.keys()) == {"ok", "exit_code", "stderr", "stdout"}
+        assert obj["ok"] is True
