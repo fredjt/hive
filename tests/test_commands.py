@@ -3017,3 +3017,72 @@ class TestReleaseHumanFace:
         rc = release.handle(self._ns(action="list", json=True))
         assert json.loads(capsys.readouterr().out) == payload
         assert rc == 0
+
+
+class TestTicketListCompanyWideCli:
+    """T2 (0.17): `hive ticket list` with no department lists the whole
+    company — grouped per department (count-0 depts stay visible);
+    a named dept that does not exist is an error, not an empty list."""
+
+    @staticmethod
+    def _cli(cwd: Path, company_dir: str, *argv: str) -> subprocess.CompletedProcess:
+        return subprocess.run(
+            [sys.executable, "-m", "hive_cli.main", *argv],
+            capture_output=True, text=True, timeout=120,
+            cwd=str(cwd),
+            env={**os.environ,
+                 "PYTHONPATH": str(Path(__file__).resolve()
+                                   .parent.parent / "lib"),
+                 "HIVE_MCP_PORT": "1",
+                 "COMPANY_DIR": company_dir})
+
+    @staticmethod
+    def _seed(root: Path):
+        cd = root / ".company"
+        (cd / "departments" / "rd" / "tickets" / "in-progress").mkdir(parents=True)
+        (cd / "departments" / "it" / "tickets" / "backlog").mkdir(parents=True)
+        (cd / "departments" / "hr" / "tickets").mkdir(parents=True)
+        (cd / "departments" / "rd" / "tickets" / "in-progress"
+         / "RD-0101.json").write_text(json.dumps({
+            "id": "RD-0101", "type": "feature", "title": "R one",
+            "description": "", "status": "in-progress",
+            "priority": "high", "assignee": {"name": "Eng-1"}}))
+        (cd / "departments" / "it" / "tickets" / "backlog"
+         / "IT-0101.json").write_text(json.dumps({
+            "id": "IT-0101", "type": "chore", "title": "I one",
+            "description": "", "status": "backlog",
+            "priority": "medium", "assignee": {}}))
+        return cd
+
+    def test_company_wide_human_grouped(self, tmp_path):
+        cd = self._seed(tmp_path)
+        r = self._cli(tmp_path, str(cd), "ticket", "list")
+        assert r.returncode == 0, r.stderr
+        assert "rd:" in r.stdout
+        assert "it:" in r.stdout
+        assert "hr:" in r.stdout
+        assert "RD-0101" in r.stdout and "Eng-1" in r.stdout
+        assert "0 ticket(s) in hr" in r.stdout
+        assert "2 ticket(s) company-wide across 3 department(s)" in r.stdout
+
+    def test_company_wide_json_document(self, tmp_path):
+        cd = self._seed(tmp_path)
+        r = self._cli(tmp_path, str(cd), "ticket", "list", "--json")
+        assert r.returncode == 0, r.stderr
+        data = json.loads(r.stdout)
+        assert set(data.keys()) == {"ok", "exit_code", "stderr", "data"}
+        doc = data["data"]
+        assert set(doc.keys()) == {"departments", "total", "mode"}
+        assert doc["total"] == 2
+        assert set(doc["departments"].keys()) == {"rd", "it", "hr"}
+        assert doc["departments"]["hr"]["count"] == 0
+
+    def test_named_missing_dept_is_an_error(self, tmp_path):
+        cd = self._seed(tmp_path)
+        r = self._cli(tmp_path, str(cd), "ticket", "list", "nope")
+        assert r.returncode == 1
+        assert "Department 'nope' not found" in r.stderr
+        r = self._cli(tmp_path, str(cd), "ticket", "list", "nope", "--json")
+        data = json.loads(r.stdout)
+        assert data["ok"] is False
+        assert "not found" in data["stderr"]

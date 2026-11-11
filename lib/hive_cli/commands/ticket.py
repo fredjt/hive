@@ -42,12 +42,9 @@ def handle(args) -> int:
         if getattr(args, "priority", None):
             payload["priority"] = args.priority
         if cd: payload["company_dir"] = cd
-        if not args.dept:
-            print("ERROR: 'hive ticket list' requires a department argument", file=sys.stderr)
-            return 1
         res = mcp_client.call_tool("ticket_list", payload)
         return present.finish(res, args,
-                              lambda r: present.render_ticket_list(r.get("data") or {}))
+                              lambda r: present._render_list(r.get("data") or {}))
     elif action == "move":
         payload = {
             "dept": args.dept, "ticket_id": args.ticket_id,

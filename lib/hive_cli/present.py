@@ -164,6 +164,14 @@ def render_company_wide(data: dict) -> str:
     return "\n\n".join(blocks)
 
 
+def _render_list(data: dict) -> str:
+    """Dispatch a ticket_list result: the company-wide document (T2) has
+    a 'departments' key; the per-dept doc renders the single table."""
+    if isinstance(data, dict) and data.get("departments") is not None:
+        return render_company_wide(data)
+    return render_ticket_list(data)
+
+
 def render_ticket_card(t: dict) -> str:
     """A ticket's full document → a card: header line with
     status/type/priority/assignee, description, acceptance criteria,
