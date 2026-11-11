@@ -1,3 +1,102 @@
+## 0.17.0
+
+The readable release.
+0.16 restructured the suite's cost; 0.17 makes the tool answer in
+English. Every workhorse command (ticket, chat, backlog, gates, agent,
+gh, release) now prints the answer in human form by default — a
+ticket table or card, a chat transcript, one-line confirmations, gate
+summaries, release state — while `--json` prints the raw MCP envelope
+byte-for-byte the way 0.16.0 printed it: the machine contract
+(scripts, tests, anything parsing the CLI) does not move, and exit
+codes are unchanged. The CLI also learned to see the whole company
+and to name its empty states.
+
+### The two faces: human by default, `--json` is the machine contract (T1)
+- `hive ticket list` renders ID / TYPE / PRI / STATUS / TITLE /
+  ASSIGNEE ordered backlog→sprint-current→in-progress→in-review→done,
+  with a count line; `hive ticket get` renders the card (header,
+  description, comments as `author (ts): body`, the verification
+  block when present).
+- `hive chat read` prints the transcript (`HH:MM author: message`);
+  `chat send`, `ticket create/move/claim/comment/approve` print
+  one-line confirmations (the ticket id, the new status, the
+  channel).
+- `hive backlog prioritize` renders the top-N table (priority, type,
+  title, id); an empty backlog says so.
+- `hive gates check` renders the per-gate lines; `gates run` the
+  per-ticket summary; `gates status` keeps its stuck-ticket table and
+  gains `--json`.
+- `hive agent spawn-ceo` / `run-vp` confirm in one line (agent id +
+  the spawns log to tail); the stream-json conversation stays behind
+  `--json`. A failed spawn surfaces the harness's real error (it is
+  reported on the envelope's stdout, not the spawn plumbing).
+- `hive gh status` renders the gh/auth/remote/branch lines; `gh pr
+  open/merge` render the PR number/URL confirmations.
+- `hive release status/list` render the release state and the
+  version/publish/sprint table; a missing record is named.
+- `--json` on every one of them is the 0.16.0 output
+  byte-for-byte; a non-empty envelope stderr is always shown.
+  `hive tool` / `hive tools` keep raw JSON — that IS their face.
+
+### The company-wide ticket list (T2)
+- The department argument is optional everywhere: `hive ticket list`
+  (and the `ticket_list` MCP tool) with no department lists every
+  department, grouped — one table per department under `<dept>:`
+  headers, per-dept counts, and the company total. `--json` is the
+  company-wide doc `{"departments": {...}, "total": N, "mode": ...}`.
+- The "no tickets" vs "doesn't exist" distinction: a named department
+  that does not exist is an error (`Department '<dept>' not found`,
+  exit 1); an existing department with zero tickets is a count-0
+  listing (exit 0). A department "exists" when it has a runtime dir
+  or an org-chart entry — a fresh company lists its org-chart depts.
+
+### `hive status` names its empty states (T3)
+- A fresh company (just `hive init`'d) shows its org-chart
+  departments with zero counts, `Sprint: none — no sprint state yet
+  (run 'hive start' ...)`, `Daemons: none running — run 'hive start'
+  to start the company`, and — when the LLM is unconfigured — the
+  canonical hint (the same one doctor prints).
+- An idle sprint reads as a state: `idle — no work to pick up (runner
+  polls the backlog — file a ticket or run 'hive start')`.
+- A named department that does not exist is an error (exit 1, named);
+  `--json` carries the error. A never-init'd directory says `No
+  departments found — run 'hive init'`.
+
+### `hive start` preflights the LLM (T3)
+- Starting without a configured LLM is valid — the company comes up,
+  the runner halts with a clear reason at the first LLM call — but
+  the operator now hears it immediately: one warning on stderr
+  (`LLM not configured — agents will fail to spawn; ...`) built from
+  the canonical message. Exit 0; the daemons still start.
+
+### `hive chat channels` (T3)
+- Lists every channel in `.company/chat/` with its message count and
+  the timestamp of its last message (the MCP tool reads the channel
+  files directly, like `status_get`). An empty board names itself:
+  `No channels yet — the first 'hive chat send' creates one.`
+
+### The dashboard sees the fresh company (T3)
+- `/api/departments` returns the org-chart union the runtime
+  departments/ dirs: a fresh company lists its departments on the
+  board with zero counts instead of "No departments found".
+- The app footer shows the running hive version (from the tree's
+  VERSION file, served on `/api/status`).
+
+### The docs move with the faces (T1/T2/T3)
+- `share/docs/CLI.md`: every affected subcommand documents `--json`;
+  the two-faces contract (byte-identical to 0.16.0, exit codes
+  unchanged, stderr passthrough) is stated once; the company-wide
+  list, the empty states, the start preflight, and `chat channels`
+  are documented where the commands live. Pinned by a docs test.
+- `share/docs/MCP-TOOLS.md` regenerated (`ticket_list`'s optional
+  `dept` and its company-wide contract, the new `chat_channels`
+  tool); the drift test pins it.
+
+### The release cut (T4)
+- Every version-bearing surface moves together (VERSION, pyproject,
+  CHANGELOG, README + share/docs/README), validated by gate 0 of
+  `packaging/cut-release.sh` before the cut runs.
+
 # Changelog
 
 ## 0.16.0

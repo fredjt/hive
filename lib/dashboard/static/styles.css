@@ -335,3 +335,18 @@ a{color:#58a6ff;text-decoration:none}
   .dept-card{padding:10px}
   .modal{border-radius:8px}
 }
+
+/* T4 (0.17): the app footer carries the running hive version */
+.app-footer {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  font-size: 11px;
+  color: #8b949e;
+  padding: 4px 16px;
+  background: #161b22;
+  border-top: 1px solid #21262d;
+  user-select: none;
+  z-index: 5;
+}
