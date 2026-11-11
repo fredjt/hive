@@ -1787,3 +1787,56 @@ class TestPackagingDocCutPath:
                         "share/docs/README.md"):
             assert surface in content, \
                 f"PACKAGING.md's cut commit must name {surface}"
+
+
+@pytest.mark.skipif(not _node_available(), reason="node not available")
+class TestDashboardEmptyBoard:
+    """T3 (0.17): a fresh company (org-chart, no runtime dept dirs)
+    lists its org-chart departments in /api/departments with zero
+    counts — the board shows the company instead of an empty page."""
+
+    @staticmethod
+    def _free_port():
+        s = socket.socket()
+        s.bind(("127.0.0.1", 0))
+        p = s.getsockname()[1]
+        s.close()
+        return p
+
+    def test_org_chart_depts_listed_with_zero_counts(self, tmp_path):
+        company = tmp_path / ".company"
+        company.mkdir()
+        (company / "org-chart.json").write_text(json.dumps(
+            {"departments": {"it": {"name": "IT"}, "rd": {"name": "R&D"}}}))
+        port = self._free_port()
+        proc = subprocess.Popen(
+            ["node", "lib/dashboard/server.js", "--dir", str(company),
+             "--port", str(port)],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            cwd=str(Path(__file__).resolve().parent.parent))
+        try:
+            up = False
+            deadline = time.time() + 10
+            while time.time() < deadline:
+                if proc.poll() is not None:
+                    raise AssertionError("dashboard exited before ready")
+                try:
+                    with urllib.request.urlopen(
+                            f"http://127.0.0.1:{port}/api/departments",
+                            timeout=1):
+                        up = True
+                    break
+                except Exception:
+                    time.sleep(0.1)
+            assert up, "dashboard did not start"
+            with urllib.request.urlopen(
+                    f"http://127.0.0.1:{port}/api/departments", timeout=5) as r:
+                data = json.loads(r.read())
+            depts = data if isinstance(data, list) else data.get("departments", [])
+            assert [d["name"] for d in depts] == ["it", "rd"]
+            for d in depts:
+                assert d["total"] == 0
+                assert all(v == 0 for v in d["counts"].values())
+        finally:
+            proc.terminate()
+            proc.wait(timeout=10)
