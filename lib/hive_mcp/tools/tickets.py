@@ -47,15 +47,24 @@ def register(server: Server) -> None:
 
     @server.tool()
     def ticket_list(
-        dept: str,
+        dept: str | None = None,
         status: str | None = None,
         priority: str | None = None,
         company_dir: str | None = None,
     ) -> dict:
-        """List tickets in a department. Optional status filter
-        (backlog, sprint-current, in-progress, in-review, done, archive).
+        """List tickets, department-scoped or company-wide. Optional status
+        filter (backlog, sprint-current, in-progress, in-review, done,
+        archive) and priority filter. `dept` is optional (0.17): omitted,
+        every department is listed,
+        grouped — the result carries {"departments": {<dept>: doc},
+        "total": N, "mode": ...} instead of the per-dept doc
+        {"department", "count", "tickets", "mode"}. A named department
+        that does not exist is an error ("Department '<dept>' not
+        found"); an existing one with zero tickets is a count-0 doc.
         """
-        args = [dept]
+        args = []
+        if dept:
+            args.append(dept)
         if status:
             args.append(status)
         if priority:

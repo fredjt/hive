@@ -355,10 +355,10 @@ Args:
 
 ### `ticket_list`
 
-List tickets in a department. Optional status filter (backlog, sprint-current, in-progress, in-review, done, archive).
+List tickets, department-scoped or company-wide. Optional status filter (backlog, sprint-current, in-progress, in-review, done, archive) and priority filter. `dept` is optional (0.17): omitted, every department is listed, grouped — the result carries {"departments": {<dept>: doc}, "total": N, "mode": ...} instead of the per-dept doc {"department", "count", "tickets", "mode"}. A named department that does not exist is an error ("Department '<dept>' not found"); an existing one with zero tickets is a count-0 doc.
 
 Args:
-  - `dept`: string (required)
+  - `dept`: string
   - `status`: string
   - `priority`: string
   - `company_dir`: string

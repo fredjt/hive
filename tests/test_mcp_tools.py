@@ -1013,3 +1013,28 @@ class TestMcpClientSdkFree:
                            env={**os.environ, "PYTHONPATH": str(repo / "lib")})
         assert r.returncode == 0, f"{r.stdout[-400:]} {r.stderr[-800:]}"
         assert "SDKFREE_OK" in r.stdout
+
+
+@pytest.mark.skipif(not _HAS_FASTMCP, reason="mcp SDK not available")
+class TestTicketListCompanyWideTool:
+    """T2 (0.17): ticket_list's department is optional — with none it
+    lists the whole company (the script's company-wide doc)."""
+
+    @staticmethod
+    def _sig(name):
+        import inspect
+        from hive_mcp.server import build_server
+        return inspect.signature(build_server()._tool_manager._tools[name].fn)
+
+    def test_dept_is_optional(self):
+        sig = self._sig("ticket_list")
+        p = sig.parameters["dept"]
+        assert p.default is None
+
+    def test_docstring_names_the_company_wide_view(self):
+        import inspect
+        from hive_mcp.server import build_server
+        fn = build_server()._tool_manager._tools["ticket_list"].fn
+        doc = inspect.getdoc(fn) or ""
+        assert "company-wide" in doc
+        assert "departments" in doc
