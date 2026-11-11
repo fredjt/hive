@@ -56,6 +56,21 @@ jobs:
         with:
           python-version: ${{ matrix.python }}
 
+      - name: pip wheel cache (shared by the two push rows)
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          # T3 (0.16): keyed on sha256 of the lock (hashFiles) +
+          # interpreter + OS. Shared by BOTH push rows — the install
+          # step (24s/12s, run 42934413101) drops to a cache hit: the
+          # bytes are identical by key, so a hit is a safe reuse on
+          # the "installs and goes green TODAY" rows. The scheduled
+          # row (scheduled.yml) is the explicit exception: NO cache —
+          # its job is the weeks-later PyPI re-resolution (a hit would
+          # turn "does PyPI still serve it" into "does our cache still
+          # hold it").
+          key: hive-wheels-${{ runner.os }}-py${{ matrix.python }}-${{ hashFiles('packaging/requirements.lock.txt') }}
+
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip setuptools wheel
