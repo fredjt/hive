@@ -1039,6 +1039,59 @@ def dirty_tree(tmp_path, request, _dirty_base):
     return tree
 
 
+@pytest.fixture(scope="session")
+def _installed_base(tmp_path_factory):
+    """T2 (0.16): the install cluster's venv is built ONCE per session.
+
+    The venv-tax tests (the user-config scaffold class, the dirty-tree
+    copy-to test) each staged a tree and ran install.sh into it —
+    paying a fresh `python -m venv` + `pip install -r lock` (11.3s warm
+    per test) to assert properties (the USER CONFIG branch, the TREE
+    PRUNE) that neither touches. This base pays the venv ONCE: one
+    staged tree (the same surface _run_install stages: bin, lib, etc,
+    packaging, share, VERSION) plus ONE real install.sh run that builds
+    the venv from the lock. The consuming tests copy it per test
+    (local copytree — the S5 contract: the base is a READ-ONLY copy
+    source, no cross-test state) and run install.sh against the copy —
+    the venv is REUSED (the 0.15 T1 upgrade branch: idempotent lock
+    re-install, exact-set prune). The fresh-install branch (venv
+    CREATION + the first lock install) keeps its dedicated test
+    (TestFreshInstallBranch, the TestBuildLockVerify pattern). Built on
+    first use by one worker, under the basetemp scratch (T4 0.14
+    reaping covers it)."""
+    repo = _repo_root()
+    base = tmp_path_factory.mktemp("hive-installed-base")
+    tree = base / "hive-src"
+    tree.mkdir()
+    for d in ("bin", "lib", "etc", "packaging", "share"):
+        shutil.copytree(repo / d, tree / d)
+        for junk in (tree / d).rglob("__pycache__"):
+            shutil.rmtree(junk)
+    (tree / "VERSION").write_text(
+        (repo / "VERSION").read_text() if (repo / "VERSION").is_file()
+        else "0.0.0-dev\n")
+    # ONE real install, IN PLACE (no --copy-to): the staged tree is the
+    # install dir — the same surface _run_install exercises. The venv is
+    # built from the lock; HOME is a scratch dir so the install's user-
+    # config scaffold cannot touch the operator's home.
+    home = base / "home"
+    home.mkdir()
+    r = subprocess.run(
+        ["bash", str(tree / "packaging" / "install.sh"),
+         "--bin-link", str(home / ".local" / "bin" / "hive")],
+        capture_output=True, text=True, timeout=900,
+        cwd=str(tree),
+        env={**os.environ, "HOME": str(home)},
+    )
+    assert r.returncode == 0, (
+        "the session install base failed — the venv-tax tests have "
+        "nowhere to copy from:\n"
+        + r.stdout[-2000:] + r.stderr[-2000:])
+    assert (tree / "venv" / "bin" / "python").is_file(), \
+        "the session install did not build the venv"
+    return tree
+
+
 def _try_chmod(path: Path, mode: int):
     try:
         path.chmod(mode)
