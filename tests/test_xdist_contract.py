@@ -316,6 +316,106 @@ class TestScratchSnowballGuard:
             + "\n".join(f"  {k}: {v}" for k, v in sorted(unknown)))
 
 
+class TestXdistGroupContract:
+    """T4 (0.18) — an ordered class must not be split across workers.
+
+    Under the default --dist=load, xdist sends the pending queue in
+    consecutive chunks (up to --maxschedchunk, 8 by default), so an
+    ordered end-to-end class with more tests than a chunk can be
+    split across two workers — and each worker instantiates the
+    class-scoped fixture in ITS OWN temp dir, so the test that reads
+    the state the earlier same-class tests mutated sees the unmutated
+    fixture (0.18 gate-2 caught TestTicketHumanFace: "5 ticket(s) in
+    rd" read as 3 — the mutations had landed on another worker). The
+    fix is the loadgroup strategy in pytest.ini (per-test scheduling
+    for unmarked tests, group-unit scheduling for marked ones) plus
+    @pytest.mark.xdist_group on every class whose class-scoped
+    fixture carries ordered state. This guard pins both halves: a
+    class-scoped fixture without the mark, or the missing
+    --dist=loadgroup, is a FAIL here."""
+
+    def test_pytest_ini_runs_loadgroup(self):
+        ini = (TESTS_DIR.parent / "pytest.ini").read_text()
+        assert "--dist=loadgroup" in ini, (
+            "pytest.ini must run the loadgroup strategy — under the "
+            "default --dist=load an xdist_group mark alone cannot "
+            "stop a class from being split across workers")
+
+    def _class_scoped_fixture_names(self, tree):
+        """Module-level fixture names declared scope='class'."""
+        names = set()
+        for node in tree.body:
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                for d in node.decorator_list:
+                    if (isinstance(d, ast.Call)
+                            and isinstance(d.func, ast.Attribute)
+                            and d.func.attr == "fixture"):
+                        for kw in d.keywords:
+                            if (kw.arg == "scope"
+                                    and isinstance(kw.value, ast.Constant)
+                                    and kw.value.value == "class"):
+                                names.add(node.name)
+        return names
+
+    @staticmethod
+    def _has_class_scoped_fixture(node):
+        """True when the class DEFINES a scope='class' fixture."""
+        for fn in node.body:
+            if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            for d in fn.decorator_list:
+                if (isinstance(d, ast.Call)
+                        and isinstance(d.func, ast.Attribute)
+                        and d.func.attr == "fixture"):
+                    for kw in d.keywords:
+                        if (kw.arg == "scope"
+                                and isinstance(kw.value, ast.Constant)
+                                and kw.value.value == "class"):
+                            return True
+        return False
+
+    @staticmethod
+    def _uses_class_scoped_fixture(node, names):
+        """True when a test of the class REQUESTS a module-level
+        class-scoped fixture by name."""
+        for fn in node.body:
+            if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            for arg in fn.args.args:
+                if arg.arg in names:
+                    return True
+        return False
+
+    @staticmethod
+    def _marked(node):
+        return any(
+            isinstance(d, ast.Call)
+            and isinstance(d.func, ast.Attribute)
+            and d.func.attr == "xdist_group"
+            for d in node.decorator_list)
+
+    def test_class_scoped_state_classes_are_group_marked(self):
+        for f in sorted(TESTS_DIR.glob("test_*.py")):
+            if f.name == "test_xdist_contract.py":
+                continue
+            tree = ast.parse(f.read_text())
+            module_class_fixtures = self._class_scoped_fixture_names(tree)
+            for node in tree.body:
+                if not isinstance(node, ast.ClassDef):
+                    continue
+                shared = (self._has_class_scoped_fixture(node)
+                          or self._uses_class_scoped_fixture(
+                              node, module_class_fixtures))
+                if not shared:
+                    continue
+                assert self._marked(node), (
+                    f"{f.name}::{node.name}: a class-scoped fixture "
+                    "carries state shared across the class's tests — "
+                    "mark the class @pytest.mark.xdist_group(name) so "
+                    "the loadgroup strategy pins the class to one "
+                    "worker in order (the 0.18 gate-2 split class)")
+
+
 class TestLibCommitPointGuard:
     """T3 (0.15) — the commit-point class is pinned by construction.
 

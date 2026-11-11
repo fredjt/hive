@@ -822,6 +822,7 @@ class TestConfigMasking:
             "the unknown-key warnings stay on stderr"
 
 
+@pytest.mark.xdist_group("roster-command")
 class TestRosterCommand:
     """T2 (0.18): `hive roster [dept] [--active] [--json]` — who is
     working on what, in the terminal. Read-only and CLI-only: it rides
@@ -1027,6 +1028,7 @@ class TestRosterCommand:
         assert not (cd / "roster.json").exists()
 
 
+@pytest.mark.xdist_group("chat-send-defaults")
 class TestChatSendDefaults:
     """T3 (0.18): `hive chat send` takes the channel and the message —
     saying hello to the company is one argument. author defaults to
@@ -2711,6 +2713,7 @@ class TestLlmDocEnvShConsistency:
         assert "HIVE_API_BASE" in self._offenders(stale2)
 
 
+@pytest.mark.xdist_group("ticket-human")
 class TestTicketHumanFace:
     """T1 (0.17): `hive ticket` speaks human by default; --json is the
     0.16.0 envelope byte-for-byte — the machine contract does not move.
@@ -2935,6 +2938,7 @@ class TestTicketHumanFace:
         assert "5 ticket(s) in rd" in r.stdout
 
 
+@pytest.mark.xdist_group("chat-human")
 class TestChatHumanFace:
     """T1 (0.17): `hive chat` — the transcript by default; --json is
     the 0.16.0 envelope. `hive chat read --json` was a no-op in 0.16
@@ -3047,6 +3051,7 @@ on it
         assert env["stdout"].startswith("Message sent to #general by user")
 
 
+@pytest.mark.xdist_group("gates-human")
 class TestGatesHumanFace:
     """T1 (0.17): `hive gates` — per-gate / per-ticket summaries by
     default; --json is the 0.16.0 face (the raw envelope for run/check,
@@ -3164,6 +3169,7 @@ class TestGatesHumanFace:
         assert obj["ok"] is True
 
 
+@pytest.mark.xdist_group("backlog-human")
 class TestBacklogHumanFace:
     """T1 (0.17): `hive backlog prioritize` — the top-N table by
     default; --json is the 0.16.0 envelope (the ranked ids on stdout,
@@ -3709,6 +3715,7 @@ class TestStartLlmPreflight:
         assert "LLM not configured" not in captured.err
 
 
+@pytest.mark.xdist_group("chat-channels")
 class TestChatChannels:
     """T3 (0.17): `hive chat channels` — the board's channels with
     message counts and last-message times; an empty board names itself

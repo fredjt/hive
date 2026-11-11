@@ -269,6 +269,7 @@ def _spa_handler_refs(page, script):
     return sorted(h for h in handlers - defined - kw)
 
 
+@pytest.mark.xdist_group("embedded-spa-script")
 class TestEmbeddedSpaScript:
     """G8: the SPA is real files under lib/dashboard/static/ (app.html,
     app.js, styles.css) served from disk — no template literal, no

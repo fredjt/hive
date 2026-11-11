@@ -409,6 +409,20 @@ Each rule below is pinned by a static guard in `tests/test_xdist_contract.py`:
   the manifest/flag BEFORE the stage flip, so an observer that sees the
   flip is guaranteed to see the flag (the idle transition writes the
   manifest first, stage second; `stage` is the commit point).
+- **Ordered classes with a class-scoped fixture are pinned to one
+  worker (`@pytest.mark.xdist_group`) under the loadgroup strategy.**
+  The default `--dist=load` sends the pending queue in consecutive
+  chunks (up to `--maxschedchunk`, 8 by default), so an ordered
+  end-to-end class with more tests than a chunk can be split across
+  two workers; each worker then instantiates the class-scoped fixture
+  in its OWN temp dir, and the test that reads state mutated by an
+  earlier same-class test sees the unmutated fixture (0.18 gate-2
+  caught `TestTicketHumanFace` — "5 ticket(s) in rd" read as 3, the
+  mutations having landed on another worker). `pytest.ini` runs
+  `--dist=loadgroup`: per-test scheduling for unmarked tests, group-
+  unit scheduling for marked ones. Every class whose class-scoped
+  fixture carries ordered state carries the mark; a new one without it
+  fails `tests/test_xdist_contract.py::TestXdistGroupContract`.
 
 ### Test Categories
 
