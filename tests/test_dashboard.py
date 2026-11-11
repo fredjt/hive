@@ -635,6 +635,33 @@ class TestCLIDocs:
         arch_doc = docs / "ARCHITECTURE.md"
         assert arch_doc.exists(), "share/docs/ARCHITECTURE.md not found"
 
+    def test_cli_docs_document_the_two_faces(self):
+        """T1 (0.17): the human defaults and the --json machine face are
+        documented where the commands live — every affected subcommand
+        line carries the flag, and the contract (byte-identical to
+        0.16.0, exit codes unchanged) is stated once."""
+        content = Path("share/docs/CLI.md").read_text()
+        assert "Two faces" in content
+        assert "byte-for-byte" in content
+        # Each affected subcommand documents the flag
+        for line in [
+            "hive ticket create <dept> <type> <priority> <title> <description> [--created-by NAME] [--source SRC] [--estimate EST] [--json]",
+            "hive ticket get <dept> <ticket-id> [--json]",
+            "hive ticket list <dept> [status] [--json]",
+            "hive ticket move <dept> <ticket-id> <new-status> <comment> <author> [reason] [--force] [--json]",
+            "hive chat send <channel> <author> <department> <message> [--json]",
+            "hive chat read <channel> [--last N] [--since ISO_TIMESTAMP] [--json]",
+            "hive backlog prioritize <dept> [--limit N] [--json]",
+            "hive gates run <dept> [project-dir] [--json]",
+            "hive gates check <dept> <ticket-id> [--json]",
+            "hive gates status [--json]",
+            "hive agent spawn-ceo [project-dir] [--mode FRESH|RESUME] [--json]",
+            "hive gh status [--json]",
+            "hive release status [version] [--json]",
+            "hive release list [--limit N] [--json]",
+        ]:
+            assert line in content, f"undocumented: {line}"
+
 
 class TestLicense:
     """Test the LICENSE file."""

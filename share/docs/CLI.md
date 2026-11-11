@@ -34,14 +34,32 @@ health, ticket counts, velocity, and stuck-ticket count.
 ## Tickets
 
 ```
-hive ticket create <dept> <type> <priority> <title> <description> [--created-by NAME] [--source SRC] [--estimate EST]
-hive ticket get <dept> <ticket-id>
-hive ticket list <dept> [status]
-hive ticket move <dept> <ticket-id> <new-status> <comment> <author> [reason] [--force]
-hive ticket claim <dept> <ticket-id> <role> <agent-id> <agent-name> [--worktree-path PATH]
-hive ticket comment <dept> <ticket-id> <author> <comment>
-hive ticket approve <dept> <ticket-id> <verifier> <rationale>
+hive ticket create <dept> <type> <priority> <title> <description> [--created-by NAME] [--source SRC] [--estimate EST] [--json]
+hive ticket get <dept> <ticket-id> [--json]
+hive ticket list <dept> [status] [--json]
+hive ticket move <dept> <ticket-id> <new-status> <comment> <author> [reason] [--force] [--json]
+hive ticket claim <dept> <ticket-id> <role> <agent-id> <agent-name> [--worktree-path PATH] [--json]
+hive ticket comment <dept> <ticket-id> <author> <comment> [--json]
+hive ticket approve <dept> <ticket-id> <verifier> <rationale> [--json]
 ```
+
+**Two faces (0.17).** Every workhorse command in this reference has a
+*human* default and a *machine* face: the default prints the answer in
+English — a ticket table or card, a chat transcript, one-line
+confirmations, gate summaries, release state — and `--json` prints the
+raw MCP envelope exactly as 0.16.0 printed it. The machine contract
+(scripts, tests, anything parsing the CLI) does not move; exit codes are
+unchanged (0 iff the MCP call ok'd), and a non-empty envelope stderr is
+always shown. Affected: `ticket *`, `chat *`, `backlog prioritize`,
+`gates *`, `agent *`, `gh status` / `gh pr *`, `release status` / `list`.
+`hive tool` / `hive tools` keep raw JSON — that IS their correct face.
+
+The `ticket list` table: ID / TYPE / PRI / STATUS / TITLE (truncated) /
+ASSIGNEE, ordered `backlog → sprint-current → in-progress → in-review →
+done`, with a count line. `ticket get` prints the card: header line
+(status, type, priority, assignee), the description, the comments as
+`author (timestamp): body`, and a verification block (gates_passed /
+verified_by + rationale) when present.
 
 `type`: `bug | feature | task | research | infrastructure | documentation`
 `priority`: `LOW | MEDIUM | HIGH | CRITICAL`
@@ -54,18 +72,29 @@ Moving to `done` is gated — see `ARCHITECTURE.md`. The IC must call
 ## Chat
 
 ```
-hive chat send <channel> <author> <department> <message>
+hive chat send <channel> <author> <department> <message> [--json]
 hive chat read <channel> [--last N] [--since ISO_TIMESTAMP] [--json]
 ```
+
+`chat read` prints the transcript by default (`HH:MM author: message`
+lines, honoring `--last`/`--since`); `--json` is the envelope — the flag
+is no longer a no-op (in 0.16 the default output already WAS the
+envelope, so the flag was wired but never consulted). `chat send`
+prints `✓ sent to <channel>`.
 
 Channels: `general | engineering | leadership | incidents | dept-<name>`
 
 ## Agents
 
 ```
-hive agent spawn-ceo [project-dir] [--mode FRESH|RESUME]
-hive agent run-vp <dept> [project-dir]
+hive agent spawn-ceo [project-dir] [--mode FRESH|RESUME] [--json]
+hive agent run-vp <dept> [project-dir] [--json]
 ```
+
+The default prints the one-line confirmation (agent id + the spawns
+log to tail); `--json` is the raw result dict — agent-spawn's stdout is
+stream-json, and that raw face is the machine contract the dashboard
+replays.
 
 (There is no `agent verify` subcommand: verification ICs are spawned by
 sprint-lifecycle during the verify stage, not on demand.)
@@ -76,10 +105,16 @@ the MCP config so the spawned agent can call hive tools.
 ## Quality gates
 
 ```
-hive gates run <dept> [project-dir]
-hive gates check <dept> <ticket-id>
-hive gates status              # gate state for every in-review ticket (debug stuck ones)
+hive gates run <dept> [project-dir] [--json]
+hive gates check <dept> <ticket-id> [--json]
+hive gates status [--json]     # gate state for every in-review ticket (debug stuck ones)
 ```
+
+`gates check` renders the per-gate lines (`✓`/`✗`/`– name — detail`);
+`gates run` renders the per-ticket summary line (all-gates-passed /
+awaiting IC / bounced with the reason); `gates status` keeps its human
+stuck-ticket table and gains `--json`, the structured envelope over the
+same data.
 
 `gates run` runs deterministic gates against in-review tickets in `dept`. Failed
 gates bounce tickets back to in-progress with a comment.
@@ -89,11 +124,13 @@ gates bounce tickets back to in-progress with a comment.
 ## Backlog
 
 ```
-hive backlog prioritize <dept> [--limit N]
+hive backlog prioritize <dept> [--limit N] [--json]
 ```
 
-Returns the top N backlog tickets. Uses the small CPU model to break ties at
-equal priority. Falls back to deterministic priority+age order.
+Returns the top N backlog tickets — a table (priority, type, title, id)
+in the deterministic priority+age rank order (ties broken by age; no
+model involved). `--json` is the 0.16 envelope: the ranked ticket ids on
+stdout, the machine contract the sprint fill rides.
 
 ## Direct MCP tool invocation
 
@@ -141,9 +178,14 @@ hive llm test                    # one-shot round trip through the configured en
 ## GitHub
 
 ```
-hive gh status                   # gh CLI / auth / remote / default branch
-hive gh pr open <branch> <ticket>   # open a PR for a branch
-hive gh pr merge <branch> [--method merge|squash|rebase]  # merge an open PR
+hive gh status [--json]           # gh CLI / auth / remote / default branch
+hive gh pr open <branch> <ticket> [--json]   # open a PR for a branch
+hive gh pr merge <branch> [--method merge|squash|rebase] [--json]  # merge an open PR
+```
+
+`gh status` prints the aligned gh/auth/remote/branch lines; `gh pr
+open/merge` print the one-line confirmations with the PR number/URL.
+`--json` is the 0.16 raw output byte-for-byte.
 hive gh push enable               # per-company opt-in: allow pushes / PRs / GitHub releases
 hive gh push disable              # revoke the opt-in (pushes become soft no-ops)
 ```
@@ -152,11 +194,16 @@ hive gh push disable              # revoke the opt-in (pushes become soft no-ops
 
 ```
 hive release start               # drive the release pipeline through enqueue
-hive release status              # print a release record
-hive release list                # list recent releases
+hive release status [version] [--json]   # print a release record
+hive release list [--limit N] [--json]   # list recent releases
 hive release publish GO|NO-GO v<ver> <rationale>   # the release-ic commit
 hive release abort               # mark a release failed and file an IT ticket
 ```
+
+`release status` prints the sprint/stage line plus the release fields
+(version, publish status, tarball, sha256 when present), and names a
+missing record; `release list` prints the version / publish-status /
+sprint / ended table. `--json` is the 0.16 raw dict byte-for-byte.
 
 ## Operations
 
