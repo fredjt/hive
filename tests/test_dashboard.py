@@ -2240,3 +2240,32 @@ class TestSseTransport:
                 proc.wait(timeout=5)
             except subprocess.TimeoutExpired:
                 proc.kill()
+    def test_heartbeat_keeps_an_idle_pipe_warm(self, tmp_path):
+        """HIVE_DASHBOARD_SSE_HB_SECS=1: an IDLE connection must see
+        two or more ": hb" comment lines within ~3 s — a byte the
+        proxy and the browser see, so the pipe does not die.
+        0.20: 0 bytes for 2+ s on an idle pipe."""
+        company = self._idle_company(tmp_path)
+        port = self._free_port()
+        proc = self._start_server(company, port,
+                                  env={"HIVE_DASHBOARD_SSE_HB_SECS": "1"})
+        try:
+            sse = _SSESocket(port)
+            try:
+                sse.wait_for_head(8.0)
+                deadline = time.time() + 6
+                while time.time() < deadline:
+                    if sse.buf.count(b": hb") >= 2:
+                        break
+                    sse.pump(0.2)
+                assert sse.buf.count(b": hb") >= 2, (
+                    "the heartbeat never fired on an idle pipe — "
+                    f"body so far: {sse.buf[:200]!r}")
+            finally:
+                sse.close()
+        finally:
+            proc.terminate()
+            try:
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                proc.kill()
