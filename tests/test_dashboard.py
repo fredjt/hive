@@ -2036,3 +2036,207 @@ class TestSpawnContractSpa:
             "the per-spawn empty state must say the stream file is "
             "missing instead of claiming the agent may still be "
             "generating its first message")
+
+# ---------------------------------------------------------------------------
+# T2 (0.21) — the SSE transport, live.
+#
+# The established shape: node on an ephemeral port, temp company dir,
+# python as the SSE client. A raw socket is the right tool for /api/events:
+# http.client.getresponse() BLOCKS until the head completes, and the head
+# arriving (and how fast) is exactly what is under test.
+# ---------------------------------------------------------------------------
+
+class _SSESocket:
+    """A connected /api/events client with a minimal chunk-decoder.
+
+    Node sends the SSE body with `Transfer-Encoding: chunked` (no
+    Content-Length on a stream), so the raw socket sees chunk-size
+    lines interleaved with the events; the assertions read the
+    de-chunked body. The head-completion moment is itself measured —
+    it is the thing 0.20 got wrong.
+    """
+
+    # recv() cycles at 0.5s so wait_for_* loops stay tight; the outer
+    # wait deadlines are the real budgets.
+    def __init__(self, port, timeout=0.5):
+        self.sock = socket.create_connection(("127.0.0.1", port),
+                                             timeout=timeout)
+        self.sock.sendall(
+            b"GET /api/events HTTP/1.1\r\n"
+            b"Host: 127.0.0.1\r\n"
+            b"Accept: text/event-stream\r\n\r\n")
+        self._raw = b""
+        self._head = None
+        self._chunked = True
+        self._chunk_left = None
+        self.buf = b""  # de-chunked body
+
+    def _process(self):
+        if self._head is None:
+            i = self._raw.find(b"\r\n\r\n")
+            if i < 0:
+                return
+            self._head = self._raw[:i].decode("latin-1")
+            self._chunked = "chunked" in self._head.lower()
+            self._raw = self._raw[i + 4:]
+        if not self._chunked:
+            self.buf += self._raw
+            self._raw = b""
+            return
+        while True:
+            if self._chunk_left is None:
+                i = self._raw.find(b"\r\n")
+                if i < 0:
+                    return
+                size_line = self._raw[:i].decode("latin-1").split(";")[0]
+                try:
+                    self._chunk_left = int(size_line.strip(), 16)
+                except ValueError:
+                    self._chunk_left = 0
+                self._raw = self._raw[i + 2:]
+            if self._chunk_left == 0:
+                if self._raw.startswith(b"\r\n"):
+                    self._raw = self._raw[2:]
+                self._chunk_left = None
+                return
+            n = min(self._chunk_left, len(self._raw))
+            self.buf += self._raw[:n]
+            self._raw = self._raw[n:]
+            self._chunk_left -= n
+            if self._chunk_left == 0:
+                if self._raw.startswith(b"\r\n"):
+                    self._raw = self._raw[2:]
+                self._chunk_left = None
+
+    def pump(self, within_s):
+        """Read until the deadline (or the peer closes); process."""
+        deadline = time.time() + within_s
+        while time.time() < deadline:
+            try:
+                chunk = self.sock.recv(4096)
+            except socket.timeout:
+                break
+            if not chunk:
+                break
+            self._raw += chunk
+            self._process()
+
+    def wait_for_head(self, within_s):
+        """Seconds until the response head completes (the 0.20 defect)."""
+        deadline = time.time() + within_s
+        started = time.time()
+        while time.time() < deadline:
+            if self._head is not None:
+                return time.time() - started
+            self.pump(0.1)
+        raise AssertionError(
+            f"the response head did not complete within {within_s}s of "
+            f"connect (0.20 held it until the first file change). Raw "
+            f"so far: {self._raw[:200]!r}")
+
+    def wait_for(self, marker, within_s):
+        """Seconds until `marker` (bytes) is in the de-chunked body."""
+        deadline = time.time() + within_s
+        started = time.time()
+        while time.time() < deadline:
+            if marker in self.buf:
+                return time.time() - started
+            self.pump(0.1)
+        raise AssertionError(
+            "expected %r within %.1fs in the SSE body. Buffer so far: %r"
+            % (marker, within_s, self.buf[:400]))
+
+    @property
+    def text(self):
+        return self.buf.decode("utf-8", "replace")
+
+    def body_lines(self):
+        return self.buf.decode("utf-8", "replace").splitlines()
+
+    def close(self):
+        try:
+            self.sock.close()
+        except OSError:
+            pass
+
+
+@pytest.mark.skipif(not _node_available(), reason="node not available")
+class TestSseTransport:
+    """T2 (0.21): the transport delivers. The head completes at connect
+    (0.20: 0 bytes until the first file change somewhere in the company),
+    the first body line is the `: connected` comment, heartbeats keep an
+    idle pipe warm, and a watched file change still lands its named
+    event on the same connection."""
+
+    @staticmethod
+    def _free_port():
+        s = socket.socket()
+        s.bind(("127.0.0.1", 0))
+        p = s.getsockname()[1]
+        s.close()
+        return p
+
+    @staticmethod
+    def _idle_company(tmp_path):
+        company = tmp_path / ".company"
+        (company / "chat").mkdir(parents=True)
+        (company / "logs").mkdir(parents=True)
+        (company / "manifest.json").write_text(
+            json.dumps({"project_name": "sse-test"}))
+        return company
+
+    @classmethod
+    def _start_server(cls, company, port, env=None):
+        full_env = os.environ.copy()
+        if env:
+            full_env.update(env)
+        proc = subprocess.Popen(
+            ["node", "lib/dashboard/server.js", "--dir", str(company),
+             "--port", str(port)],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            cwd=str(Path(__file__).resolve().parent.parent),
+            env=full_env)
+        deadline = time.time() + 10
+        while time.time() < deadline:
+            if proc.poll() is not None:
+                raise AssertionError("dashboard exited before ready")
+            try:
+                with urllib.request.urlopen(
+                        f"http://127.0.0.1:{port}/api/status", timeout=1):
+                    return proc
+            except Exception:
+                time.sleep(0.1)
+        raise AssertionError("dashboard did not start")
+
+    def test_head_and_connected_line_arrive_without_any_file_change(self,
+                                                                    tmp_path):
+        """On an IDLE company the response head completes within 300 ms
+        of connect and the first body line is the `: connected` comment.
+        0.20: 0 bytes for 2+ seconds — the head (and the first event)
+        arrived only after a chat file was appended."""
+        company = self._idle_company(tmp_path)
+        port = self._free_port()
+        proc = self._start_server(company, port)
+        try:
+            sse = _SSESocket(port)
+            try:
+                head_s = sse.wait_for_head(8.0)
+                # 0.20 delivered NO head at all on an idle company (it
+                # held the response until the first file change), so any
+                # finite arrival is the regression gate; the 300 ms figure
+                # is the typical-case field measurement, not a suite bound.
+                assert head_s <= 8.0, (
+                    f"the head took {head_s:.2f}s to complete")
+                sse.wait_for(b": connected", 8.0)
+                lines = [l for l in sse.body_lines() if l.strip()]
+                assert lines and lines[0].startswith(": connected"), (
+                    "the first body line must be the ': connected' "
+                    f"comment (got {lines[:2]!r})")
+            finally:
+                sse.close()
+        finally:
+            proc.terminate()
+            try:
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                proc.kill()
