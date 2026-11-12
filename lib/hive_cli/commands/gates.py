@@ -5,6 +5,12 @@ the human summary by default (per-gate lines for check, per-ticket
 summary lines for run); status was already human and stays so, with
 --json gaining the structured envelope over the same data.
 Exit codes unchanged on every path.
+
+T3 (0.19): the run's human face is the renderer's summary only (the
+raw log lines stay in the --json envelope); the check's no-report
+failure — the common case, every ticket before its first gate run —
+gets a named face; status renders its config booleans in the config
+table's spelling (true/false).
 """
 
 from __future__ import annotations
@@ -85,14 +91,32 @@ def handle(args) -> int:
         payload = {"dept": args.dept, "project_root": str(Path(args.project_dir).resolve())}
         if cd: payload["company_dir"] = cd
         res = mcp_client.call_tool("gates_run", payload)
+        # T3 (0.19): the renderer IS the face — the raw log lines
+        # (ISO timestamps, the strict=... line) stay in the --json
+        # envelope, not printed on top of the summary.
         return present.finish(res, args,
-                              lambda r: present.render_gates_run(r, args.dept))
+                              lambda r: present.render_gates_run(r, args.dept),
+                              pass_stderr=False)
 
     if args.action == "check":
         payload = {"dept": args.dept, "ticket_id": args.ticket_id}
         if cd: payload["company_dir"] = cd
         res = mcp_client.call_tool("gates_check", payload)
-        return present.finish(res, args, present.render_gates_check)
+
+        def _check_error(r: dict) -> str:
+            # T3 (0.19): the no-report failure — the common case, every
+            # ticket before its first gate run — gets a named face (the
+            # raw `no gates report found` envelope text was the wire,
+            # not the answer; it stays in the --json envelope). Other
+            # failures keep their message.
+            if "no gates report" in (r.get("stderr") or ""):
+                return (f"No gates report for {args.ticket_id} — the ticket "
+                        f"is not in-review yet, or its gates have not run; "
+                        f"run 'hive gates run {args.dept}'.")
+            return (r.get("stderr") or r.get("error") or "unknown error").strip()
+
+        return present.finish(res, args, present.render_gates_check,
+                              error=_check_error)
 
     if args.action == "status":
         company_dir = cd or str(Path.cwd() / ".company")

@@ -337,7 +337,14 @@ class TestRenderGatesStatus:
         out = present.render_gates_status(cfg, rows)
         assert out.splitlines()[0] == "Gates config (/cd/gates.json):"
         assert "  mode:             strict" in out
-        assert f"  {'require_lint':<17} False" in out
+        # T3 (0.19): the config booleans wear the config table's
+        # spelling (true/false), not Python's True/False — the one
+        # layout move of 0.16's gates-status block.
+        assert f"  {'require_tests':<17} true" in out
+        assert f"  {'require_lint':<17} false" in out
+        assert f"  {'require_security':<17} true" in out
+        assert f"  {'require_commits':<17} false" in out
+        assert "True" not in out and "False" not in out
         assert "  it: 1 in-review" in out
         assert (f"    {'T-1':<25} BLOCKED (gates not passed)"
                 "  [FAIL: has-commits]") in out

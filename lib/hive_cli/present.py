@@ -121,14 +121,22 @@ def envelope(res: dict) -> str:
 
 
 def finish(res: dict, args: Any, render: Callable[[dict], str] | None = None,
-           error: Callable[[dict], str] | None = None) -> int:
+           error: Callable[[dict], str] | None = None,
+           pass_stderr: bool = True) -> int:
     """Print the right face for a workhorse command's MCP result.
 
     ``--json`` → the raw envelope (byte-identical to 0.16.0). Default →
     ``render(res)``; on failure the message is ``error(res)`` when
     given, else the envelope stderr, then the client-side error field.
-    A non-empty envelope ``stderr`` is always shown (passthrough
-    unchanged). The exit-code matrix is unchanged: 0 iff ``res.ok``.
+    The exit-code matrix is unchanged: 0 iff ``res.ok``.
+
+    ``pass_stderr`` (T3, 0.19): default ``True`` keeps today's
+    always-show passthrough of a non-empty envelope ``stderr`` on
+    success — no other command moves. ``False`` is for the commands
+    whose renderer IS the human face (backlog, gates run): the
+    machine's notes (``No backlog for rd``, the raw gate-run log)
+    stay in the --json envelope and the human path prints the summary
+    only, one line per fact.
     """
     err = (res.get("stderr") or "").strip()
     as_json = bool(getattr(args, "json", False))
@@ -142,7 +150,7 @@ def finish(res: dict, args: Any, render: Callable[[dict], str] | None = None,
         else:
             msg = err or res.get("error") or "unknown error"
         print(msg, file=sys.stderr)
-    if not as_json and err and res.get("ok"):
+    if pass_stderr and not as_json and err and res.get("ok"):
         print(err, file=sys.stderr)
     return 0 if res.get("ok") else 1
 
@@ -428,7 +436,9 @@ def render_gates_status(cfg: dict, dept_rows: list[dict]) -> str:
         f"  mode:             {cfg.get('mode', '(unset = relaxed)')}",
     ]
     for k in ("require_tests", "require_lint", "require_security", "require_commits"):
-        lines.append(f"  {k:<17} {cfg.get(k, False)}")
+        # T3 (0.19): the config table's spelling (0.18 T1) — true/false,
+        # not Python's True/False.
+        lines.append(f"  {k:<17} {'true' if cfg.get(k, False) else 'false'}")
     lines.append("")
     if not dept_rows:
         lines.append("  No in-review tickets across any department.")

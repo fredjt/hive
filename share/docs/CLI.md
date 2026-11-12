@@ -170,7 +170,15 @@ hive gates status [--json]     # gate state for every in-review ticket (debug st
 `gates run` renders the per-ticket summary line (all-gates-passed /
 awaiting IC / bounced with the reason); `gates status` keeps its human
 stuck-ticket table and gains `--json`, the structured envelope over the
-same data.
+same data. The human faces are summaries only (0.19): `gates run`
+prints the per-ticket lines (or the nothing-to-gate line) — the raw
+log lines (ISO timestamps, the `strict=...` line) live in the `--json`
+envelope, not on top of the summary; `gates check` on a ticket with no
+report yet — the common case, every ticket before its first gate run —
+says `No gates report for <id> — the ticket is not in-review yet, or
+its gates have not run; run 'hive gates run <dept>'.` (exit 1); the
+config booleans in `gates status` render as `true`/`false` (the config
+table's spelling).
 
 `gates run` runs deterministic gates against in-review tickets in `dept`. Failed
 gates bounce tickets back to in-progress with a comment.
@@ -187,6 +195,13 @@ Returns the top N backlog tickets — a table (priority, type, title, id)
 in the deterministic priority+age rank order (ties broken by age; no
 model involved). `--json` is the 0.16 envelope: the ranked ticket ids on
 stdout, the machine contract the sprint fill rides.
+
+Two named faces (0.19): a known department with an empty backlog is
+exactly one line — `Backlog for <dept> is empty.` (exit 0; the script's
+`No backlog for <dept>` note stays in the `--json` envelope, it is not
+printed on top of the line); a named department that does not exist is
+the roster's error — `ERROR: Department '<dept>' not found
+(available: ...)` (exit 1, CLI-side against the org chart).
 
 ## Direct MCP tool invocation
 

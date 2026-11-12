@@ -3287,10 +3287,18 @@ class TestGatesHumanFace:
         cd = seeded / ".company"
         r = self._cli(seeded, str(cd), "gates", "check", "rd", "RD-9999")
         assert r.returncode == 1
-        assert "no gates report found" in r.stderr
+        # T3 (0.19): the no-report failure — the common case, every
+        # ticket before its first gate run — gets a named face (the rc
+        # did not move; only the face did).
+        assert ("No gates report for RD-9999 — the ticket is not in-review "
+                "yet, or its gates have not run; run 'hive gates run rd'.") \
+            in r.stderr
+        assert "no gates report found" not in r.stderr
         r = self._cli(seeded, str(cd), "gates", "check", "rd", "RD-9999", "--json")
         obj = json.loads(r.stdout)
         assert obj.get("ok") is False
+        # the wire does not move — the raw text stays in the envelope
+        assert "no gates report found" in obj.get("stderr", "")
 
     def test_status_human_unchanged_layout(self, seeded):
         cd = seeded / ".company"
@@ -3298,7 +3306,12 @@ class TestGatesHumanFace:
         assert r.returncode == 0, r.stderr
         assert "Gates config (" in r.stdout and str(cd / "gates.json") in r.stdout
         assert "  mode:             (unset = relaxed)" in r.stdout
-        assert f"  {'require_lint':<17} False" in r.stdout
+        # T3 (0.19): the config booleans wear the config table's
+        # spelling (0.18 T1) — true/false, not Python's True/False.
+        for k in ("require_tests", "require_lint",
+                  "require_security", "require_commits"):
+            assert f"  {k:<17} false" in r.stdout
+        assert "True" not in r.stdout and "False" not in r.stdout
         assert "  rd: 1 in-review" in r.stdout
         expected_row = (f"    {'RD-0103':<25} BLOCKED (gates not passed)"
                         "  [FAIL: has-commits]")
@@ -3322,12 +3335,39 @@ class TestGatesHumanFace:
         (cd / "departments" / "rd" / "tickets" / "in-review").mkdir(parents=True)
         r = self._cli(tmp_path, str(cd), "gates", "run", "rd")
         assert r.returncode == 0, r.stdout + r.stderr
-        assert "Nothing to gate" in r.stdout
-        assert "no in-review tickets in rd" in r.stdout
+        # T3 (0.19): the human face is the renderer's ONE line — no raw
+        # log lines (the ISO timestamp, the strict=... line) on stdout;
+        # they stay in the --json envelope (the machine face).
+        assert r.stdout.strip().splitlines() == \
+            ["Nothing to gate — no in-review tickets in rd."]
+        assert "starting gate run" not in r.stdout
+        assert "strict=" not in r.stdout
         r = self._cli(tmp_path, str(cd), "gates", "run", "rd", "--json")
         obj = json.loads(r.stdout)
         assert set(obj.keys()) == {"ok", "exit_code", "stderr", "stdout"}
         assert obj["ok"] is True
+        # the raw log lines live in the machine face, unchanged
+        assert "starting gate run" in obj["stderr"]
+        assert "no ticket in in-review for dept=rd" in obj["stderr"]
+
+    def test_run_pass_bounce_render_is_the_human_face(self):
+        """T3 (0.19): a PASS/BOUNCE run renders as in 0.18.0 — the
+        per-ticket lines only. Unit: the renderer is a pure function
+        of the envelope (no state, contract-safe in-process)."""
+        from hive_cli import present
+        res = {"ok": True, "exit_code": 0, "stdout": "",
+               "stderr": ("[2026-11-11T10:00:00Z] gates dept=rd starting "
+                          "gate run (strict=true,true,true,true)\n"
+                          "[2026-11-11T10:00:05Z] gates dept=rd   PASS RD-0101: "
+                          "all gates passed - awaiting IC review\n"
+                          "[2026-11-11T10:00:09Z] gates dept=rd   BOUNCE RD-0102: "
+                          "has-commits failed\n")}
+        out = present.render_gates_run(res, "rd")
+        assert out.splitlines() == [
+            "\u2713 RD-0101 (rd) — all gates passed, awaiting verification IC",
+            "\u2717 RD-0102 (rd) — bounced to in-progress: has-commits failed"]
+        assert "starting gate run" not in out
+        assert "2026-11-11T10:00" not in out and "strict=" not in out
 
 
 @pytest.mark.xdist_group("backlog-human")
@@ -3368,6 +3408,15 @@ class TestBacklogHumanFace:
                                 ("RD-0202", "medium", "Medium ticket"),
                                 ("RD-0203", "low", "Low ticket")]:
             (bl / f"{tid}.json").write_text(json.dumps(self._ticket(tid, pri, title)))
+        # T3 (0.19): the org chart the CLI-side unknown-dept check
+        # reads. legal is known but has NO runtime dirs (the
+        # fresh-department state: the script's `No backlog for legal`
+        # note case); nosuchdept is not known at all.
+        (cd / "org-chart.json").write_text(json.dumps({
+            "departments": {"rd": {"type": "fixed"},
+                            "it": {"type": "fixed"},
+                            "legal": {"type": "fixed"}},
+            "created_at": "2026-11-10T00:00:00Z"}))
         return root
 
     def test_top_n_table_human(self, seeded):
@@ -3406,7 +3455,49 @@ class TestBacklogHumanFace:
         cd = seeded / ".company"
         r = self._cli(seeded, str(cd), "backlog", "prioritize", "it")
         assert r.returncode == 0, r.stdout + r.stderr
-        assert "Backlog for it is empty." in r.stdout
+        # T3 (0.19): one line for the one fact.
+        assert r.stdout.strip().splitlines() == ["Backlog for it is empty."]
+        r = self._cli(seeded, str(cd), "backlog", "prioritize", "it", "--json")
+        obj = json.loads(r.stdout)
+        assert obj["ok"] is True
+        assert obj["stdout"] == ""
+
+    def test_empty_backlog_note_stays_in_the_envelope(self, seeded):
+        """T3 (0.19): the double-report case — a known department with
+        NO backlog dir (fresh, or never touched): the script's
+        `No backlog for legal` note + the CLI's empty line were two
+        lines for one fact. Now: one human line, rc 0; the note lives
+        in the --json envelope (byte-identical)."""
+        cd = seeded / ".company"
+        r = self._cli(seeded, str(cd), "backlog", "prioritize", "legal")
+        assert r.returncode == 0, r.stdout + r.stderr
+        assert r.stdout.strip().splitlines() == ["Backlog for legal is empty."]
+        assert "No backlog for legal" not in r.stdout
+        r = self._cli(seeded, str(cd), "backlog", "prioritize", "legal",
+                      "--json")
+        assert r.returncode == 0, r.stderr
+        obj = json.loads(r.stdout)
+        assert obj["ok"] is True
+        assert obj["stdout"] == ""
+        # the machine face keeps the raw note, byte-identical
+        assert obj["stderr"].strip() == "No backlog for legal"
+
+    def test_unknown_dept_is_the_roster_error(self, seeded):
+        """T3 (0.19): a named department that does not exist is the
+        roster's face verbatim — error with the available list, rc 1 —
+        not an rc-0 empty answer. Same face under --json: the
+        CLI-side check precedes the machine branch, exactly as in
+        roster."""
+        cd = seeded / ".company"
+        r = self._cli(seeded, str(cd), "backlog", "prioritize", "nosuchdept")
+        assert r.returncode == 1, r.stdout + r.stderr
+        assert ("ERROR: Department 'nosuchdept' not found "
+                "(available: it, legal, rd)") in r.stderr
+        assert r.stdout == ""
+        r = self._cli(seeded, str(cd), "backlog", "prioritize", "nosuchdept",
+                      "--json")
+        assert r.returncode == 1
+        assert "not found" in r.stderr
 
 
 class TestAgentHumanFace:
