@@ -93,17 +93,20 @@ the worker contract.
   xdist worker contract gains the rule.
 - Suite wall, this host, `-n 8` (runs sequential, same machine):
 
-| metric | 0.17.0 (fac347d) | 0.18.0 (c54b8e8) |
+| metric | 0.17.0 (fac347d) | 0.18.0 (v0.18.0, 3637810) |
 |---|---|---|
-| suite wall | 210.36s (1503 passed, 7 skipped) | 238.86s (1534 passed, 6 skipped) |
-| CI test-job wall (3.12 / 3.13 rows) | 247s / 284s (run 43090010431) | 264s / 301s (run 43121558741) |
+| suite wall | 210.36s (1503 passed, 7 skipped) | 216.41s (the cut's own gate-2; 1534 passed, 6 skipped) |
+| CI test-job wall (3.12 / 3.13 rows) | 247s / 284s (run 43090010431) | 373s / 248s (run 43127286924) |
 
-  The +28s local / +17s-per-CI-row delta is the 30 new e2e tests
-  (the roster forced-rebuild matrix and the chat-send defaults
-  matrix spawn a stdio MCP server per call); no existing test grew
-  — the targets are in-process CLI faces over one read-only script
-  path, and the loadgroup change leaves the unmarked tests' per-test
-  scheduling untouched.
+  The local suite delta (+6-28s across green runs) is the 30 new
+  e2e tests (the roster forced-rebuild matrix and the chat-send
+  defaults matrix spawn a stdio MCP server per call); no existing
+  test grew — the targets are in-process CLI faces over one
+  read-only script path, and the loadgroup change leaves the
+  unmarked tests' per-test scheduling untouched. Per-row CI wall
+  (checkout + install + suite) swings ±~100s with runner
+  assignment — the pre-cut run (43121558741) read 264s / 301s; the
+  released-tree run is the standing one.
 
 ### Notes
 - The T1 mask tests seed fake LLM keys; their spellings had to
