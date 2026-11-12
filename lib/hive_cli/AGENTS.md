@@ -63,10 +63,33 @@ Some handlers (like `init.py` and `company.py`) bypass the MCP client and shell 
 
 ## mcp_client.py
 
-- `_http_session()` / `_stdio_session()`: async context managers for the two transports.
-- `_call_async(name, arguments)`: picks HTTP if the server is up, else falls back to stdio (one-shot).
-- `call_tool(name, arguments)`: sync wrapper around `_call_async` using `asyncio.run()`.
-- `list_tools()`: lists registered MCP tool names. Falls back to introspecting the server module if the server isn't running.
+Transport ladder (0.20 T1 — the stopped company answers in-process; the
+dead stdio process retired from the CLI):
+
+- `_http_session()`: async context manager for the Streamable HTTP rung
+  (the SDK client — only reached when `_sdk_available()` is True, so
+  its imports are the process's first SDK imports).
+- `_in_process_server()` / `_call_in_process(name, arguments)`: the
+  middle rung — `build_server()` cached per process; the registry
+  entry's `.fn` is called directly. The very function object FastMCP
+  wraps, so the envelope is byte-identical to the transport by
+  construction (one implementation, no transport, no second SDK
+  import, no spawn).
+- `_call_async(name, arguments)`: walks the ladder — HTTP if the server
+  is up, in-process when it is down (SDK importable), the house error
+  envelope (`"in-process fallback unavailable"`) when there is neither.
+- `call_tool(name, arguments)`: sync wrapper around `_call_async` using
+  `asyncio.run()`.
+- `list_tools()`: the tool names — HTTP when the server is up, the
+  in-process registry when it is down (one path, no spawn).
+
+The mcp SDK import is LAZY (0.20 T1): importing this module does not
+import the SDK; it is resolved once per process on the first tool call
+or list, so non-tool commands (version, --help, stop, killall, config)
+pay only the CLI import. The stdio SERVER transport
+(`python -m hive_mcp.server --transport stdio`) stays in
+`hive_mcp/server.py` for its programmatic consumers — only the CLI
+stops being one.
 
 Key env vars: `HIVE_MCP_HOST`, `HIVE_MCP_PORT`, `HIVE_ROOT`, `HIVE_INSTALL_DIR`.
 
@@ -82,7 +105,8 @@ PYTHONPATH=lib python -m hive_cli.main --help
 PYTHONPATH=lib python -m hive_cli.main doctor
 ```
 
-No venv required — `mcp_client` falls back to importing the server module directly when the HTTP server isn't reachable.
+No venv required — `mcp_client` runs the tool in-process (build_server +
+the registry's .fn) when the HTTP server isn't reachable.
 
 ## See also
 

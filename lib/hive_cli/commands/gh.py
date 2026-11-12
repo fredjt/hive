@@ -6,7 +6,9 @@ import json
 import sys
 from pathlib import Path
 
-from hive_cli import mcp_client, present
+# T1 (0.20): mcp_client imports in the handler body only — present is
+# pure rendering (SDK-free) and stays at module level.
+from hive_cli import present
 
 
 def _cd():
@@ -44,6 +46,7 @@ def _pr_face(res: dict, args) -> int:
 
 
 def handle(args) -> int:
+    from hive_cli import mcp_client
     cd = _cd()
     base = {"company_dir": cd} if cd else {}
 

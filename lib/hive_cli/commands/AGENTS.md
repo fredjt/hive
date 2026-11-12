@@ -87,7 +87,7 @@ proc = subprocess.Popen(
 
 ## The mcp_client module
 
-The client (`lib/hive_cli/mcp_client.py`) auto-selects transport (HTTP → stdio fallback). See `lib/hive_cli/AGENTS.md` for details.
+The client (`lib/hive_cli/mcp_client.py`) auto-selects transport (HTTP → in-process; the SDK import is lazy, 0.20 T1). See `lib/hive_cli/AGENTS.md` for details.
 
 ## See also
 

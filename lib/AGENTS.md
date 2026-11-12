@@ -16,7 +16,7 @@ lib/
     shell.py             Subprocess bridge — env setup, path resolution, JSON parsing
     tools/               ~13 tool modules (init, tickets, chat, verification, ...)
   hive_cli/              CLI dispatcher — argparse → handler modules → MCP client (Python)
-    mcp_client.py        Auto-selecting MCP client (HTTP → stdio fallback)
+    mcp_client.py        Auto-selecting MCP client (HTTP → in-process; lazy SDK import)
     commands/            One module per CLI subcommand (~17 handlers)
   tools/                 ~80 bash scripts (~11.2k lines) — the operational engine
   core/                  ~5 foundational scripts — agent-spawn, orchestrator, init, hooks

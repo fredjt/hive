@@ -10,7 +10,9 @@ import sys
 import subprocess
 from pathlib import Path
 
-from hive_cli import mcp_client
+# T1 (0.20): mcp_client imports in the handler body only — doctor's
+# tool-list probe is the single transport touch, and the ~20 other
+# checks never pay it.
 from hive_cli.commands.company import _pid_alive
 
 
@@ -577,6 +579,7 @@ def _installed_set_check() -> bool:
                   "manifest present, required set complete, state-free")
 
 def _run_checks(args) -> bool:
+    from hive_cli import mcp_client
     print("Hive doctor — checking installation\n")
     all_ok = True
 

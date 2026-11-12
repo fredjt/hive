@@ -101,7 +101,7 @@ hive stop
 │  Dashboard  │  │   hive (CLI - Python)   │  │ Spawned agents   │
 │  (Node.js)  │  │                         │  │ (agent harness)  │
 └──────┬──────┘  └────────────┬────────────┘  └────────┬─────────┘
-       │ HTTP                  │ HTTP / stdio          │ HTTP (MCP)
+       │ HTTP                  │ HTTP / in-process     │ HTTP (MCP)
        └────────────┬──────────┴───────────────────────┘
                     ▼
         ┌────────────────────────┐

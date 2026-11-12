@@ -6,7 +6,7 @@
 |-----------|----------|----------------|
 | `bin/hive` | Bash | Tiny launcher that resolves the venv and execs `hive_cli.main`. |
 | `lib/hive_cli/` | Python | argparse CLI, one module per top-level subcommand. Calls MCP tools via `mcp_client.py`. |
-| `lib/hive_mcp/` | Python | FastMCP server exposing ~48 tools. Each tool wraps a bash script via `shell.py`. Two transports: stdio (for spawned agents) and HTTP (for dashboard + CLI). |
+| `lib/hive_mcp/` | Python | FastMCP server exposing ~48 tools. Each tool wraps a bash script via `shell.py`. Two transports: stdio (programmatic consumers) and HTTP (dashboard + CLI + spawned agents); the CLI on a stopped company runs the tools in-process instead (0.20). |
 | `lib/core/agent-spawn.sh` | Bash | Wrapper around the agent harness. Injects an MCP config (so spawned agents see hive tools) and logs every spawn. |
 | `lib/core/init.sh` | Bash | Workspace initialization. Replaces SKILL.md Steps 1-3. |
 | `lib/core/orchestrator.sh` | Bash | Initial CEO build + transition to perpetual mode. Replaces SKILL.md Steps 4-7. |

@@ -16,6 +16,12 @@ if _hive_lib not in sys.path:
 
 import pytest
 
+# T1 (0.20): the command modules import mcp_client in handler
+# bodies, so the patchable module object is hive_cli.mcp_client itself
+# (the same object the handler binds at call time). Importing it is
+# SDK-free — the SDK import is lazy inside the client.
+from hive_cli import mcp_client
+
 
 # Ensure lib/ is on the path
 os.environ.setdefault("HIVE_INSTALL_DIR", str(Path(__file__).resolve().parent.parent))
@@ -322,6 +328,29 @@ class TestMCPClientModule:
     def test_list_tools_exists(self):
         from hive_cli.mcp_client import list_tools
         assert callable(list_tools)
+
+    def test_importing_main_does_not_import_the_sdk(self):
+        """T1 (0.20) lazy-import pin: `import hive_cli.main` does not
+        import the mcp SDK — the SDK is resolved once per process on the
+        first tool call / list, so non-tool commands (version, --help,
+        stop, killall, config) pay only the CLI import. Subprocess:
+        the test process itself may hold mcp in sys.modules (the
+        contract-safe pattern, test_hive_paths's shape)."""
+        repo = Path(__file__).resolve().parent.parent
+        r = subprocess.run(
+            [sys.executable, "-c",
+             "import sys; sys.path.insert(0, 'lib')\n"
+             "import hive_cli.main\n"
+             "print('mcp' in sys.modules)"],
+            capture_output=True, text=True, timeout=60,
+            cwd=str(repo), env={**os.environ,
+                                "PYTHONPATH": str(repo / "lib")})
+        assert r.returncode == 0, r.stderr
+        assert r.stdout.strip().splitlines()[-1] == "False", (
+            "import hive_cli.main pulled in the mcp SDK — the import "
+            "must stay lazy (0.20 T1); every command, including "
+            "`hive version` (a print lambda), pays the CLI import "
+            "only")
 
 
 class TestDoctorCommandChecks:
@@ -1704,8 +1733,7 @@ class TestStatusConfigDrift:
         from hive_cli.commands import company
         monkeypatch.setenv("HOME", str(tmp_path))
         monkeypatch.delenv("HIVE_CONFIG", raising=False)
-        monkeypatch.setattr(
-            company.mcp_client, "call_tool",
+        monkeypatch.setattr(mcp_client,  "call_tool",
             lambda name, payload: {"ok": True,
                                    "data": {"it": {"health": "good",
                                                     "tickets": {}}}})
@@ -1770,8 +1798,7 @@ class TestStatusDaemonSection:
 
     def test_status_json_includes_daemon_table(self, tmp_path, monkeypatch, capsys):
         from hive_cli.commands import company
-        monkeypatch.setattr(
-            company.mcp_client, "call_tool",
+        monkeypatch.setattr(mcp_client,  "call_tool",
             lambda name, payload: {"ok": True,
                                    "data": {"it": {"health": "good", "tickets": {}}}})
         self._seed_daemons(tmp_path)
@@ -1789,8 +1816,7 @@ class TestStatusDaemonSection:
 
     def test_status_text_marks_dead_daemon(self, tmp_path, monkeypatch, capsys):
         from hive_cli.commands import company
-        monkeypatch.setattr(
-            company.mcp_client, "call_tool",
+        monkeypatch.setattr(mcp_client,  "call_tool",
             lambda name, payload: {"ok": True, "data": {}})
         self._seed_daemons(tmp_path)
         rc = company.handle_status(self._args(tmp_path))
@@ -1803,8 +1829,7 @@ class TestStatusDaemonSection:
 
     def test_status_shows_daemons_when_mcp_is_down(self, tmp_path, monkeypatch, capsys):
         from hive_cli.commands import company
-        monkeypatch.setattr(
-            company.mcp_client, "call_tool",
+        monkeypatch.setattr(mcp_client,  "call_tool",
             lambda name, payload: {"ok": False, "error": "ConnectionError: server down"})
         self._seed_daemons(tmp_path)
         rc = company.handle_status(self._args(tmp_path))
@@ -3526,7 +3551,7 @@ class TestAgentHumanFace:
         cd = tmp_path / ".company"
         cd.mkdir()
         monkeypatch.setenv("COMPANY_DIR", str(cd))
-        monkeypatch.setattr(agent.mcp_client, "call_tool",
+        monkeypatch.setattr(mcp_client,  "call_tool",
                             lambda name, payload: {
                                 "ok": True, "exit_code": 0,
                                 "stdout": '{"type":"event"}\n', "stderr": ""})
@@ -3545,7 +3570,7 @@ class TestAgentHumanFace:
         cd = tmp_path / ".company"
         cd.mkdir()
         monkeypatch.setenv("COMPANY_DIR", str(cd))
-        monkeypatch.setattr(agent.mcp_client, "call_tool",
+        monkeypatch.setattr(mcp_client,  "call_tool",
                             lambda name, payload: {
                                 "ok": True, "exit_code": 0,
                                 "stdout": '{"type":"event"}\n',
@@ -3563,7 +3588,7 @@ class TestAgentHumanFace:
     def test_run_vp_success_confirmation(self, tmp_path, monkeypatch, capsys):
         from hive_cli.commands import agent
         monkeypatch.delenv("COMPANY_DIR", raising=False)
-        monkeypatch.setattr(agent.mcp_client, "call_tool",
+        monkeypatch.setattr(mcp_client,  "call_tool",
                             lambda name, payload: {
                                 "ok": True, "exit_code": 0,
                                 "stdout": "", "stderr": ""})
@@ -3611,7 +3636,7 @@ class TestGHHumanFace:
 
     def test_status_human_aligned_lines(self, tmp_path, monkeypatch, capsys):
         from hive_cli.commands import gh
-        monkeypatch.setattr(gh.mcp_client, "call_tool",
+        monkeypatch.setattr(mcp_client,  "call_tool",
                             lambda name, payload: {
                                 "installed": True, "authed": True,
                                 "remote": "git@github.com:acme/widget.git",
@@ -3626,7 +3651,7 @@ class TestGHHumanFace:
 
     def test_status_human_names_the_missing_gh(self, tmp_path, monkeypatch, capsys):
         from hive_cli.commands import gh
-        monkeypatch.setattr(gh.mcp_client, "call_tool",
+        monkeypatch.setattr(mcp_client,  "call_tool",
                             lambda name, payload: {
                                 "installed": False, "authed": False,
                                 "remote": None, "default_branch": None})
@@ -3639,7 +3664,7 @@ class TestGHHumanFace:
         from hive_cli.commands import gh
         data = {"installed": True, "authed": False, "remote": None,
                 "default_branch": None}
-        monkeypatch.setattr(gh.mcp_client, "call_tool",
+        monkeypatch.setattr(mcp_client,  "call_tool",
                             lambda name, payload: data)
         rc = gh.handle(self._ns(json=True))
         out = capsys.readouterr().out
@@ -3652,7 +3677,7 @@ class TestGHHumanFace:
                "stdout": ("gh-pr-open: opening PR for feature/T-1 -> main (ticket=T-1)\n"
                           "gh-pr-open: opened PR #5 (https://github.com/acme/widget/pull/5)\n"
                           "5")}
-        monkeypatch.setattr(gh.mcp_client, "call_tool",
+        monkeypatch.setattr(mcp_client,  "call_tool",
                             lambda name, payload: env)
         rc = gh.handle(self._ns(action="pr"))
         out = capsys.readouterr().out
@@ -3664,7 +3689,7 @@ class TestGHHumanFace:
         from hive_cli.commands import gh
         env = {"ok": True, "exit_code": 0, "stderr": "",
                "stdout": "gh-pr-open: opened PR #5 (https://github.com/acme/widget/pull/5)\n5"}
-        monkeypatch.setattr(gh.mcp_client, "call_tool",
+        monkeypatch.setattr(mcp_client,  "call_tool",
                             lambda name, payload: env)
         rc = gh.handle(self._ns(action="pr", json=True))
         assert rc == 0
@@ -3674,7 +3699,7 @@ class TestGHHumanFace:
     def test_pr_open_failure_is_exit_1_with_the_reason(self, tmp_path,
                                                        monkeypatch, capsys):
         from hive_cli.commands import gh
-        monkeypatch.setattr(gh.mcp_client, "call_tool",
+        monkeypatch.setattr(mcp_client,  "call_tool",
                             lambda name, payload: {
                                 "ok": False, "exit_code": 1,
                                 "stderr": "gh pr create failed: not a git repo",
@@ -3700,8 +3725,7 @@ class TestReleaseHumanFace:
     def test_status_human(self, monkeypatch, capsys):
         from hive_cli.commands import release
         monkeypatch.setenv("COMPANY_DIR", "/tmp/no-such-company-t1h")
-        monkeypatch.setattr(
-            release.mcp_client, "call_tool",
+        monkeypatch.setattr(mcp_client,  "call_tool",
             lambda name, payload: {"sprint_id": "sprint-1", "stage": "release-verify",
                                    "release": {"version": "0.17.0",
                                                "publish_status": "pending"}})
@@ -3718,7 +3742,7 @@ class TestReleaseHumanFace:
         monkeypatch.setenv("COMPANY_DIR", "/tmp/no-such-company-t1h")
         payload = {"sprint_id": "sprint-1", "stage": "build-and-test",
                    "release": {"version": "0.16.0"}}
-        monkeypatch.setattr(release.mcp_client, "call_tool",
+        monkeypatch.setattr(mcp_client,  "call_tool",
                             lambda name, p: payload)
         rc = release.handle(self._ns(json=True))
         out = capsys.readouterr().out
@@ -3731,7 +3755,7 @@ class TestReleaseHumanFace:
         `No release record found (no release record found)` is gone."""
         from hive_cli.commands import release
         monkeypatch.setenv("COMPANY_DIR", "/tmp/no-such-company-t1h")
-        monkeypatch.setattr(release.mcp_client, "call_tool",
+        monkeypatch.setattr(mcp_client,  "call_tool",
                             lambda name, p: {"error": "no release record found"})
         rc = release.handle(self._ns())
         out = capsys.readouterr().out
@@ -3747,7 +3771,7 @@ class TestReleaseHumanFace:
         wire text stays in the --json envelope, not the sentence."""
         from hive_cli.commands import release
         monkeypatch.setenv("COMPANY_DIR", "/tmp/no-such-company-t1h")
-        monkeypatch.setattr(release.mcp_client, "call_tool",
+        monkeypatch.setattr(mcp_client,  "call_tool",
                             lambda name, p: {"error": "no release record found"})
         rc = release.handle(self._ns(version="0.17.0"))
         out = capsys.readouterr().out
@@ -3763,8 +3787,7 @@ class TestReleaseHumanFace:
     def test_list_human_table(self, monkeypatch, capsys):
         from hive_cli.commands import release
         monkeypatch.setenv("COMPANY_DIR", "/tmp/no-such-company-t1h")
-        monkeypatch.setattr(
-            release.mcp_client, "call_tool",
+        monkeypatch.setattr(mcp_client,  "call_tool",
             lambda name, p: {"releases": [
                 {"sprint_id": "sprint-2", "version": "0.16.0",
                  "publish_status": "published",
@@ -3779,7 +3802,7 @@ class TestReleaseHumanFace:
     def test_list_empty_named(self, monkeypatch, capsys):
         from hive_cli.commands import release
         monkeypatch.setenv("COMPANY_DIR", "/tmp/no-such-company-t1h")
-        monkeypatch.setattr(release.mcp_client, "call_tool",
+        monkeypatch.setattr(mcp_client,  "call_tool",
                             lambda name, p: {"releases": []})
         rc = release.handle(self._ns(action="list"))
         out = capsys.readouterr().out
@@ -3790,7 +3813,7 @@ class TestReleaseHumanFace:
         from hive_cli.commands import release
         monkeypatch.setenv("COMPANY_DIR", "/tmp/no-such-company-t1h")
         payload = {"releases": []}
-        monkeypatch.setattr(release.mcp_client, "call_tool",
+        monkeypatch.setattr(mcp_client,  "call_tool",
                             lambda name, p: payload)
         rc = release.handle(self._ns(action="list", json=True))
         assert json.loads(capsys.readouterr().out) == payload
@@ -3896,7 +3919,7 @@ class TestStatusEmptyStates:
         # tickets dir... actually the dir exists) — use the empty-data
         # success path plus the no-sprint, no-daemons, unconfigured-LLM
         # states.
-        monkeypatch.setattr(company.mcp_client, "call_tool",
+        monkeypatch.setattr(mcp_client,  "call_tool",
                             lambda name, payload: {"ok": True, "data": {}})
         monkeypatch.setattr(company, "_llm_hint",
                             lambda cd: "LLM not configured — set the [llm] section")
@@ -3916,7 +3939,7 @@ class TestStatusEmptyStates:
 
     def test_missing_dept_is_a_named_error(self, tmp_path, monkeypatch, capsys):
         from hive_cli.commands import company
-        monkeypatch.setattr(company.mcp_client, "call_tool",
+        monkeypatch.setattr(mcp_client,  "call_tool",
                             lambda name, payload: {"ok": True, "data": {}})
         rc = company.handle_status(self._args(self._fresh(tmp_path),
                                               dept="marketing"))
@@ -3927,7 +3950,7 @@ class TestStatusEmptyStates:
 
     def test_missing_dept_json_is_an_error_envelope(self, tmp_path, monkeypatch, capsys):
         from hive_cli.commands import company
-        monkeypatch.setattr(company.mcp_client, "call_tool",
+        monkeypatch.setattr(mcp_client,  "call_tool",
                             lambda name, payload: {"ok": True, "data": {}})
         rc = company.handle_status(self._args(self._fresh(tmp_path),
                                               dept="marketing", as_json=True))
@@ -3939,7 +3962,7 @@ class TestStatusEmptyStates:
     def test_no_orgchart_is_the_init_hint(self, tmp_path, monkeypatch, capsys):
         from hive_cli.commands import company
         (tmp_path / ".company").mkdir()
-        monkeypatch.setattr(company.mcp_client, "call_tool",
+        monkeypatch.setattr(mcp_client,  "call_tool",
                             lambda name, payload: {
                                 "ok": False,
                                 "stderr": f"no departments dir at {tmp_path}"})

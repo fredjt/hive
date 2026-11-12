@@ -19,7 +19,9 @@ import json
 import sys
 from pathlib import Path
 
-from hive_cli import mcp_client, present
+# T1 (0.20): mcp_client imports in the handler body only — present is
+# pure rendering (SDK-free) and stays at module level.
+from hive_cli import present
 from hive_cli.commands import company_dir as _company_dir
 
 
@@ -86,6 +88,7 @@ def _collect_gates_status(company_dir: str) -> dict:
 
 
 def handle(args) -> int:
+    from hive_cli import mcp_client
     cd = _company_dir()
     if args.action == "run":
         payload = {"dept": args.dept, "project_root": str(Path(args.project_dir).resolve())}

@@ -19,7 +19,9 @@ import json
 import sys
 from pathlib import Path
 
-from hive_cli import mcp_client, present
+# T1 (0.20): mcp_client imports in the handler body only — present is
+# pure rendering (SDK-free) and stays at module level.
+from hive_cli import present
 from hive_cli.commands import company_dir as _company_dir
 
 
@@ -50,6 +52,7 @@ def _backlog_summaries(company_dir: str | None, dept: str, res: dict) -> dict:
            if l.strip()}
     if not ids:
         return {}
+    from hive_cli import mcp_client
     payload = {"dept": dept, "status": "backlog"}
     if company_dir:
         payload["company_dir"] = company_dir
@@ -62,6 +65,7 @@ def _backlog_summaries(company_dir: str | None, dept: str, res: dict) -> dict:
 
 
 def handle(args) -> int:
+    from hive_cli import mcp_client
     cd = _company_dir()
     known = _known_departments(cd)
     if known and args.dept not in known:

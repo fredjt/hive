@@ -957,28 +957,109 @@ class TestHttpTransportWire:
         assert len(tools) >= 40, (
             f"expected >= 40 tools over the wire, got {len(tools)}")
 
-    def test_error_when_server_down_and_no_stdio_fallback(self, tmp_path,
-                                                          tmp_company_dir,
-                                                          monkeypatch):
-        """With no HTTP server listening AND the stdio fallback broken, a tool
-        call must fail fast with a clean error dict — not hang, not raise,
-        and not silently succeed."""
+    def test_in_process_matches_http(self, http_mcp_server, tmp_company_dir,
+                                     monkeypatch):
+        """T1 (0.20) transport identity: the same tool over a live HTTP
+        server and in-process returns EQUAL dicts. The in-process rung is
+        the same function object the server exposes (one implementation,
+        no transport) — this pin keeps that true as both paths age."""
+        live = _mcp_client_on_port(http_mcp_server, monkeypatch)
+        args = {"company_dir": str(tmp_company_dir)}
+        over_wire = live.call_tool("roster_get", dict(args))
+        dead = _mcp_client_on_port(_free_local_port(), monkeypatch)
+        in_proc = dead.call_tool("roster_get", dict(args))
+        assert over_wire.get("ok") is True, over_wire
+        assert in_proc.get("ok") is True, in_proc
+        assert over_wire == in_proc, (
+            "HTTP and in-process must return the same tool dict — one "
+            "implementation, no transport")
+
+    def test_in_process_drops_unknown_keys_like_the_wire(self,
+                                                         http_mcp_server,
+                                                         tmp_company_dir,
+                                                         monkeypatch):
+        """T1 (0.20): the wire validates against the tool's parameter
+        schema (pydantic, extra ignored) — an unknown key is DROPPED,
+        not an error. The historical case: the CLI's ticket_move payload
+        has always carried `force` (the argparse flag; the tool has no
+        such parameter) — the in-process rung must filter identically, or
+        a stopped company's `hive ticket move` dies with a TypeError the
+        wire never showed."""
+        live = _mcp_client_on_port(http_mcp_server, monkeypatch)
+        dead = _mcp_client_on_port(_free_local_port(), monkeypatch)
+        # A ticket that does not exist: both rungs surface the tool's own
+        # error face (no mutation, deterministic) — with the unknown
+        # `force` key in the payload.
+        args = {"dept": "it", "ticket_id": "TICKET-001",
+                "new_status": "sprint-current", "comment": "c",
+                "author": "u", "force": False,
+                "company_dir": str(tmp_company_dir)}
+        over_wire = live.call_tool("ticket_move", dict(args))
+        in_proc = dead.call_tool("ticket_move", dict(args))
+        assert "TypeError" not in json.dumps(in_proc), (
+            "in-process passed the unknown `force` key to the tool "
+            "function — mirror the wire's schema validation (drop "
+            "unknown keys) or a stopped company's move breaks")
+        assert over_wire == in_proc, (
+            "HTTP and in-process must treat the unknown key the same "
+            "way (the wire drops it): "
+            f"{over_wire} != {in_proc}")
+
+    def test_error_when_server_down_and_sdk_missing(self, tmp_company_dir,
+                                                    monkeypatch):
+        """With no HTTP server listening AND the mcp SDK missing, a tool
+        call must fail fast with the house error envelope — not hang, not
+        raise, and not silently succeed. T1 (0.20): the envelope's shape
+        did not move; the rung is named "in-process fallback
+        unavailable" (the stdio spawn retired from the CLI)."""
         dead_port = _free_local_port()  # nothing listens here
         mcp_client = _mcp_client_on_port(dead_port, monkeypatch)
         assert mcp_client._is_http_server_up() is False
 
-        # Break the stdio fallback (its venv path is derived from this), so a
-        # down server must surface as an error rather than a second transport
-        # quietly taking over.
-        monkeypatch.setattr(mcp_client, "HIVE_INSTALL_DIR",
-                            tmp_path / "no-such-install")
+        # Make the SDK unresolvable (the SDK-free environment) — with the
+        # server down too, there is no rung left but the error envelope.
+        monkeypatch.setattr(mcp_client, "_sdk_available", lambda: False)
 
         res = mcp_client.call_tool("ticket_get", {
             "dept": "it", "ticket_id": "TICKET-001",
             "company_dir": str(tmp_company_dir),
         })
-        assert res.get("ok") is False, res
-        assert res.get("error"), f"expected a non-empty error message: {res}"
+        assert res == {"ok": False,
+                       "error": "MCP HTTP server not reachable and the mcp "
+                                "SDK is not installed (in-process fallback "
+                                "unavailable)"}, res
+
+
+class TestStdioSpawnRetired:
+    """T1 (0.20) static surface pin (the house surface-guard pattern, the
+    shape of TestTomliSurfaceGuard): the stdio spawn is RETIRED from the
+    CLI client. "StdioServerParameters" / "stdio_client" / _stdio_session
+    absent from mcp_client.py means no code path can bring the one-shot
+    child (and its per-spawn NOTE line) back. The stdio SERVER transport
+    (hive_mcp/server.py --transport stdio) is a different surface — its
+    consumers never go through mcp_client, so it stays pinned by the
+    server-side tests (the AGENTS.md contract)."""
+
+    def test_mcp_client_carries_no_stdio_spawn(self):
+        src = (Path(__file__).resolve().parent.parent
+               / "lib" / "hive_cli" / "mcp_client.py").read_text()
+        for needle in ("StdioServerParameters", "stdio_client",
+                       "_stdio_session", "_stdio_python"):
+            assert needle not in src, (
+                f"{needle!r} in mcp_client.py — the stdio spawn was "
+                "retired from the CLI in 0.20 T1 (the in-process rung "
+                "replaced it); do not re-introduce the one-shot child")
+
+    def test_stdio_server_transport_stays(self):
+        """The transport itself did not move: the server still declares
+        --transport stdio (programmatic consumers keep it; only the CLI
+        stops being one)."""
+        src = (Path(__file__).resolve().parent.parent
+               / "lib" / "hive_mcp" / "server.py").read_text()
+        assert '"stdio"' in src or "'stdio'" in src, (
+            "server.py no longer declares the stdio transport — the "
+            "programmatic consumers (scripts, tests, interactive "
+            "sessions) keep it; only the CLI's use of it retired")
 
 
 @pytest.mark.skipif(not _HAS_FASTMCP, reason="mcp server not available")
@@ -997,7 +1078,7 @@ class TestMcpClientSdkFree:
             f"sys.path.insert(0, {str(repo / 'lib')!r})\n"
             f"sys.path.insert(0, {str(poison)!r})\n"
             "from hive_cli import mcp_client\n"
-            "assert mcp_client._HAS_MCP_SDK is False\n"
+            "assert mcp_client._sdk_available() is False\n"
             f"mcp_client.MCP_HOST = '127.0.0.1'\n"
             f"mcp_client.MCP_PORT = {http_mcp_server}\n"
             "res = mcp_client.call_tool('ticket_list', "

@@ -60,11 +60,15 @@ Each key subdirectory has its own `AGENTS.md` with deeper detail. See the
 ### Two-transport MCP server
 
 The MCP server (`lib/hive_mcp/server.py`) supports two transports:
-- **http** (port 7891): Used by the dashboard, the CLI, and spawned agents
-  (the harness calls tools over localhost HTTP).
+- **http** (port 7891): Used by the dashboard, the CLI (running company),
+  and spawned agents (the harness calls tools over localhost HTTP). The
+  CLI on a STOPPED company instead runs the tool functions in-process
+  (the mcp_client ladder: HTTP → in-process — 0.20 T1; no dead stdio
+  spawn, no per-spawn NOTE line).
 - **stdio**: A plain programmatic transport — run the server as a child
   process from a script, test, or interactive session and talk JSON-RPC
-  over its stdin/stdout.
+  over its stdin/stdout. The CLI does not use it (the in-process rung
+  replaced the retired one-shot spawn); its consumers are programmatic.
 
 ### Agent runtime (the harness)
 

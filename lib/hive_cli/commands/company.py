@@ -15,8 +15,9 @@ import subprocess
 import sys
 from pathlib import Path
 
-from hive_cli import mcp_client
-
+# T1 (0.20): mcp_client imports in handle_status only — start/stop
+# shell out to scripts directly and never pay the transport (or its
+# lazy SDK import).
 
 # Resolve hive install root once (G9: lib/hive_paths.py is the single
 # implementation — the mirrored copies are gone).
@@ -380,6 +381,7 @@ def _print_board(company_dir: str, data: dict, dept: str | None) -> int | None:
 
 
 def handle_status(args) -> int:
+    from hive_cli import mcp_client
     project_root = _project_root(args)
     company_dir = str(Path(project_root) / ".company")
     payload: dict = {"company_dir": company_dir}

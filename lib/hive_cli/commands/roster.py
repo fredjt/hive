@@ -30,7 +30,9 @@ import json
 import sys
 from pathlib import Path
 
-from hive_cli import mcp_client, present
+# T1 (0.20): mcp_client imports in the handler body only — present is
+# pure rendering (SDK-free) and stays at module level.
+from hive_cli import present
 from hive_cli.commands import company_dir as _company_dir
 
 
@@ -47,6 +49,7 @@ def _known_depts(roster_file: Path) -> list[str]:
 
 
 def handle(args) -> int:
+    from hive_cli import mcp_client
     cd = _company_dir()
     # The CLI checks before calling: today a no-workspace dir lands on
     # the script's silent `[]`, rc 0 — the init hint is the answer.

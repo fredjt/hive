@@ -5,11 +5,13 @@ from __future__ import annotations
 import json
 import sys
 
-from hive_cli import mcp_client
-
 
 def handle_invoke(args) -> int:
     """hive tool <name> --arg key=value ..."""
+    # T1 (0.20): the mcp_client import is in the handler body — this
+    # is a tool command, so it pays the transport (and its lazy SDK
+    # import); no other command does.
+    from hive_cli import mcp_client
     payload = {}
     for kv in args.arg:
         if "=" not in kv:
@@ -29,6 +31,7 @@ def handle_invoke(args) -> int:
 
 def handle_list(args) -> int:
     """hive tools — list MCP tools."""
+    from hive_cli import mcp_client
     try:
         tools = mcp_client.list_tools()
     except Exception as e:
