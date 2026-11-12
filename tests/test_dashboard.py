@@ -2006,3 +2006,33 @@ class TestSpawnContractEndpoints:
         assert all(ev["spawn_id"] == "spawn-b" for ev in glob["events"])
         assert cursor2.get("spawn-b") == 3
         assert glob2["events"] == []
+
+class TestSpawnContractSpa:
+    """T1 (0.21): static probes over the DELIVERED script — the Watch row
+    addresses a spawn it can name (spawn_id || id fallback, the disabled-
+    with-title branch present so no data-spawn-id can render empty), and
+    the per-spawn viewer's empty state tells the truth when the fetch
+    answered stream-not-found."""
+
+    def test_watch_button_uses_spawn_id_with_id_fallback(self):
+        content = _spa_text()
+        assert "s.spawn_id||s.id" in content, (
+            "the Watch row must address the spawn by spawn_id || id — "
+            "on 0.20 it rendered s.spawn_id, which no live record carried")
+        assert 'disabled title="No spawn id' in content, (
+            "a record with neither spawn_id nor id must render a "
+            "disabled button whose title names the defect — data-spawn-id"
+            " must never render empty")
+        assert 'if(!spawnId)return' in content, (
+            "openSpawnStream must guard a falsy spawn id instead of "
+            "opening a viewer that cannot address a stream")
+
+    def test_stream_not_found_empty_state_is_honest(self):
+        content = _spa_text()
+        assert "error==='stream-not-found'" in content, (
+            "the viewer must record when the stream endpoint answered "
+            "stream-not-found")
+        assert "is missing" in content, (
+            "the per-spawn empty state must say the stream file is "
+            "missing instead of claiming the agent may still be "
+            "generating its first message")
