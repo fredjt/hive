@@ -1,4 +1,5 @@
 """Tests for hive dashboard — structure and server."""
+import base64
 import json
 import re
 import shutil
@@ -6,6 +7,7 @@ import subprocess
 import sys
 import os
 import time
+import urllib.parse
 import urllib.request
 import uuid
 from pathlib import Path
@@ -1864,3 +1866,143 @@ class TestDashboardEmptyBoard:
         finally:
             proc.terminate()
             proc.wait(timeout=10)
+
+@pytest.mark.skipif(not _node_available(), reason="node not available")
+class TestSpawnContractEndpoints:
+    """T1 (0.21): the spawn data contract at the read path.
+
+    /api/spawns/active and /api/spawns/global-stream must resolve a real
+    spawn from BOTH record shapes: the 0.21+ shape agent-spawn.sh writes
+    (spawn_id + stream_file, exactly as the script emits it) and the
+    orphaned 0.20 shape (id only — orphan-recovery owns their lifecycle).
+    Resolution is spawn_id || id || the record file's stem for the id,
+    and stream_file || logs/streams/<spawn_id>.jsonl for the stream.
+    On 0.20 the Watch button rendered data-spawn-id="", the global
+    stream's meta map keyed on rec.spawn_id was {} for every population,
+    and the Events column / "Total events (live)" always read 0."""
+
+    @staticmethod
+    def _free_port():
+        s = socket.socket()
+        s.bind(("127.0.0.1", 0))
+        p = s.getsockname()[1]
+        s.close()
+        return p
+
+    @staticmethod
+    def _start_server(company, port):
+        proc = subprocess.Popen(
+            ["node", "lib/dashboard/server.js", "--dir", str(company),
+             "--port", str(port)],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            cwd=str(Path(__file__).resolve().parent.parent))
+        deadline = time.time() + 10
+        while time.time() < deadline:
+            if proc.poll() is not None:
+                raise AssertionError("dashboard exited before ready")
+            try:
+                with urllib.request.urlopen(
+                        f"http://127.0.0.1:{port}/api/status", timeout=1):
+                    return proc
+            except Exception:
+                time.sleep(0.1)
+        raise AssertionError("dashboard did not start")
+
+    @staticmethod
+    def _get_json(url):
+        with urllib.request.urlopen(url, timeout=5) as r:
+            return json.loads(r.read())
+
+    @staticmethod
+    def _company(tmp_path, records, stream_lines):
+        company = tmp_path / ".company"
+        (company / "logs" / "active").mkdir(parents=True)
+        (company / "logs" / "streams").mkdir(parents=True)
+        for name, rec in records.items():
+            (company / "logs" / "active" / (name + ".json")).write_text(
+                json.dumps(rec))
+            (company / "logs" / "streams" / (name + ".jsonl")).write_text(
+                "".join(json.dumps({"type": "system", "subtype": "init",
+                                    "n": i}) + "\n"
+                        for i in range(stream_lines)))
+        return company
+
+    def _run_both_endpoints(self, tmp_path, records):
+        company = self._company(tmp_path, records, stream_lines=3)
+        port = self._free_port()
+        proc = self._start_server(company, port)
+        try:
+            active = self._get_json(
+                f"http://127.0.0.1:{port}/api/spawns/active")
+            glob = self._get_json(
+                f"http://127.0.0.1:{port}/api/spawns/global-stream")
+            cursor2 = json.loads(
+                base64.b64decode(glob["cursor"]).decode())
+            glob2 = self._get_json(
+                f"http://127.0.0.1:{port}/api/spawns/global-stream"
+                f"?cursor={urllib.parse.quote(glob['cursor'])}")
+            return active, glob, glob2, cursor2
+        finally:
+            proc.terminate()
+            proc.wait(timeout=10)
+
+    def test_fresh_record_contract(self, tmp_path):
+        """A record shaped EXACTLY as agent-spawn.sh writes it (0.21+) + a
+        3-line stream file: /api/spawns/active returns spawn_id and
+        stream_lines 3; /api/spawns/global-stream returns the 3 wrapped
+        events with active_count 1 and a cursor that yields 0 new events
+        on the next poll."""
+        company = tmp_path / ".company"
+        records = {"spawn-a": {
+            "id": "spawn-a",
+            "spawn_id": "spawn-a",
+            "stream_file": str(company / "logs" / "streams" /
+                               "spawn-a.jsonl"),
+            "agent": "ic-engineer", "dept": "rd", "role": "IC",
+            "ticket": "RD-1", "started_at": "2026-11-12T00:00:00Z",
+            "pid": str(os.getpid()),
+        }}
+        active, glob, glob2, cursor2 = self._run_both_endpoints(
+            tmp_path, records)
+        assert len(active["active"]) == 1
+        rec = active["active"][0]
+        assert rec["spawn_id"] == "spawn-a"
+        assert rec["stream_lines"] == 3, (
+            "stream_lines must count the stream file's lines off the "
+            f"stream_file pointer (got {rec.get('stream_lines')!r})")
+        assert glob["active_count"] == 1
+        assert glob["total"] == 3
+        assert len(glob["events"]) == 3
+        for ev in glob["events"]:
+            assert ev["spawn_id"] == "spawn-a"
+            assert ev["agent"] == "ic-engineer"
+            assert "event" in ev and "line" in ev
+        assert cursor2.get("spawn-a") == 3
+        assert glob2["events"] == [], (
+            "the returned cursor must replay nothing on the next poll")
+
+    def test_orphan_020_record_fallback(self, tmp_path):
+        """A 0.20-shape record (id + pid only — no spawn_id, no
+        stream_file) + a stream file at the convention path: both
+        endpoints still resolve the spawn via the fallback chain."""
+        records = {"spawn-b": {
+            "id": "spawn-b",
+            "agent": "vp-it", "dept": "it", "role": "VP", "ticket": "",
+            "started_at": "2026-11-12T00:00:00Z",
+            "pid": str(os.getpid()),
+        }}
+        active, glob, glob2, cursor2 = self._run_both_endpoints(
+            tmp_path, records)
+        assert len(active["active"]) == 1
+        rec = active["active"][0]
+        assert rec["spawn_id"] == "spawn-b", (
+            "the response must carry the resolved spawn_id even for a "
+            "0.20 orphan record")
+        assert rec["stream_lines"] == 3, (
+            "the stream must resolve from the logs/streams/<id>.jsonl "
+            "convention when stream_file is absent")
+        assert glob["active_count"] == 1
+        assert len(glob["events"]) == 3
+        assert all(ev["spawn_id"] == "spawn-b" for ev in glob["events"])
+        assert cursor2.get("spawn-b") == 3
+        assert glob2["events"] == []
