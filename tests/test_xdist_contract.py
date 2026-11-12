@@ -17,8 +17,14 @@ one theme: tests sharing mutable state across xdist workers.
 Each was fixed by hand; this file is what prevents the next one. See the
 "xdist worker contract" section of the root AGENTS.md."""
 import ast
+import configparser
+import os
 import re
+import subprocess
+import sys
 from pathlib import Path
+
+import pytest
 
 TESTS_DIR = Path(__file__).resolve().parent
 
@@ -340,6 +346,96 @@ class TestXdistGroupContract:
             "pytest.ini must run the loadgroup strategy — under the "
             "default --dist=load an xdist_group mark alone cannot "
             "stop a class from being split across workers")
+
+    def test_pytest_ini_uses_the_section_pytest_reads(self):
+        """0.19 — the pin above only exists if pytest reads the file.
+
+        pytest reads the [pytest] section of a pytest.ini. The
+        [tool:pytest] spelling (setup.cfg's section) in a pytest.ini is
+        SILENTLY ignored — every ini option in it reads back as the
+        default (verified on pytest 8.4 and 9.1: addopts=[]), --dist
+        falls back to per-test load, and the ordered e2e classes split
+        and flake. The 0.18 pin was dead on arrival for exactly this
+        reason; this is the static half of the proof (the runtime half
+        is test_loadgroup_pin_is_live)."""
+        cp = configparser.ConfigParser()
+        cp.read_string((TESTS_DIR.parent / "pytest.ini").read_text())
+        assert "pytest" in cp.sections(), (
+            "pytest.ini must use the [pytest] section — the "
+            "[tool:pytest] spelling is silently ignored by pytest and "
+            "turns addopts into dead config (the 0.18 loadgroup pin "
+            "went dead exactly this way)")
+        assert "--dist=loadgroup" in cp.get("pytest", "addopts",
+                                            fallback=""), \
+            "the live [pytest] section must carry --dist=loadgroup"
+
+    # A minimal group-marked class: 7 bump tests + a final read. The
+    # class-scoped counter fixture is per-WORKER (tmp_path_factory), so
+    # the final read sees 7 only if ALL eight tests ran on one worker —
+    # i.e. only if the group was pinned. Under a dead ini (per-test
+    # load, -n 4) the eight tests scatter across four workers and the
+    # final read sees far less than 7.
+    PROBE = '''
+import pytest
+
+
+@pytest.mark.xdist_group("probe")
+class TestProbe:
+    @pytest.fixture(scope="class")
+    def counter(self, tmp_path_factory):
+        import pathlib
+        d = tmp_path_factory.mktemp("counter")
+        (d / "n").write_text("0")
+        return d
+
+    def _bump(self, counter):
+        import pathlib
+        p = pathlib.Path(counter) / "n"
+        p.write_text(str(int(p.read_text()) + 1))
+
+    def test_b01(self, counter): self._bump(counter)
+    def test_b02(self, counter): self._bump(counter)
+    def test_b03(self, counter): self._bump(counter)
+    def test_b04(self, counter): self._bump(counter)
+    def test_b05(self, counter): self._bump(counter)
+    def test_b06(self, counter): self._bump(counter)
+    def test_b07(self, counter): self._bump(counter)
+
+    def test_final(self, counter):
+        import pathlib
+        assert int((pathlib.Path(counter) / "n").read_text()) == 7
+'''
+
+    def test_loadgroup_pin_is_live(self):
+        """0.19 — runtime proof that the pin is actually in force.
+
+        A NESTED `python -m pytest -n 4` (subprocess: contract-safe) on
+        the probe class passes only if the repo's pytest.ini is read by
+        the runner AND its addopts carries --dist=loadgroup — otherwise
+        the probe's group scatters across the four workers and the
+        final read fails. This is the check that would have caught the
+        dead [tool:pytest] section on day one (the 0.18 pin was
+        inert; TestTicketHumanFace flaked on the T2 (0.19) suite run).
+        The probe module lives under .scratch/ (gitignored) so it can
+        never leak into the repo."""
+        pytest.importorskip("xdist")
+        probe_dir = TESTS_DIR.parent / ".scratch" / "xdist-probe"
+        probe_dir.mkdir(parents=True, exist_ok=True)
+        probe = probe_dir / "test_probe.py"
+        probe.write_text(self.PROBE)
+        r = subprocess.run(
+            [sys.executable, "-m", "pytest", "test_probe.py", "-n", "4",
+             "-q", "--no-header", "-p", "no:cacheprovider"],
+            cwd=str(probe_dir),
+            capture_output=True, text=True, timeout=120,
+            env={**os.environ,
+                 "PYTHONPATH": str(TESTS_DIR.parent / "lib")
+                 + os.pathsep + os.environ.get("PYTHONPATH", "")})
+        assert "8 passed" in r.stdout, (
+            "the nested probe must run all eight tests on ONE worker "
+            "(the group pinned by --dist=loadgroup) — if the repo's "
+            "pytest.ini is not read, the group scatters and the final "
+            "test sees the unmutated counter:\n" + r.stdout[-400:])
 
     def _class_scoped_fixture_names(self, tree):
         """Module-level fixture names declared scope='class'."""
