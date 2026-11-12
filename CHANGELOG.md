@@ -1,3 +1,130 @@
+## 0.20.0
+
+0.20 is the speed-and-hand release. 0.17/0.18/0.19 covered what the
+workhorses SAY (the happy paths, the empty states, the when-it-goes-
+wrong faces); the two things those releases deliberately measured and
+deferred are this release: the read-path architecture (every CLI
+command on a stopped company spawned a dead stdio server before its
+work began) and the ticket family's agent-form inputs (4–5
+positionals each, whose only consumer is a human). A third measurement
+joined: the suite wall drifted +33s over 0.18 on fixture copy time.
+After 0.20 the stopped company answers in about half the wall with no
+dead-process tax, the ticket commands take the human's form (one
+positional — the title — plus named flags; author defaults to the
+running user), and the suite wall is back at the 0.18 level. No new
+daemons, roles, stages, or providers; no invariant weakened; the MCP
+wire contract the agents ride is byte-identical (the in-process path
+runs the SAME tool functions the server exposes — one implementation,
+no transport); every --json envelope stays byte-identical; no exit
+code moves in this release.
+
+### The stopped company answers in-process (T1)
+- The CLI's transport ladder loses the dead process. mcp_client now
+  walks three rungs: (1) Streamable HTTP when the server is up — the
+  SDK client when the SDK is importable, the shared SDK-free client
+  (lib/core/mcp_http.py, httpx only) otherwise; (2) IN-PROCESS when it
+  is down — build_server() once per CLI process (cached) and the
+  registry's .fn called directly: the very function object FastMCP
+  wraps, so the envelope is byte-identical by construction — one
+  implementation, no transport, no second SDK import, no spawn;
+  (3) the house error envelope when there is neither. The one-shot
+  stdio spawn (and its per-spawn NOTE line) is retired from the CLI;
+  the stdio SERVER transport stays for programmatic consumers.
+- The mcp SDK import is LAZY: importing hive_cli.main no longer
+  imports the SDK (subprocess-pinned: 'mcp' absent from sys.modules);
+  it resolves once per process on the first tool call or list, so
+  `hive version` / `hive --help` / stop / killall / config pay only
+  the CLI import.
+- Argument filtering mirrors the wire: the transport validates
+  against the tool's parameter schema (pydantic, extra ignored) —
+  unknown keys are DROPPED, e.g. the CLI's historical `force` key on
+  ticket_move. The in-process rung filters the same way (pinned):
+  without it a stopped company's `hive ticket move` died with a
+  TypeError the wire never showed.
+- list_tools() takes the same ladder (HTTP → the in-process registry —
+  the keys the except branch already introspected; one path, no
+  spawn); the SDK-free wire path and its `[]` are unchanged.
+- Tests: the existing stopped-company face tests (roster/status/ticket
+  list/gates/release) now ride the in-process rung and pin the faces
+  byte-for-byte (their env is the dead port — the same golden, the
+  new transport); new pins: transport identity (the same tool over a
+  live ephemeral-port HTTP server and in-process returns EQUAL
+  dicts), the wire's unknown-key drop, the lazy-import subprocess,
+  the moved wording ("in-process fallback unavailable"), the retired
+  stdio spawn (no StdioServerParameters / stdio_client / _stdio_session
+  in mcp_client.py — house surface-guard shape) and the stdio server
+  transport's survival.
+
+### The ticket family takes the human's hand (T2)
+- create: the one thing a human always has — the title — is the single
+  positional; the rest are named flags, and the state layer's choice
+  lists (TICKET_TYPES / TICKET_PRIORITIES from hive_state.core — one
+  source of truth) sit in the `--type` / `--priority` help:
+  `hive ticket create <title> --dept D --type T --priority P
+  [--description DESC] [--created-by NAME] [--source SRC]
+  [--estimate EST]`. `--description` is OPTIONAL (ticket-create.sh
+  requires dept/type/title only); the payload passes "" and the state
+  layer omits the empty field from the doc.
+- move: comment/author leave the positional line —
+  `hive ticket move <dept> <id> <status> [--comment C] [--author A]
+  [--reason R] [--force]` (ticket-move.sh takes them as optional
+  positionals; the CLI passes them positionally, the flags are the
+  human's interface).
+- comment: the body is the third positional, `--author` a flag —
+  `hive ticket comment <dept> <id> <comment> [--author A]`.
+- author defaults to getpass.getuser() (the 0.18 T3 precedent — a
+  human does not re-type who they are); the MCP payload shape is
+  unchanged and every --json envelope is byte-identical (same tool
+  call, same keys).
+- The 0.19 forms are the named usage error (rc 1, the 0.19 T1
+  contract): the 5-positional create is pinned to create NO ticket.
+  claim/approve are unchanged (their consumers carry machine
+  identities).
+- Tests: the lifecycle class's mutations take the new forms; the
+  comment golden shows the default author (the running OS user); the
+  retirement pin and the omitted-description create are new; the
+  parser tests and the in-process-fallback e2e moved with the forms.
+  CLI.md's ticket section moved in the same commit (the docs test's
+  checked lines; the stale type/priority lists now read the state
+  layer's real lists).
+
+### The suite wall is back at the 0.18 level (T3)
+- The 0.19 duration profile measured the +33s drift as fixture COPY
+  time, not test work. The biggest copy: TestInstallScaffoldsUserConfig's
+  install_tree — a per-test copytree of the session install base
+  (venv + runtime core) paid five times for five tests that only
+  differ in their scratch HOME.
+- install_tree is class-scoped: ONE copy per class, the 5 install runs
+  share the tree (the session base stays the read-only copy source —
+  the S5 contract unchanged at the session level). Safety, verified:
+  the user-config branch never writes into the tree (only the venv
+  branch does, idempotently) and ALL FIVE tests pass on the one
+  shared tree.
+- The class is @pytest.mark.xdist_group-pinned (the worker contract
+  for a class-scoped mutable fixture).
+
+### The cut (T4)
+Before/after — the 0.19.0 and 0.20.0 faces, side by side (R3):
+
+| command | 0.19.0 | 0.20.0 (this host) |
+|---|---|---|
+| `hive roster` (stopped company) | 2.38s wall + the spawn NOTE line | 1.29s wall, no NOTE |
+| `hive status` (stopped company) | 2.13s wall + the spawn NOTE line | 1.10s wall, no NOTE |
+| `hive version` / `hive --help` | 0.99s each | ~0.25s each (no SDK import) |
+| `hive ticket create` (new ticket) | `rd bug high "Fix login" "It 500s"` | `"Fix login" --dept rd --type bug --priority high` |
+| `hive ticket move` | 5 positionals (+reason) | 3 positionals + `--comment`/`--author`/`--reason` |
+| `hive ticket comment` | 4 positionals | 3 positionals + `--author` (defaults to the running user) |
+| suite wall, this host, `-n 8` | 249.42s (1552 passed, 6 skipped — the cut's gate-2) | 206.35s (1558 passed, 6 skipped) |
+
+Price, against the 0.18.0 baseline (R3) — the wall RETURNS: the
+read path's dead-process tax and the per-test fixture copy are both
+gone, and +24 tests did not grow it.
+
+| metric (0.18.0 → 0.20.0) | before | after |
+|---|---|---|
+| suite wall, this host, `-n 8` | 216.41s (1534 passed, 6 skipped) | 206.35s (1558 passed, 6 skipped) |
+| CI test-job wall (3.12 / 3.13 rows) | 245s / 328s (run 43173304337) | recorded against this tree's CI run in the follow-up docs commit (the 0.18 precedent) |
+
 ## 0.19.0
 
 0.19 is the when-it-goes-wrong release. 0.17 and 0.18 covered the
