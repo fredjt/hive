@@ -258,13 +258,52 @@ class TestMain:
         rc = main([])
         assert isinstance(rc, int)  # Should return an int
 
-    def test_main_with_help(self):
-        """main(['--help']) should exit 0."""
+    def test_main_with_help(self, capsys):
+        """main(['--help']) should exit 0 (T1, 0.19: the real check —
+        before the fix main() swallowed the SystemExit and returned 1,
+        so the try/except body above never ran and the test passed
+        vacuously)."""
         from hive_cli.main import main
-        try:
-            main(["--help"])
-        except SystemExit as e:
-            assert e.code == 0
+        rc = main(["--help"])
+        capsys.readouterr()  # the help text — captured, not the point
+        assert rc == 0
+
+    def test_help_exits_zero_for_every_subcommand(self, capsys):
+        """T1 (0.19): --help exits 0 for EVERY registered subcommand
+        (top-level and nested — ticket/chat/agent/gates/backlog/config,
+        gh + gh pr + gh push, release, llm, ...), walked from the
+        parser tree, not sampled. Help is the one command a user runs
+        to LEARN the tool and the one a script runs to PROBE it; it
+        must never exit as if it had failed."""
+        from hive_cli.main import build_parser, main
+
+        def walk(p, prefix):
+            sp = getattr(p, "_subparsers", None)
+            if sp is not None and sp._group_actions:
+                for name, sub in sp._group_actions[0].choices.items():
+                    path = prefix + [name]
+                    yield path
+                    yield from walk(sub, path)
+
+        paths = list(walk(build_parser(), []))
+        assert len(paths) >= 30, \
+            "the walk must reach every registered subcommand, not a sample"
+        for path in paths:
+            capsys.readouterr()
+            rc = main(path + ["--help"])
+            out = capsys.readouterr().out
+            assert rc == 0, \
+                f"hive {' '.join(path)} --help exits {rc}, not 0 (out: {out[:120]!r})"
+
+    def test_usage_error_exits_one(self, capsys):
+        """T1 (0.19): a usage error still exits 1 — argparse prints the
+        named message (the 0.18 T3 set for usage errors) and the code
+        does not move. Only the help code moves (1 -> 0)."""
+        from hive_cli.main import main
+        rc = main(["ticket", "create"])  # missing all five positionals
+        err = capsys.readouterr().err
+        assert rc == 1
+        assert "error" in err.lower()
 
 
 class TestMcpStdioFallback:

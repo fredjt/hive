@@ -389,8 +389,16 @@ def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     try:
         args = parser.parse_args(argv)
-    except SystemExit:
-        return 1
+    except SystemExit as e:
+        # T1 (0.19): honor argparse's own exit code. It raises
+        # SystemExit(0) for -h/--help and SystemExit(2) for usage
+        # errors; the old collapse turned both into 1, so the help a
+        # user runs to LEARN the tool (and a script runs to probe it —
+        # `hive --help && next` under `set -e`) exited as if it had
+        # failed. Help is 0; a usage error keeps the 0.18 T3 set —
+        # named usage errors exit 1, argparse's printed message being
+        # the named message. No other rc moves.
+        return 0 if e.code in (0, None) else 1
 
     # Bare `hive` opens dashboard
     if not args.cmd:
