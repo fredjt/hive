@@ -2303,3 +2303,38 @@ class TestSseTransport:
                 proc.wait(timeout=5)
             except subprocess.TimeoutExpired:
                 proc.kill()
+
+
+@pytest.mark.skipif(not _node_available(), reason="node not available")
+class TestSseClientSpa:
+    """T2 (0.21): the delivered SPA shows what the transport is doing.
+
+    Static probes on the exact script the browser runs: the reconnect
+    backoff constants (5 s -> 10 s -> 30 s cap), the 'reconnecting…'
+    state string, and the last-byte-age mechanism — the three things
+    that were invisible on 0.20 (the flat 5 s loop, no reconnect state,
+    'live' meaning 'a socket once opened')."""
+
+    def test_reconnect_backoff_and_state_strings(self):
+        content = _spa_text()
+        assert "SSE_RETRY_INITIAL_MS=5000" in content, (
+            "the initial reconnect delay constant (5 s) must be present "
+            "in the delivered script")
+        assert "SSE_RETRY_MAX_MS=30000" in content, (
+            "the 30 s reconnect cap constant must be present in the "
+            "delivered script")
+        assert "sseRetryMs*2" in content or "sseRetryMs=Math.min(" in content, (
+            "the backoff must DOUBLE the delay per failure (0.20 was a "
+            "flat 5 s loop)")
+        assert "reconnecting" in content, (
+            "the 'reconnecting' state must exist in the delivered script "
+            "(0.20 could only show connecting/disconnected)")
+        assert "reconnecting\u2026" in content, (
+            "the user-visible 'reconnecting\u2026' string must be in the "
+            "delivered indicator")
+        assert "lastByteAt=Date.now()" in content, (
+            "the last-byte-age tracker (lastByteAt) must be updated in "
+            "the delivered script")
+        assert "since the last RECEIVED byte" in content or "byte " in content, (
+            "the live indicator must carry the age of the last received "
+            "byte, so 'live' means bytes arriving")
