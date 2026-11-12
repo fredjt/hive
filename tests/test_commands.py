@@ -1098,7 +1098,7 @@ class TestChatSendDefaults:
             env={**os.environ,
                  "PYTHONPATH": str(Path(__file__).resolve()
                                    .parent.parent / "lib"),
-                 # dead port — force the stdio MCP fallback
+                 # dead port — force the in-process transport (0.20 T1)
                  "HIVE_MCP_PORT": "1",
                  "COMPANY_DIR": company_dir})
 
@@ -2904,9 +2904,12 @@ class TestTicketHumanFace:
     """T1 (0.17): `hive ticket` speaks human by default; --json is the
     0.16.0 envelope byte-for-byte — the machine contract does not move.
 
-    End-to-end through the real CLI + stdio MCP server + bash scripts
-    on a seeded workspace (the dead HIVE_MCP_PORT forces the stdio
-    transport, so a live HTTP server can never answer). Tests run in
+    End-to-end through the real CLI + bash scripts on a seeded
+    workspace (the dead HIVE_MCP_PORT forces the IN-PROCESS transport
+    — 0.20 T1 — so a live HTTP server can never answer). T2 (0.20):
+    create/move/comment take the human's hand — the title is the one
+    positional, the rest are named flags, and the author defaults to
+    the running user (the 0.18 T3 chat-send precedent). Tests run in
     definition order: the read paths first (3 seeded tickets), then the
     mutations (create -> move -> claim -> comment on the new ticket,
     approve on the seeded in-review one)."""
@@ -3053,8 +3056,12 @@ class TestTicketHumanFace:
 
     def test_create_human_line_and_hint(self, seeded):
         cd = seeded / ".company"
-        r = self._cli(seeded, str(cd), "ticket", "create", "rd", "feature", "high",
-                      "New ticket from the human face", "Needs doing",
+        # T2 (0.20): the human's hand — the title is the one positional;
+        # the rest are named flags (0.18 T3's chat-send shape).
+        r = self._cli(seeded, str(cd), "ticket", "create",
+                      "New ticket from the human face",
+                      "--dept", "rd", "--type", "feature", "--priority", "high",
+                      "--description", "Needs doing",
                       "--created-by", "user", "--source", "manual")
         assert r.returncode == 0, r.stderr
         lines = r.stdout.strip().splitlines()
@@ -3065,9 +3072,10 @@ class TestTicketHumanFace:
 
     def test_create_json_envelope(self, seeded):
         cd = seeded / ".company"
-        r = self._cli(seeded, str(cd), "ticket", "create", "rd", "bug", "low",
-                      "Second human ticket", "Also needs doing",
-                      "--json")
+        r = self._cli(seeded, str(cd), "ticket", "create",
+                      "Second human ticket",
+                      "--dept", "rd", "--type", "bug", "--priority", "low",
+                      "--description", "Also needs doing", "--json")
         assert r.returncode == 0, r.stderr
         env = json.loads(r.stdout)
         assert set(env.keys()) == {"ok", "exit_code", "stderr", "stdout"}
@@ -3077,7 +3085,7 @@ class TestTicketHumanFace:
     def test_move_human_resulting_state(self, seeded):
         cd = seeded / ".company"
         r = self._cli(seeded, str(cd), "ticket", "move", "rd", "RD-0104",
-                      "sprint-current", "into the sprint", "user")
+                      "sprint-current", "--comment", "into the sprint")
         assert r.returncode == 0, r.stderr
         assert r.stdout.strip().splitlines()[0] == \
             "✓ Moved RD-0104: backlog -> sprint-current"
@@ -3085,7 +3093,8 @@ class TestTicketHumanFace:
     def test_move_json_envelope(self, seeded):
         cd = seeded / ".company"
         r = self._cli(seeded, str(cd), "ticket", "move", "rd", "RD-0105",
-                      "sprint-current", "into the sprint", "user", "--json")
+                      "sprint-current", "--comment", "into the sprint",
+                      "--json")
         assert r.returncode == 0, r.stderr
         env = json.loads(r.stdout)
         assert set(env.keys()) == {"ok", "exit_code", "stderr", "stdout"}
@@ -3101,10 +3110,30 @@ class TestTicketHumanFace:
 
     def test_comment_human(self, seeded):
         cd = seeded / ".company"
+        import getpass
         r = self._cli(seeded, str(cd), "ticket", "comment", "rd", "RD-0104",
-                      "user", "on it")
+                      "on it")
         assert r.returncode == 0, r.stderr
-        assert r.stdout.strip() == "✓ Comment added to RD-0104 by user"
+        # T2 (0.20): the body is the positional; author DEFAULTS to the
+        # OS user running the command (the golden shows it).
+        assert r.stdout.strip() == (f"✓ Comment added to RD-0104 by "
+                                    f"{getpass.getuser()}")
+
+    def test_old_create_form_is_retired(self, seeded):
+        """T2 (0.20): the 0.19 5-positional create form is gone — its only
+        consumer was a human, and the title+flags form replaced it. The
+        old hand now fails with the NAMED usage error (rc 1, the 0.19
+        T1 contract), not a ticket named 'rd'."""
+        cd = seeded / ".company"
+        before = len(list((cd / "departments" / "rd" / "tickets" / "backlog")
+                          .glob("*.json")))
+        r = self._cli(seeded, str(cd), "ticket", "create", "rd", "feature",
+                      "high", "Fix login", "It 500s")
+        assert r.returncode == 1, (r.stdout + r.stderr)
+        assert "error" in (r.stderr + r.stdout).lower(), r.stderr
+        after = len(list((cd / "departments" / "rd" / "tickets" / "backlog")
+                         .glob("*.json")))
+        assert before == after, "the retired form must not create a ticket"
 
     def test_approve_human_and_json(self, seeded):
         cd = seeded / ".company"
@@ -3122,6 +3151,56 @@ class TestTicketHumanFace:
         r = self._cli(seeded, str(cd), "ticket", "list", "rd")
         assert r.returncode == 0, r.stderr
         assert "5 ticket(s) in rd" in r.stdout
+
+
+class TestTicketCreateNoDescription:
+    """T2 (0.20): `hive ticket create` takes the title + named flags and
+    --description is OPTIONAL (ticket-create.sh requires dept/type/title
+    only — the human's hand doesn't invent a description)."""
+
+    @staticmethod
+    def _cli(cwd, company_dir, *args):
+        return subprocess.run(
+            [sys.executable, "-m", "hive_cli.main", *args],
+            capture_output=True, text=True, timeout=120,
+            cwd=str(cwd),
+            env={**os.environ,
+                 "PYTHONPATH": str(Path(__file__).resolve()
+                                   .parent.parent / "lib"),
+                 "HIVE_MCP_PORT": "1",  # stopped company — in-process (0.20 T1)
+                 "COMPANY_DIR": company_dir,
+                 "DASHBOARD_PORT": "3456"})
+
+    def test_create_without_description_still_creates(self, tmp_company_dir):
+        r = self._cli(tmp_company_dir, str(tmp_company_dir / ".company"),
+                      "ticket", "create", "No description ticket",
+                      "--dept", "rd", "--type", "chore",
+                      "--priority", "low")
+        assert r.returncode == 0, r.stdout + r.stderr
+        tdir = (tmp_company_dir / ".company" / "departments" / "rd" /
+                "tickets" / "backlog")
+        tickets = [p for p in tdir.glob("*.json")
+                   if p.name != "counter.json"]
+        assert len(tickets) == 1, [p.name for p in tdir.iterdir()]
+        t = json.loads(tickets[0].read_text())
+        assert t["title"] == "No description ticket"
+        # the state layer omits an empty description from the doc
+        assert t.get("description") in (None, "")
+
+    def test_old_five_positional_form_is_a_named_usage_error(self,
+                                                             tmp_company_dir):
+        """T2 (0.20) retirement pin: the 0.19 form (dept type priority
+        title description) no longer parses — rc 1 with argparse's NAMED
+        usage error (the 0.19 T1 contract), and no ticket is created."""
+        r = self._cli(tmp_company_dir, str(tmp_company_dir / ".company"),
+                      "ticket", "create", "rd", "feature", "high",
+                      "Fix login", "It 500s")
+        assert r.returncode == 1, r.stdout + r.stderr
+        assert "error" in (r.stderr + r.stdout).lower(), r.stderr
+        tdir = (tmp_company_dir / ".company" / "departments" / "rd" /
+                "tickets")
+        assert not (tdir.is_dir() and any(tdir.rglob("*.json"))), \
+            "the retired form must not create a ticket"
 
 
 @pytest.mark.xdist_group("chat-human")

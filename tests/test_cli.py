@@ -61,7 +61,11 @@ class TestBuildParser:
 
     def test_parser_has_ticket(self):
         p = _make_parser()
-        args = p.parse_args(["ticket", "create", "it", "feature", "medium", "Title", "Desc"])
+        # T2 (0.20): the human's hand — the title is the one positional;
+        # dept/type/priority are named flags.
+        args = p.parse_args(["ticket", "create", "Title",
+                             "--dept", "it", "--type", "feature",
+                             "--priority", "medium", "--description", "Desc"])
         assert args.cmd == "ticket"
         assert args.action == "create"
 
@@ -69,17 +73,29 @@ class TestBuildParser:
         p = _make_parser()
         for action in ["create", "get", "list", "move", "claim", "comment", "approve"]:
             if action == "create":
-                args = p.parse_args(["ticket", action, "it", "feature", "medium", "Title", "Desc"])
+                # T2 (0.20): the title is the one positional; the rest
+                # are named flags.
+                args = p.parse_args(["ticket", action, "Title",
+                                     "--dept", "it", "--type", "feature",
+                                     "--priority", "medium",
+                                     "--description", "Desc"])
             elif action == "get":
                 args = p.parse_args(["ticket", action, "it", "TICKET-001"])
             elif action == "list":
                 args = p.parse_args(["ticket", action])
             elif action == "move":
-                args = p.parse_args(["ticket", action, "it", "TICKET-001", "done", "Comment", "Author"])
+                # T2 (0.20): comment/author left the positional line —
+                # the flags are the human's interface.
+                args = p.parse_args(["ticket", action, "it", "TICKET-001",
+                                     "done", "--comment", "Comment",
+                                     "--author", "Author"])
             elif action == "claim":
                 args = p.parse_args(["ticket", action, "it", "TICKET-001", "IC", "agent-id", "Agent Name"])
             elif action == "comment":
-                args = p.parse_args(["ticket", action, "it", "TICKET-001", "Author", "Comment"])
+                # T2 (0.20): the body is the third positional; author
+                # is a flag (it defaults to the running user).
+                args = p.parse_args(["ticket", action, "it", "TICKET-001",
+                                     "Comment", "--author", "Author"])
             elif action == "approve":
                 args = p.parse_args(["ticket", action, "it", "TICKET-001", "Verifier", "Rationale here with enough chars"])
             assert args.action == action
@@ -299,7 +315,7 @@ class TestMain:
         named message (the 0.18 T3 set for usage errors) and the code
         does not move. Only the help code moves (1 -> 0)."""
         from hive_cli.main import main
-        rc = main(["ticket", "create"])  # missing all five positionals
+        rc = main(["ticket", "create"])  # missing the title + required flags
         err = capsys.readouterr().err
         assert rc == 1
         assert "error" in err.lower()
@@ -342,8 +358,8 @@ class TestInProcessFallback:
                "PYTHONPATH": str(install_dir / "lib")}
         r = subprocess.run(
             [sys.executable, "-m", "hive_cli.main", "ticket", "create",
-             "it", "feature", "medium", "in-process-fallback",
-             "regression"],
+             "in-process-fallback regression",  # T2 (0.20) human form
+             "--dept", "it", "--type", "feature", "--priority", "medium"],
             capture_output=True, text=True, timeout=120,
             cwd=str(tmp_project_dir), env=env)
         combined = r.stdout + r.stderr

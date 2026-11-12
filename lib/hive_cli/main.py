@@ -25,6 +25,10 @@ if str(_LIB) not in sys.path:
 
 from hive_paths import version_file  # noqa: E402
 
+# T2 (0.20): the ticket create choices come from the state layer — the
+# same list ticket-create.sh validates against (one source of truth).
+from hive_state.core import TICKET_PRIORITIES, TICKET_TYPES  # noqa: E402
+
 from hive_cli.commands import (  # noqa: E402
     company, dashboard, init, ticket, chat, agent, gates, backlog,
     config, doctor, tool, killall, llm, selftest, roster,
@@ -97,8 +101,19 @@ def _add_ticket(sub) -> None:
     sp = p.add_subparsers(dest="action", required=True)
 
     pc = sp.add_parser("create", help="Create a new ticket")
-    pc.add_argument("dept"); pc.add_argument("type"); pc.add_argument("priority")
-    pc.add_argument("title"); pc.add_argument("description")
+    # T2 (0.20): the human's hand — the title is the one positional
+    # (the thing a human always has); the rest are named flags, each
+    # with the state layer's choice list in its help.
+    pc.add_argument("title", help="The ticket's title — the one positional")
+    pc.add_argument("--dept", required=True,
+                    help="The department (an org-chart key, e.g. rd)")
+    pc.add_argument("--type", required=True, choices=list(TICKET_TYPES),
+                    help="The ticket type (the state layer's choice list)")
+    pc.add_argument("--priority", required=True, choices=list(TICKET_PRIORITIES),
+                    help="The priority (the state layer's choice list)")
+    pc.add_argument("--description",
+                    help="The description (optional — the script requires "
+                         "dept/type/title only)")
     pc.add_argument("--created-by", default="user"); pc.add_argument("--source", default="manual")
     pc.add_argument("--estimate")
     pc.add_argument("--json", action="store_true",
@@ -116,9 +131,16 @@ def _add_ticket(sub) -> None:
     pl.add_argument("--json", action="store_true")
 
     pm = sp.add_parser("move", help="Move a ticket between statuses")
+    # T2 (0.20): comment/author/reason leave the positional line — the
+    # flags are the human's face (the chat-send precedent, 0.18 T3); --author
+    # defaults to the running OS user.
     pm.add_argument("dept"); pm.add_argument("ticket_id"); pm.add_argument("new_status")
-    pm.add_argument("comment"); pm.add_argument("author")
-    pm.add_argument("reason", nargs="?"); pm.add_argument("--force", action="store_true")
+    pm.add_argument("--comment",
+                    help="The move's comment (optional)")
+    pm.add_argument("--author", help="Who moves it (default: the OS user "
+                                     "running the command)")
+    pm.add_argument("--reason", help="The reason (e.g. the rejection rationale)")
+    pm.add_argument("--force", action="store_true")
     pm.add_argument("--json", action="store_true",
                     help="Print the raw MCP envelope (machine contract; human by default)")
 
@@ -130,7 +152,11 @@ def _add_ticket(sub) -> None:
                      help="Print the raw MCP envelope (machine contract; human by default)")
 
     pco = sp.add_parser("comment", help="Add a comment")
-    pco.add_argument("dept"); pco.add_argument("ticket_id"); pco.add_argument("author"); pco.add_argument("comment")
+    # T2 (0.20): the body — not the author — is the third positional;
+    # author defaults to the running OS user (the chat-send precedent).
+    pco.add_argument("dept"); pco.add_argument("ticket_id"); pco.add_argument("comment")
+    pco.add_argument("--author", help="Who comments (default: the OS user "
+                                      "running the command)")
     pco.add_argument("--json", action="store_true",
                      help="Print the raw MCP envelope (machine contract; human by default)")
 

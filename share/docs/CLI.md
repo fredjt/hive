@@ -52,12 +52,12 @@ are named (0.17):
 ## Tickets
 
 ```
-hive ticket create <dept> <type> <priority> <title> <description> [--created-by NAME] [--source SRC] [--estimate EST] [--json]
+hive ticket create <title> --dept D --type T --priority P [--description DESC] [--created-by NAME] [--source SRC] [--estimate EST] [--json]
 hive ticket get <dept> <ticket-id> [--json]
 hive ticket list [dept] [status] [--json]
-hive ticket move <dept> <ticket-id> <new-status> <comment> <author> [reason] [--force] [--json]
+hive ticket move <dept> <ticket-id> <new-status> [--comment C] [--author A] [--reason R] [--force] [--json]
 hive ticket claim <dept> <ticket-id> <role> <agent-id> <agent-name> [--worktree-path PATH] [--json]
-hive ticket comment <dept> <ticket-id> <author> <comment> [--json]
+hive ticket comment <dept> <ticket-id> <comment> [--author A] [--json]
 hive ticket approve <dept> <ticket-id> <verifier> <rationale> [--json]
 ```
 
@@ -72,6 +72,17 @@ always shown. Affected: `ticket *`, `chat *`, `backlog prioritize`,
 `gates *`, `agent *`, `gh status` / `gh pr *`, `release status` / `list`.
 `hive tool` / `hive tools` keep raw JSON — that IS their correct face.
 
+**The human's hand (0.20 T2).** The ticket family a human drives takes
+the shape `chat send` got in 0.18 T3: the one thing a human always has
+— the title — is the single positional; the rest are named flags, and
+the state layer's choice lists sit in the `--type` / `--priority`
+help. `--description` is optional (the script requires dept/type/title
+only), and `move` / `comment` take `--author` defaulting to the OS user
+running the command — a human does not re-type who they are. `claim`
+and `approve` are unchanged (their consumers carry machine identities).
+The 0.19 positional forms fail with the named usage error (rc 1);
+`--json` and every exit code are as in 0.19.0.
+
 The `ticket list` table: ID / TYPE / PRI / STATUS / TITLE (truncated) /
 ASSIGNEE, ordered `backlog → sprint-current → in-progress → in-review →
 done`, with a count line. `dept` is optional (0.17): omitted, the whole company is listed, grouped — one table per department under `<dept>:` headers, per-dept count lines, and the company total; existing-but-empty departments stay visible (count 0). A named department that does not exist is an error (`Department '<dept>' not found`, exit 1); an existing one with zero tickets is a count-0 listing (exit 0) — the "no tickets" vs "doesn't exist" distinction. `--json` is the per-dept doc or the company-wide doc `{"departments": {...}, "total": N, "mode": ...}`. `ticket get` prints the card: header line
@@ -79,8 +90,8 @@ done`, with a count line. `dept` is optional (0.17): omitted, the whole company 
 `author (timestamp): body`, and a verification block (gates_passed /
 verified_by + rationale) when present.
 
-`type`: `bug | feature | task | research | infrastructure | documentation`
-`priority`: `LOW | MEDIUM | HIGH | CRITICAL`
+`type`: `feature | bug | improvement | chore | infrastructure | research`
+`priority`: `critical | high | medium | low`
 `status`: `backlog | sprint-current | in-progress | in-review | done | archive`
 `reason` (for `done`): `implemented | rejected | done`
 

@@ -646,10 +646,13 @@ class TestCLIDocs:
         assert "byte-for-byte" in content
         # Each affected subcommand documents the flag
         for line in [
-            "hive ticket create <dept> <type> <priority> <title> <description> [--created-by NAME] [--source SRC] [--estimate EST] [--json]",
+            # T2 (0.20): the human's hand — the title is the one
+            # positional; the rest are named flags.
+            "hive ticket create <title> --dept D --type T --priority P [--description DESC] [--created-by NAME] [--source SRC] [--estimate EST] [--json]",
             "hive ticket get <dept> <ticket-id> [--json]",
             "hive ticket list [dept] [status] [--json]",
-            "hive ticket move <dept> <ticket-id> <new-status> <comment> <author> [reason] [--force] [--json]",
+            "hive ticket move <dept> <ticket-id> <new-status> [--comment C] [--author A] [--reason R] [--force] [--json]",
+            "hive ticket comment <dept> <ticket-id> <comment> [--author A] [--json]",  # T2 (0.20)
             "hive chat send <channel> <message> [--author NAME] [--dept DEPT] [--json]",
             "hive roster [dept] [--active] [--json]",  # T2 (0.18)
             "hive chat read <channel> [--last N] [--since ISO_TIMESTAMP] [--json]",

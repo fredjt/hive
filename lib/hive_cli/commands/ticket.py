@@ -8,6 +8,7 @@ byte-identical to 0.16.0. The exit-code matrix is unchanged
 
 from __future__ import annotations
 
+import getpass
 import sys
 
 # T1 (0.20): mcp_client imports in the handler body only — present is
@@ -21,9 +22,13 @@ def handle(args) -> int:
     cd = _company_dir()
     action = args.action
     if action == "create":
+        # T2 (0.20): the human's hand — title + named flags; description
+        # is optional (the script requires dept/type/title only) — an
+        # omitted one passes the tool's required `description` parameter
+        # as the empty string the script already tolerates.
         payload = {
             "dept": args.dept, "type": args.type, "priority": args.priority,
-            "title": args.title, "description": args.description,
+            "title": args.title, "description": args.description or "",
             "created_by": args.created_by, "source": args.source,
         }
         if args.estimate:
@@ -49,10 +54,14 @@ def handle(args) -> int:
         return present.finish(res, args,
                               lambda r: present._render_list(r.get("data") or {}))
     elif action == "move":
+        # T2 (0.20): the flags are the human's face — comment/author/reason
+        # left the positional line; author defaults to the running OS user
+        # (the chat-send precedent, 0.18 T3). The MCP payload shape is
+        # unchanged (the same keys, the same defaults the agents carry).
         payload = {
             "dept": args.dept, "ticket_id": args.ticket_id,
-            "new_status": args.new_status, "comment": args.comment,
-            "author": args.author, "force": args.force,
+            "new_status": args.new_status, "comment": args.comment or "",
+            "author": args.author or getpass.getuser(), "force": args.force,
         }
         if args.reason: payload["reason"] = args.reason
         if cd: payload["company_dir"] = cd
@@ -68,8 +77,11 @@ def handle(args) -> int:
         res = mcp_client.call_tool("ticket_claim", payload)
         return present.finish(res, args, present.render_action)
     elif action == "comment":
+        # T2 (0.20): the body is the third positional; author defaults to
+        # the running OS user (the chat-send precedent, 0.18 T3).
         payload = {"dept": args.dept, "ticket_id": args.ticket_id,
-                   "author": args.author, "comment": args.comment}
+                   "author": args.author or getpass.getuser(),
+                   "comment": args.comment}
         if cd: payload["company_dir"] = cd
         res = mcp_client.call_tool("ticket_comment", payload)
         return present.finish(res, args, present.render_action)
