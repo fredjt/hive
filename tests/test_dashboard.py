@@ -2269,3 +2269,37 @@ class TestSseTransport:
                 proc.wait(timeout=5)
             except subprocess.TimeoutExpired:
                 proc.kill()
+
+    def test_ticket_board_watchers_functional(self, tmp_path):
+        """A company WITH a department ticket board: on 0.20, setupWatchers
+        threw 'STATUSES is not defined' (STATUSES is module-local to
+        api/handlers.js, and handlers.js requires sse.js — a circular
+        import would bind the partially-initialised exports), so the
+        whole watcher tree never installed: the board's ticket dirs fired
+        no ticket-change at all. Now the ticket write fires."""
+        company = tmp_path / ".company"
+        (company / "departments" / "it" / "tickets" / "backlog").mkdir(parents=True)
+        (company / "chat").mkdir()
+        (company / "manifest.json").write_text(
+            json.dumps({"project_name": "watchers-test"}))
+        port = self._free_port()
+        proc = self._start_server(company, port)
+        try:
+            sse = _SSESocket(port)
+            try:
+                sse.wait_for_head(8.0)
+                (company / "departments" / "it" / "tickets" / "backlog" /
+                 "RD-1.json").write_text(json.dumps({"id": "RD-1"}))
+                sse.wait_for(b'event: ticket-change', 8.0)
+                got = sse.body_lines()
+                assert any("ticket-change" in l for l in got), (
+                    "a write under departments/it/tickets/backlog/ fired "
+                    f"no ticket-change (body: {got[:4]!r})")
+            finally:
+                sse.close()
+        finally:
+            proc.terminate()
+            try:
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                proc.kill()
