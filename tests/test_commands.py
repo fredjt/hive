@@ -499,6 +499,28 @@ class TestDoctorLlmHint:
         assert user_cfg in out, "doctor must name the exact file to edit"
         assert "hive config edit" in out
 
+    def test_unconfigured_line_says_it_once(self, tmp_path):
+        """T2 (0.19): the shared hint did not move — doctor's
+        'LLM provider configured' check line still carries it exactly
+        once (byte-identical to 0.18.0). The stutter was the llm-test
+        call site's prefix; the hint's other consumers (this line, the
+        selftest probe, the start preflight) never prepended."""
+        env = {**os.environ, "HOME": str(tmp_path),
+               "PYTHONPATH": str(self.install_dir / "lib")
+               + os.pathsep + os.environ.get("PYTHONPATH", "")}
+        r = subprocess.run(
+            [sys.executable, "-m", "hive_cli.main", "doctor"],
+            capture_output=True, text=True, env=env,
+            cwd=str(self.install_dir), timeout=120,
+        )
+        lines = [l for l in (r.stdout + r.stderr).splitlines()
+                 if "LLM provider configured" in l and "unconfigured" in l]
+        assert len(lines) == 1, \
+            f"expected the single LLM provider check line: {lines!r}"
+        assert lines[0].count("unconfigured —") == 1, \
+            "the check line carries the shared hint exactly once — " \
+            "the hint kept its 0.18.0 shape (one 'unconfigured —' opening)"
+
 
 class TestConfigIntegrity:
     """A1: a typo'd section/key in the user config must be discoverable in
@@ -1203,6 +1225,16 @@ class TestLlmTestCommand:
         user_cfg = str(tmp_path / ".config" / "hive" / "config.toml")
         assert user_cfg in out, \
             "the unconfigured message must name the config file to edit"
+        # T2 (0.19): the test message is `llm test: <hint>` — exactly
+        # ONE "unconfigured —" (the hint's own opening). The old call
+        # site prepended "LLM unconfigured — " to a hint that already
+        # opens with "unconfigured —" and stuttered it; the shared
+        # hint itself kept its shape byte-identical (doctor's line,
+        # below, pins it). (Count the em-dash phrase: the tmp config
+        # path this message names may itself contain the word.)
+        assert r.stdout.startswith("llm test: "), r.stdout
+        assert r.stdout.count("unconfigured —") == 1, \
+            f"the hint's own opening must not be repeated: {r.stdout!r}"
 
 
 class TestLlmUsageLogNaming:
@@ -1263,11 +1295,140 @@ class TestLlmUsageLogNaming:
         assert "ic-engineer" in r.stdout
 
     def test_stats_missing_log_names_the_new_log(self, tmp_path):
+        """T2 (0.19): a workspace with no usage log yet is the named
+        absence (exit 0) — the old rc-1 conflated message is gone; the
+        log it names is still the new one."""
         company = tmp_path / ".company"
         company.mkdir()
         r = self._run(company, "stats")
+        assert r.returncode == 0, r.stdout + "\n" + r.stderr
+        assert "llm-usage.log" in r.stdout
+        assert "No LLM calls recorded yet" in r.stdout
+        assert r.stderr == ""
+
+
+class TestLlmNamedStates:
+    """T2 (0.19): hive llm stats/tail name their states — the
+    0.17 T3 family for the LLM command. A workspace that has never
+    called the LLM is a healthy, expected state (the named absence,
+    exit 0; `stats --json` is the same zero document an empty log
+    produces — one contract, whether or not the file exists); a
+    directory with no .company is an error (exit 1, the house error
+    envelope under --json); an empty log prints a VISIBLE zero line
+    (exit 0), not the silent-empty hole 0.17 T3a / 0.18 T2 closed for
+    status and roster. Populated-log output does not move (the
+    TestLlmUsageLogNaming / TestLlmStatsWindow goldens)."""
+
+    install_dir = Path(__file__).resolve().parent.parent
+
+    @staticmethod
+    def _run(company, *args):
+        env = {**os.environ, "COMPANY_DIR": str(company),
+               "HIVE_ROOT": str(TestLlmNamedStates.install_dir),
+               "PYTHONPATH": str(TestLlmNamedStates.install_dir / "lib")
+               + os.pathsep + os.environ.get("PYTHONPATH", "")}
+        return subprocess.run(
+            [sys.executable, "-m", "hive_cli.main", "llm", *args],
+            capture_output=True, text=True, env=env,
+            cwd=str(TestLlmNamedStates.install_dir), timeout=60,
+        )
+
+    def test_stats_no_log_in_workspace_is_named_absence(self, tmp_path):
+        company = tmp_path / ".company"
+        company.mkdir()
+        r = self._run(company, "stats")
+        assert r.returncode == 0, r.stdout + "\n" + r.stderr
+        assert "No LLM calls recorded yet" in r.stdout
+        assert str(company / "logs" / "llm-usage.log") in r.stdout
+        assert r.stderr == ""
+
+    def test_tail_no_log_in_workspace_is_named_absence(self, tmp_path):
+        company = tmp_path / ".company"
+        company.mkdir()
+        r = self._run(company, "tail")
+        assert r.returncode == 0, r.stdout + "\n" + r.stderr
+        assert "No LLM calls recorded yet" in r.stdout
+        assert str(company / "logs" / "llm-usage.log") in r.stdout
+
+    def test_stats_no_log_no_workspace_is_an_error(self, tmp_path):
+        r = self._run(tmp_path / "no-company", "stats")
         assert r.returncode == 1
-        assert "llm-usage.log" in r.stdout + r.stderr
+        assert "not a hive project root" in r.stderr
+        assert "hive init" in r.stderr
+        assert r.stdout == ""
+
+    def test_tail_no_log_no_workspace_is_an_error(self, tmp_path):
+        r = self._run(tmp_path / "no-company", "tail")
+        assert r.returncode == 1
+        assert "not a hive project root" in r.stderr
+
+    def test_stats_no_log_no_workspace_json_is_the_error_envelope(self, tmp_path):
+        """the house error envelope — the gates.py no-departments shape
+        (ok/exit_code/stderr/data), printed under --json."""
+        r = self._run(tmp_path / "no-company", "stats", "--json")
+        assert r.returncode == 1
+        obj = json.loads(r.stdout)
+        assert set(obj.keys()) == {"ok", "exit_code", "stderr", "data"}
+        assert obj["ok"] is False
+        assert obj["exit_code"] == 1
+        assert obj["data"] is None
+        assert "not a hive project root" in obj["stderr"]
+        assert "hive init" in obj["stderr"]
+
+    def test_stats_no_log_json_is_the_zero_document(self, tmp_path):
+        company = tmp_path / ".company"
+        company.mkdir()
+        r = self._run(company, "stats", "--json")
+        assert r.returncode == 0, r.stdout + "\n" + r.stderr
+        obj = json.loads(r.stdout)
+        assert set(obj.keys()) == {"log", "window", "since", "calls",
+                                   "tokens", "cost_usd", "by_model",
+                                   "by_caller", "by_mode"}
+        assert obj["log"] == str(company / "logs" / "llm-usage.log")
+        assert obj["window"] == "24h"
+        assert obj["calls"] == 0
+        assert obj["tokens"] == 0
+        assert obj["cost_usd"] == 0.0
+        assert obj["by_model"] == {}
+        assert obj["by_caller"] == {}
+        assert obj["by_mode"] == {}
+
+    def test_no_log_zero_document_matches_empty_log_zero(self, tmp_path):
+        """one contract: no calls = the zero document, whether or not
+        the file exists — the missing-log document is the empty-log
+        document (same keys, same zeros, same log path)."""
+        company = tmp_path / ".company"
+        (company / "logs").mkdir(parents=True)
+        no_log = json.loads(self._run(company, "stats", "--json").stdout)
+        (company / "logs" / "llm-usage.log").write_text("")
+        empty_log = json.loads(self._run(company, "stats", "--json").stdout)
+        for k in no_log:
+            if k == "since":
+                continue  # wall-clock cutoff — the contract is the document, not the instant
+            assert no_log[k] == empty_log[k], f"{k} differs: {no_log[k]!r} != {empty_log[k]!r}"
+        assert set(no_log.keys()) == set(empty_log.keys())
+
+    def test_tail_empty_log_prints_the_visible_zero_line(self, tmp_path):
+        company = tmp_path / ".company"
+        (company / "logs").mkdir(parents=True)
+        (company / "logs" / "llm-usage.log").write_text("")
+        r = self._run(company, "tail")
+        assert r.returncode == 0, r.stdout + "\n" + r.stderr
+        assert "No LLM calls recorded — the usage log is empty." in r.stdout
+        assert len(r.stdout.strip().splitlines()) == 1, \
+            "the zero line is the whole face — visible, not silent"
+
+    def test_stats_empty_log_keeps_the_zero_face(self, tmp_path):
+        """stats on an EXISTING empty log prints its zero face (the
+        0.18.0 face), not the not-yet-created absence line — the two
+        states keep their two faces."""
+        company = tmp_path / ".company"
+        (company / "logs").mkdir(parents=True)
+        (company / "logs" / "llm-usage.log").write_text("")
+        r = self._run(company, "stats")
+        assert r.returncode == 0, r.stdout + "\n" + r.stderr
+        assert "calls:  0" in r.stdout
+        assert "No LLM calls recorded yet" not in r.stdout
 
 
 class TestLlmStatsWindow:

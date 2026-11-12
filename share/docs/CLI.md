@@ -245,10 +245,31 @@ hive config set tdd.applies_to_agents 'ic-engineer, ic-infra'   # same result
 ## LLM endpoint
 
 ```
-hive llm stats                   # windowed call/token/cost totals (--window 24h|1h)
+hive llm stats                   # windowed call/token/cost totals (--window 24h|1h|7d|all)
 hive llm tail [N]                # tail recent LLM calls
 hive llm test                    # one-shot round trip through the configured endpoint
 ```
+
+The command a human runs when the company misbehaves names its states
+(0.19):
+
+* `llm test` unconfigured prints `llm test: <the canonical hint>` —
+  one "unconfigured" (the hint the doctor and start preflight share,
+  byte-identical; the 0.18.0 call-site prefix that stuttered it is
+  gone);
+* `stats` / `tail` in a workspace with no usage log yet print
+  `No LLM calls recorded yet — the usage log (.company/logs/
+  llm-usage.log) appears after the company's first call.` (exit 0 — a
+  fresh company that has never called the LLM is a healthy, expected
+  state, not an error); `stats --json` prints the same zero document
+  an empty log produces (one contract: no calls = the zero document,
+  whether or not the file exists);
+* a directory with no `.company` at all is the error `not a hive
+  project root — no .company here; run 'hive init'` (exit 1; `stats
+  --json` prints the error envelope);
+* an EXISTING empty log: `tail` prints the visible zero line `No LLM
+  calls recorded — the usage log is empty.` (exit 0 — visible, not
+  silent), and `stats` prints its zero face (calls: 0, exit 0).
 
 ## GitHub
 

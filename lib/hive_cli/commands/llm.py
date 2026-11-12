@@ -13,6 +13,8 @@ from collections import Counter
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+from hive_cli import present
+
 
 def _company_dir() -> Path:
     cd = os.environ.get("COMPANY_DIR")
@@ -77,8 +79,12 @@ def _llm_test() -> int:
     env = dict(os.environ)
     resolved = llm_providers.resolve(env=env)
     if not resolved.is_configured:
-        print("llm test: LLM unconfigured — "
-              + llm_providers.unconfigured_hint(env=env))
+        # T2 (0.19): the call site was the stutter — the shared hint
+        # already opens with "unconfigured —" (byte-identical for the
+        # doctor/harness/start consumers; the fix is HERE, not in
+        # llm_providers.py), so the old prefix read "LLM unconfigured
+        # — unconfigured — edit the [llm] section of ...".
+        print(f"llm test: {llm_providers.unconfigured_hint(env=env)}")
         _TEST_RECORD.clear()
         _TEST_RECORD.update(provider="", model="", base_url="",
                             key_source="", latency_ms=None, reply="",
@@ -209,24 +215,50 @@ def handle(args) -> int:
         return _save_llm_test(_llm_test())
     cd = _company_dir()
     log_path = _usage_log_path(cd)
-    if log_path is None:
-        print(f"No llm-usage.log at {cd / 'logs' / 'llm-usage.log'} "
-              f"(legacy llm-tiny.log looked for too).", file=sys.stderr)
-        print("Either no calls have happened yet, or you're not in a hive project root.", file=sys.stderr)
+    if log_path is None and not cd.is_dir():
+        # T2 (0.19): a directory with no .company at all is an ERROR —
+        # the old message gave one rc-1 sentence to two different
+        # states (the conflated pair the 0.17 T3 family split for
+        # status/roster). A workspace that has simply never called the
+        # LLM is below: a healthy, expected state.
+        msg = "not a hive project root — no .company here; run 'hive init'"
+        if getattr(args, "json", False):
+            print(present.envelope({"ok": False, "exit_code": 1,
+                                    "stderr": msg, "data": None}))
+        else:
+            print(msg, file=sys.stderr)
         return 1
+    log_missing = log_path is None
+    if log_missing:
+        # the log the company's first call will create; stats --json
+        # prints the zero document for this path (one contract: no
+        # calls = the zero document, whether or not the file exists)
+        log_path = cd / "logs" / "llm-usage.log"
 
     entries = []
-    with log_path.open() as f:
-        for line in f:
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                entries.append(json.loads(line))
-            except json.JSONDecodeError:
-                continue
+    if not log_missing:
+        with log_path.open() as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    entries.append(json.loads(line))
+                except json.JSONDecodeError:
+                    continue
 
     if args.action == "tail":
+        if not entries:
+            # T2 (0.19): the silent-empty hole — an empty or not-yet-
+            # created log printed NOTHING with rc 0, while stats on the
+            # same state printed its zero face. Visible, not silent
+            # (the 0.17 T3 family), both actions.
+            if log_missing:
+                print(f"No LLM calls recorded yet — the usage log "
+                      f"({log_path}) appears after the company's first call.")
+            else:
+                print("No LLM calls recorded — the usage log is empty.")
+            return 0
         for e in entries[-args.n:]:
             ts = e.get("ts", "?")
             caller = e.get("caller", "unknown")
@@ -307,6 +339,15 @@ def handle(args) -> int:
             "by_caller": dict(by_caller),
             "by_mode": dict(by_mode),
         }, indent=2))
+        return 0
+
+    if log_missing:
+        # T2 (0.19): the named absence — a fresh workspace that has
+        # never made a call is healthy and expected (exit 0), not the
+        # old rc-1 "either/or". The --json face above already printed
+        # the zero document for this path.
+        print(f"No LLM calls recorded yet — the usage log "
+              f"({log_path}) appears after the company's first call.")
         return 0
 
     window_label = window if window != "all" else "all (entire log)"
