@@ -2338,3 +2338,88 @@ class TestSseClientSpa:
         assert "since the last RECEIVED byte" in content or "byte " in content, (
             "the live indicator must carry the age of the last received "
             "byte, so 'live' means bytes arriving")
+
+
+@pytest.mark.skipif(not _node_available(), reason="node not available")
+class TestSseSpawnRegistry:
+    """T2 (0.21): spawn start/stop fires its own event.
+
+    logs/active/ (the spawn registry agent-spawn.sh writes/removes) is a
+    watched dir on its own: 0.20's activity list updated only on the next
+    unrelated event, and nothing refreshed the processes or roster views
+    from a spawn start/stop at all."""
+
+    @staticmethod
+    def _free_port():
+        s = socket.socket()
+        s.bind(("127.0.0.1", 0))
+        p = s.getsockname()[1]
+        s.close()
+        return p
+
+    @staticmethod
+    def _start_server(company, port, env=None):
+        full_env = os.environ.copy()
+        if env:
+            full_env.update(env)
+        proc = subprocess.Popen(
+            ["node", "lib/dashboard/server.js", "--dir", str(company),
+             "--port", str(port)],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            cwd=str(Path(__file__).resolve().parent.parent),
+            env=full_env)
+        deadline = time.time() + 10
+        while time.time() < deadline:
+            if proc.poll() is not None:
+                raise AssertionError("dashboard exited before ready")
+            try:
+                with urllib.request.urlopen(
+                        f"http://127.0.0.1:{port}/api/status", timeout=1):
+                    return proc
+            except Exception:
+                time.sleep(0.1)
+        raise AssertionError("dashboard did not start")
+
+    def test_spawn_registry_create_and_remove_fire_their_own_events(self,
+                                                                    tmp_path):
+        company = tmp_path / ".company"
+        (company / "logs").mkdir(parents=True)
+        (company / "manifest.json").write_text(
+            json.dumps({"project_name": "spawn-registry"}))
+        port = self._free_port()
+        proc = self._start_server(company, port)
+        try:
+            sse = _SSESocket(port)
+            try:
+                sse.wait_for_head(8.0)
+                active = company / "logs" / "active"
+                active.mkdir(parents=True, exist_ok=True)
+                # spawn starts
+                (active / "spawn-t24.json").write_text(
+                    json.dumps({"id": "spawn-t24", "pid": str(os.getpid())}))
+                sse.wait_for(b"event: spawn-registry-change", 8.0)
+                first = sse.buf.count(b"event: spawn-registry-change")
+                assert first >= 1
+                # Outwait the 500 ms emit debounce: create and delete share
+                # the key 'active/<id>', so a delete inside the window is
+                # coalesced away (a real start/stop pair is minutes apart).
+                time.sleep(0.6)
+                # spawn stops
+                (active / "spawn-t24.json").unlink()
+                deadline = time.time() + 8
+                while (time.time() < deadline and
+                       sse.buf.count(b"event: spawn-registry-change") < first + 1):
+                    sse.pump(0.2)
+                assert (sse.buf.count(b"event: spawn-registry-change")
+                        >= first + 1), (
+                    "removing the active record fired no second "
+                    "spawn-registry-change (a spawn STOPPING must be its "
+                    "own event)")
+            finally:
+                sse.close()
+        finally:
+            proc.terminate()
+            try:
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                proc.kill()
