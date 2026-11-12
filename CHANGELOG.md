@@ -115,8 +115,8 @@ providers.
   fixture in its own temp dir, the final read-path test seeing the
   unmutated state. Every green gate since 0.18 (gate-2, the CI
   rows, the 0.19 T1/T2 suite runs) was per-test luck; the T2 run
-  drew the split (TestTicketHumanFace: "5 ticket(s) in rd" read as
-  4).
+  drew the split (TestTicketHumanFace: three of the class's tests
+  failed — the mutations had landed on another worker).
 - The section is now `[pytest]`, and the pin is provably live:
   `test_pytest_ini_uses_the_section_pytest_reads` (the file parses
   as `[pytest]` with the option in it — the section name IS the
@@ -124,6 +124,20 @@ providers.
   — subprocess, contract-safe — of a group-marked probe class, 7
   bumps + a final read, that passes only if all eight tests land on
   one worker, i.e. only if the ini is read and the group pinned).
+- The live pin immediately caught the NEXT upstream regression: the
+  cut's CI row failed the way the contract was supposed to make
+  impossible — both full rows split TestTicketHumanFace ('RD-0104'
+  where 'RD-0105' was expected) and the probe failed. Locally green,
+  red on CI: CI installs the latest pytest, which since 2026-10-27 is
+  9.2.0 — and pytest 9.2.0 broke xdist's loadgroup distribution
+  (upstream pytest-dev/pytest#15303: xdist_group-marked tests scatter
+  across workers, silently, no error; reproduced in a clean full-dep
+  venv — the class passes on 9.1.1 and splits on 9.2.0 with the same
+  xdist 3.8.0, pin from addopts or explicit on the CLI). The xdist
+  fix (pytest-dev/pytest-xdist#1402) is unmerged, so the release
+  carries the ecosystem workaround: `pytest<9.2` in ci.yml and
+  requirements-dev.txt (holoviz/panel#9006 capped the same way).
+  Revisit the cap when a fixed xdist release ships.
 
 ### The cut (T5)
 Before/after — the 0.18.0 and 0.19.0 faces, side by side (R3):
@@ -145,7 +159,7 @@ target is an in-process CLI face over files that do not move.
 | metric (0.18.0 → 0.19.0) | before | after |
 |---|---|---|
 | suite wall, this host, `-n 8` | 216.41s (1534 passed, 6 skipped) | 258.34s (1552 passed, 6 skipped) — the +42s carries the +18 tests and the scheduling change the infra fix activated: 0.18's wall ran under the DEAD pin (plain per-test load); 0.19's runs under the real loadgroup, where the 7 ordered e2e classes are single-unit work on one worker instead of split chunks |
-| CI test-job wall (3.12 / 3.13 rows) | 373s / 248s (run 43127286924) | recorded against this tree's CI run in the follow-up docs commit (the 0.18 precedent) |
+| CI test-job wall (3.12 / 3.13 rows) | 373s / 248s (run 43127286924) | 245s / 328s (run 43173304337, the cap commit's row — both green) — the per-row slow side flipped between releases; the row set is runner-variance, the code is the same both ways |
 
 
 ## 0.18.0
