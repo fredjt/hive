@@ -312,9 +312,17 @@ hive release abort               # mark a release failed and file an IT ticket
 ```
 
 `release status` prints the sprint/stage line plus the release fields
-(version, publish status, tarball, sha256 when present), and names a
-missing record; `release list` prints the version / publish-status /
-sprint / ended table. `--json` is the 0.16 raw dict byte-for-byte.
+(version, publish status, tarball, sha256 when present). Its two absent
+states each get one sentence (0.19): with no version and no sprint
+record — the normal fresh-workspace state, no sprint has reached stage 6
+yet — it says `No release in flight — a release record appears when a
+sprint reaches stage 6 (build-and-test); 'hive release list' shows what
+is published.` and exits 0; a version given that is not recorded says
+`No release record for <version> — 'hive release list' shows what is
+recorded.` and exits 1 (the house matrix — 0 iff the call succeeded). A
+record found prints as before. `release list` prints the version /
+publish-status / sprint / ended table. `--json` is the 0.16 raw dict
+byte-for-byte.
 
 ## Operations
 

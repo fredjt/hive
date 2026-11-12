@@ -33,7 +33,13 @@ def handle(args) -> int:
         if getattr(args, "json", False):
             print(present.envelope(res))
         else:
-            print(present.render_release_status(res))
+            print(present.render_release_status(res, args.version))
+        # T4 (0.19): version-not-found moves 0 -> 1 (the one named rc
+        # move of this release — the house matrix); the no-version,
+        # no-record state stays 0 — a named absence (the fresh
+        # workspace), not an error.
+        if res.get("error"):
+            return 1 if getattr(args, "version", None) else 0
         return 0
 
     if args.action == "list":

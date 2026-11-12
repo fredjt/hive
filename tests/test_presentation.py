@@ -399,8 +399,19 @@ class TestRenderAgentGhRelease:
         assert "  version: 0.17.0" in out and "  tarball: /t/tar.gz" in out
 
     def test_release_status_error(self):
-        assert present.render_release_status({"error": "no release record found"}) == \
-            "No release record found (no release record found)"
+        # T4 (0.19): one sentence per state — the doubled
+        # `No release record found (no release record found)` wrapped
+        # the wire text inside its own sentence; the no-version state
+        # is a named absence, the version state a lookup miss.
+        assert present.render_release_status(
+            {"error": "no release record found"}) == (
+            "No release in flight — a release record appears when a "
+            "sprint reaches stage 6 (build-and-test); 'hive release "
+            "list' shows what is published.")
+        assert present.render_release_status(
+            {"error": "no release record found"}, "0.17.0") == (
+            "No release record for 0.17.0 — 'hive release list' shows "
+            "what is recorded.")
 
     def test_release_history(self):
         data = {"releases": [{"version": "0.16.0", "publish_status": "published",

@@ -3726,6 +3726,9 @@ class TestReleaseHumanFace:
         assert json.loads(out) == payload  # byte-for-byte face, same keys
 
     def test_status_no_record_named(self, monkeypatch, capsys):
+        """T4 (0.19): no version + no record — the NORMAL fresh
+        workspace state — is a named absence, exit 0; the doubled
+        `No release record found (no release record found)` is gone."""
         from hive_cli.commands import release
         monkeypatch.setenv("COMPANY_DIR", "/tmp/no-such-company-t1h")
         monkeypatch.setattr(release.mcp_client, "call_tool",
@@ -3733,7 +3736,29 @@ class TestReleaseHumanFace:
         rc = release.handle(self._ns())
         out = capsys.readouterr().out
         assert rc == 0
-        assert "No release record found" in out
+        assert ("No release in flight — a release record appears when a "
+                "sprint reaches stage 6 (build-and-test); 'hive release "
+                "list' shows what is published.") in out
+        assert "no release record found" not in out
+
+    def test_status_version_not_found_named(self, monkeypatch, capsys):
+        """T4 (0.19): a version given and not found is the house
+        matrix — the one named rc move of this release (0 -> 1); the
+        wire text stays in the --json envelope, not the sentence."""
+        from hive_cli.commands import release
+        monkeypatch.setenv("COMPANY_DIR", "/tmp/no-such-company-t1h")
+        monkeypatch.setattr(release.mcp_client, "call_tool",
+                            lambda name, p: {"error": "no release record found"})
+        rc = release.handle(self._ns(version="0.17.0"))
+        out = capsys.readouterr().out
+        assert rc == 1
+        assert ("No release record for 0.17.0 — 'hive release list' shows "
+                "what is recorded.") in out
+        assert "no release record found" not in out
+        rc = release.handle(self._ns(version="0.17.0", json=True))
+        out = capsys.readouterr().out
+        assert rc == 1
+        assert json.loads(out) == {"error": "no release record found"}
 
     def test_list_human_table(self, monkeypatch, capsys):
         from hive_cli.commands import release

@@ -494,9 +494,19 @@ def render_gh_pr(res: dict) -> str:
     return "✓ PR operation completed"
 
 
-def render_release_status(data: dict) -> str:
+def render_release_status(data: dict, version: str | None = None) -> str:
     if data.get("error"):
-        return f"No release record found ({data['error']})"
+        # T4 (0.19): one sentence per state — the doubled
+        # `No release record found (no release record found)` wrapped
+        # the wire text inside its own sentence, and the no-version,
+        # no-record state (the NORMAL fresh-workspace state) wore the
+        # same stuttered sentence as a lookup miss.
+        if version:
+            return (f"No release record for {version} — "
+                    "'hive release list' shows what is recorded.")
+        return ("No release in flight — a release record appears when a "
+                "sprint reaches stage 6 (build-and-test); 'hive release "
+                "list' shows what is published.")
     rel = data.get("release") or {}
     lines = [f"sprint={data.get('sprint_id') or '?'}  stage={data.get('stage') or '?'}"]
     for k in ("version", "publish_status", "test_log", "verify_log", "tarball", "sha256"):
