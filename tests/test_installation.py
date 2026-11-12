@@ -575,8 +575,8 @@ class TestCutReleaseScript:
         tar = subprocess.run(
             ["tar", "-cf", "-",
              "--exclude=.git", "--exclude=unsloth-tmp", "--exclude=.local",
-             "--exclude=dist", "--exclude=__pycache__", "--exclude=*.pyc",
-             "."],
+             "--exclude=.cache", "--exclude=dist",
+             "--exclude=__pycache__", "--exclude=*.pyc", "."],
             cwd=str(repo), capture_output=True, timeout=300,
         )
         # .local holds runtime-local state (container storage with
@@ -991,11 +991,17 @@ def _dirty_base(tmp_path_factory):
     copy after the copy (a 000 dir cannot be copytree'd)."""
     repo = _repo_root()
     base = tmp_path_factory.mktemp("dirty-base")
+    # .cache is excluded like unsloth-tmp: on a host whose pip cache
+    # resolves into the repo dir, the suite's own install tests run
+    # venv pips that write selfcheck files into .cache/pip WHILE this
+    # tar is reading it — a mutable dir in the tar is
+    # "file changed as we read it", and this session fixture poisons
+    # every consumer (0.19: 16 errors in one run).
     tar = subprocess.run(
         ["tar", "-cf", "-",
          "--exclude=.git", "--exclude=unsloth-tmp", "--exclude=.local",
-         "--exclude=dist", "--exclude=__pycache__", "--exclude=*.pyc",
-         "."],
+         "--exclude=.cache", "--exclude=dist",
+         "--exclude=__pycache__", "--exclude=*.pyc", "."],
         cwd=str(repo), capture_output=True, timeout=300,
     )
     assert tar.returncode == 0, tar.stderr.decode(errors="replace")
@@ -2092,8 +2098,8 @@ class TestCutReceipt:
         tar = subprocess.run(
             ["tar", "-cf", "-",
              "--exclude=.git", "--exclude=unsloth-tmp", "--exclude=.local",
-             "--exclude=dist", "--exclude=__pycache__", "--exclude=*.pyc",
-             "."],
+             "--exclude=.cache", "--exclude=dist",
+             "--exclude=__pycache__", "--exclude=*.pyc", "."],
             cwd=str(repo), capture_output=True, timeout=300)
         assert tar.returncode == 0, tar.stderr.decode(errors="replace")
         subprocess.run(["tar", "-xf", "-", "-C", str(tree)],

@@ -15,8 +15,14 @@
 # - pytest-watch  watch loop: ptw --watch lib/ -- tests/  (re-runs on change)
 # - ruff          CI's lint selection, runnable locally (the ruff-clean
 #                 guard in tests/test_dashboard.py skips without it)
+# pytest is capped below 9.2: 9.2.0 broke xdist's loadgroup
+# distribution (upstream pytest-dev/pytest#15303 — xdist_group-marked
+# tests scatter across workers, silently; the xdist fix,
+# pytest-dev/pytest-xdist#1402, is unmerged/untagged). The suite's
+# ordered e2e classes (the xdist worker contract) flake on exactly
+# that. CI carries the same cap. Revisit when a fixed xdist ships.
 ruff>=0.5
-pytest>=8.0
+pytest>=8.0,<9.2
 pytest-xdist>=3.6
 pytest-cov>=5.0
 pytest-watch>=4.0

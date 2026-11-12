@@ -432,10 +432,16 @@ class TestProbe:
                  "PYTHONPATH": str(TESTS_DIR.parent / "lib")
                  + os.pathsep + os.environ.get("PYTHONPATH", "")})
         assert "8 passed" in r.stdout, (
-            "the nested probe must run all eight tests on ONE worker "
-            "(the group pinned by --dist=loadgroup) — if the repo's "
-            "pytest.ini is not read, the group scatters and the final "
-            "test sees the unmutated counter:\n" + r.stdout[-400:])
+            "the nested probe must run all eight tests on ONE "
+            "worker (the group pinned by --dist=loadgroup). "
+            "Scattering means either the repo's pytest.ini is "
+            "not read (the section-name trap) or pytest 9.2.0 - "
+            "upstream pytest-dev/pytest#15303 broke loadgroup "
+            "distribution itself (the xdist fix, "
+            "pytest-dev/pytest-xdist#1402, is unmerged); "
+            "requirements-dev.txt and CI cap pytest<9.2 - pin "
+            "your interpreter the same way:\n" +
+            r.stdout[-400:])
 
     def _class_scoped_fixture_names(self, tree):
         """Module-level fixture names declared scope='class'."""

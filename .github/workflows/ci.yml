@@ -88,8 +88,15 @@ jobs:
           # (TestLockWheelOnly; TestCIWheelOnlyContract pins both).
           pip install --only-binary :all: -r packaging/requirements.lock.txt
           # Test deps (xdist: the suite is xdist-safe, -n auto parallelizes
-          # across the runner's cores)
-          pip install pytest anyio pytest-xdist
+          # across the runner's cores). pytest is capped below 9.2:
+          # 9.2.0 broke xdist's loadgroup distribution (upstream
+          # pytest-dev/pytest#15303 — tests marked xdist_group scatter
+          # across workers, silently; the xdist fix, pytest-dev/pytest-
+          # xdist#1402, is unmerged/untagged). The ordered e2e classes
+          # would flake on exactly that (the 0.19 CI row 43166999826
+          # drew it: TestTicketHumanFace + the pin probe failed). Revisit
+          # the cap when a fixed xdist release ships.
+          pip install "pytest<9.2" anyio pytest-xdist
           # Verify installation
           python -c "import mcp; import fastapi; import httpx; print('All dependencies installed successfully')"
 
