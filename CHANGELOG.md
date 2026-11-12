@@ -123,7 +123,7 @@ gone, and +24 tests did not grow it.
 | metric (0.18.0 → 0.20.0) | before | after |
 |---|---|---|
 | suite wall, this host, `-n 8` | 216.41s (1534 passed, 6 skipped) | 206.35s (1558 passed, 6 skipped) |
-| CI test-job wall (3.12 / 3.13 rows) | 245s / 328s (run 43173304337) | recorded against this tree's CI run in the follow-up docs commit (the 0.18 precedent) |
+| CI test-job wall (3.12 / 3.13 rows) | 245s / 328s (run 43173304337) | 205s / 266s (run 43279872920 — both green) — both rows faster than 0.19's, on the same rows |
 
 ## 0.19.0
 
