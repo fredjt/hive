@@ -406,6 +406,7 @@ class TestSprintStateIsExecutable:
         assert os.access("lib/tools/sprint-state.sh", os.X_OK)
 
 
+@pytest.mark.xdist_group("install-scaffold")
 class TestInstallScaffoldsUserConfig:
     """C3: the installer creates ~/.config/hive/config.toml from the tracked
     template — a visible config with every key defaulted at install time —
@@ -413,26 +414,34 @@ class TestInstallScaffoldsUserConfig:
     $HOME/.config/hive/env.sh for shell-level env only, and stop
     recommending the retired ANTHROPIC_*/LLM_TINY_* variable names."""
 
-    @pytest.fixture()
-    def install_tree(self, tmp_path, _installed_base):
-        """T2 (0.16): a per-test copy of the session install base (the
-        S5 contract — the base is a read-only copy source, no
-        cross-test state). install.sh against the copy REUSES the
-        copied venv (the 0.15 T1 upgrade branch — idempotent lock
-        re-install, exact-set prune) instead of paying a fresh
-        python -m venv + pip install -r lock per test; the user-config
-        assertions run under a fresh scratch HOME exactly as before."""
-        tree = tmp_path / "hive-src"
+    @pytest.fixture(scope="class")
+    def install_tree(self, tmp_path_factory, _installed_base):
+        """T3 (0.20): ONE copy of the session install base per CLASS —
+        the 5 install runs share the tree. The copy IS the measured
+        suite wall (the base carries the venv; the 0.19 profile showed
+        the drift as fixture copy time), so the per-test copytree of
+        0.16 retired: one copy per class, no cross-class state (the
+        base stays the read-only copy source — the S5 contract is
+        unchanged at the session level). Each install still runs under
+        a fresh scratch HOME (as in 0.19) and REUSES the tree's venv
+        (the 0.15 T1 upgrade branch — idempotent lock re-install,
+        exact-set prune); the user-config branch never writes into the
+        tree, so no run observes a mutation a later one cares about
+        (verified: all five pass on the one shared tree). The class is
+        xdist_group-pinned (the contract for a class-scoped mutable
+        fixture)."""
+        tree = tmp_path_factory.mktemp("install-scaffold") / "hive-src"
         shutil.copytree(_installed_base, tree)
         return tree
 
     @staticmethod
     def _run_install(tree: Path, home: Path,
                      extra_env: dict | None = None) -> subprocess.CompletedProcess:
-        # T2 (0.16): the tree is the per-test install_tree (a copy of
-        # the session _installed_base) — the venv is REUSED by the
-        # install, not rebuilt per test. The user-config branch (the
-        # subject of this class) is independent of the venv.
+        # T3 (0.20): the tree is the per-CLASS install_tree (one copy
+        # of the session _installed_base — the 5 runs share it); the
+        # venv is REUSED by every install, not rebuilt. The user-config
+        # branch (the subject of this class) is independent of the
+        # venv and of the other runs (fresh scratch HOME each).
         env = {**os.environ, "HOME": str(home)}
         if extra_env:
             env.update(extra_env)
