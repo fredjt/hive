@@ -2423,3 +2423,32 @@ class TestSseSpawnRegistry:
                 proc.wait(timeout=5)
             except subprocess.TimeoutExpired:
                 proc.kill()
+
+    def test_spawn_stream_clause_watches_the_global_stream(self):
+        content = _spa_text()
+        assert "globalStream.open" in content, (
+            "spawn-stream-change must refresh the Activity panel when the "
+            "global stream is open too — on 0.20 the global view froze "
+            "mid-typing")
+
+    def test_release_and_git_views_wired_to_their_events(self):
+        content = _spa_text()
+        # sprint-change and report-change both refresh the Releases view.
+        assert content.count("refreshActive('releases')") >= 2, (
+            "the Releases view must refresh from sprint-change (stage "
+            "flips) AND report-change (release notes)")
+        assert "refreshActive('git')" in content, (
+            "ticket-change must refresh the Git view — worktrees and "
+            "commits move when ticket state moves")
+
+    def test_gh_change_listener_present(self):
+        content = _spa_text()
+        assert "addEventListener('gh-change'" in content, (
+            "the GitHub page must listen for the gh-change event so a "
+            "synced PR/issue refreshes without navigation")
+
+    def test_config_and_brief_named_read_only(self):
+        content = _spa_text()
+        assert content.count("Read-only — refreshed when you open this view") >= 2, (
+            "Config and Brief must both name themselves read-only, "
+            "refreshed on navigation (they have no live SSE event)")
