@@ -1,3 +1,153 @@
+## 0.19.0
+
+0.19 is the when-it-goes-wrong release. 0.17 and 0.18 covered the
+workhorses' happy paths and the empty states they name; the second-
+order surface — the commands a human runs when something is wrong (the
+LLM misbehaves, a ticket is stuck, the backlog is empty, there is no
+release record yet) and the meta-command (help) — still spoke wire
+format: a fact reported twice, a stutter, a conflation, a silence,
+and help commands that exit as if they had failed. 0.19 closes that
+surface. Every fix is an in-process CLI face and exit code: the
+scripts and tools the agents call are untouched, and every --json
+envelope stays byte-identical. No new daemons, roles, stages, or
+providers.
+
+### `hive --help` exits 0: help is not a failure (T1)
+- `main()` now honors argparse's SystemExit code — 0 (help) → 0,
+  non-zero (usage error) → 1 — instead of collapsing both into rc 1.
+  The help text was correct all along; the code lied about the
+  outcome. The suite that named the contract but never checked it
+  (a try/except around a call that no longer raised) is now a real
+  walk of EVERY registered subcommand (top-level and nested:
+  ticket/chat/agent/gates/backlog/config, gh + gh pr + gh push,
+  release, llm) asserting `--help` exits 0, plus one usage error
+  pinned at rc 1.
+- Before/after: `hive --help` — 0.18.0: correct help, rc 1 → 0.19.0:
+  the same help, rc 0. `hive --help && next` stops failing under
+  `set -e`.
+
+### `hive llm` names its states (T2)
+- `llm test` unconfigured: `llm test: LLM unconfigured — unconfigured
+  — edit the [llm] section of ...` → `llm test: unconfigured — edit
+  the [llm] section of ...` — exactly one "unconfigured". The call
+  site drops the prefix; the shared hint is byte-identical for the
+  doctor/harness/start consumers (doctor's line did not move —
+  pinned).
+- `llm stats`/`tail` with no usage log: the conflated `No
+  llm-usage.log at ... Either no calls have happened yet, or you're
+  not in a hive project root.` (rc 1) splits in two, both actions,
+  both faces: a workspace with no calls yet — healthy, expected —
+  says `No LLM calls recorded yet — the usage log
+  (.company/logs/llm-usage.log) appears after the company's first
+  call.` and exits 0 (`stats --json` prints the same zero document
+  the empty log already produces — one contract: no calls = the zero
+  document, whether or not the file exists); a directory that is not
+  a hive project says `not a hive project root — no .company here;
+  run 'hive init'` and exits 1 (`stats --json` prints the house
+  error envelope).
+- `llm tail` on a log that exists but is empty: silence (rc 0) → the
+  visible zero line `No LLM calls recorded — the usage log is
+  empty.` (rc 0) — the silent-empty hole the 0.17/0.18 T3 family
+  closed for `status` and `roster`; `stats` on the same empty log
+  already printed the zero face, so the two actions of one command
+  agree.
+- Everything else is byte-identical: populated-log stats/tail
+  (goldens), the llm-test.json state file (C2), and the key-label
+  discipline (B1 — a label, never the key).
+
+### One face per fact: backlog and gates (T3)
+- The human face stops double-reporting: `present.finish` gains a
+  `pass_stderr` opt-out (default is today's always-show — no other
+  command moves); the backlog and gates-run handlers opt out,
+  because the renderer IS the face and the raw notes stay where the
+  machine reads them (the --json envelopes are byte-identical,
+  including `{"stderr": "No backlog for rd"}`).
+- `hive backlog prioritize rd` on a fresh workspace: two lines for
+  one fact (the script's `No backlog for rd` note passed through on
+  top of `Backlog for rd is empty.`) → exactly one line, exit 0.
+- `hive backlog prioritize <dept>` naming a department that does not
+  exist: rc 0 + the empty-answer face → rc 1 + the roster's face
+  verbatim, `ERROR: Department '<dept>' not found (available: ...)`
+  — the CLI-side known-dept check (the org chart, the source
+  ticket-list.sh uses; the script is untouched). Three commands, one
+  face for a named-missing department.
+- `hive gates run <dept>` with nothing to gate: two raw log lines
+  (an ISO timestamp, `(strict=...)`) + the derived sentence → the
+  one sentence, `Nothing to gate — no in-review tickets in
+  <dept>.`; a PASS/BOUNCE run renders as in 0.18.0 (goldens);
+  exit codes and the --json envelope unchanged.
+- `hive gates check <dept> <id>` with no report — the common case,
+  every ticket before its first gate run: the lowercase raw
+  `no gates report found` (rc 1) → `No gates report for <id> — the
+  ticket is not in-review yet, or its gates have not run; run
+  'hive gates run <dept>'.` (the rc did not move; only the face
+  did).
+- `gates status` config block: Python `True`/`False` → `true`/
+  `false` (the config table's spelling, 0.18 T1).
+
+### `hive release status` gets one sentence and the right code (T4)
+- `hive release status v0.17.0`: `No release record found (no
+  release record found)` with rc 0 → `No release record for
+  v0.17.0 — 'hive release list' shows what is recorded.` with
+  **rc 1** — the one rc move of this release (the house matrix: 0
+  iff the call succeeded; every other not-found query in the CLI
+  exits 1).
+- `hive release status` (no version, no sprint record) — the NORMAL
+  state of a fresh workspace, no sprint has reached stage 6 — wore
+  the same stuttered sentence as a lookup miss: → `No release in
+  flight — a release record appears when a sprint reaches stage 6
+  (build-and-test); 'hive release list' shows what is published.`,
+  exit 0 (named absence, the 0.17 T3 family).
+- The tool's envelope and the --json face are byte-identical
+  (`{"error": "no release record found"}` — the machine contract
+  does not move); `release list` is untouched (golden).
+
+### The xdist pin was dead config (test infrastructure)
+- The 0.18 worker contract pinned the suite to `--dist=loadgroup` in
+  `pytest.ini` — under a section name pytest does not read. pytest
+  reads the `[pytest]` section of a pytest.ini file; the
+  `[tool:pytest]` spelling (setup.cfg's section) in a pytest.ini is
+  SILENTLY ignored — every option in it reads back as the default
+  (verified on pytest 8.4 and 9.1: addopts reads back as `[]`). The
+  pin never ran: --dist fell back to per-test load, and the ordered
+  end-to-end classes — the ones whose class-scoped fixture carries
+  ordered state — could split across two workers, each worker's
+  fixture in its own temp dir, the final read-path test seeing the
+  unmutated state. Every green gate since 0.18 (gate-2, the CI
+  rows, the 0.19 T1/T2 suite runs) was per-test luck; the T2 run
+  drew the split (TestTicketHumanFace: "5 ticket(s) in rd" read as
+  4).
+- The section is now `[pytest]`, and the pin is provably live:
+  `test_pytest_ini_uses_the_section_pytest_reads` (the file parses
+  as `[pytest]` with the option in it — the section name IS the
+  contract) and `test_loadgroup_pin_is_live` (a nested `pytest -n 4`
+  — subprocess, contract-safe — of a group-marked probe class, 7
+  bumps + a final read, that passes only if all eight tests land on
+  one worker, i.e. only if the ini is read and the group pinned).
+
+### The cut (T5)
+Before/after — the 0.18.0 and 0.19.0 faces, side by side (R3):
+
+| command | 0.18.0 | 0.19.0 |
+|---|---|---|
+| `hive --help` | the correct help, **rc 1** | the same help, **rc 0** |
+| `hive llm test` (unconfigured) | `LLM unconfigured — unconfigured — edit ...` | `llm test: unconfigured — edit ...` (one word) |
+| `hive llm tail` (empty log) | **silence**, rc 0 | `No LLM calls recorded — the usage log is empty.`, rc 0 |
+| `hive llm stats` (no log, in a workspace) | the conflated message, **rc 1** | `No LLM calls recorded yet — ...`, rc 0 |
+| `hive backlog prioritize rd` (fresh) | two lines | one line |
+| `hive backlog prioritize nosuchdept` | rc 0 + the empty face | **rc 1** + `ERROR: ... (available: ...)` |
+| `hive gates run rd` (nothing to gate) | two raw lines + the sentence | the one sentence |
+| `hive release status v0.17.0` | the stutter, rc 0 | the one sentence, **rc 1** |
+
+Price, against the 0.18.0 baseline (R3) — expected flat: every
+target is an in-process CLI face over files that do not move.
+
+| metric (0.18.0 → 0.19.0) | before | after |
+|---|---|---|
+| suite wall, this host, `-n 8` | 216.41s (1534 passed, 6 skipped) | 258.34s (1552 passed, 6 skipped) — the +42s carries the +18 tests and the scheduling change the infra fix activated: 0.18's wall ran under the DEAD pin (plain per-test load); 0.19's runs under the real loadgroup, where the 7 ordered e2e classes are single-unit work on one worker instead of split chunks |
+| CI test-job wall (3.12 / 3.13 rows) | 373s / 248s (run 43127286924) | recorded against this tree's CI run in the follow-up docs commit (the 0.18 precedent) |
+
+
 ## 0.18.0
 
 Three questions, answered.
