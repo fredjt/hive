@@ -1,3 +1,118 @@
+## 0.18.0
+
+Three questions, answered.
+0.17 made the tool speak English; 0.18 closes the loop on what a
+human actually asks the terminal: where is the key configured (and
+can I see it), who is working on what, and can I file a note to the
+board in one line. All three are in-process CLI faces over scripts
+and wire that do not move: `config` never prints the key on any
+face, `roster` rides the existing `roster_get` path, and `chat send`
+takes the one-arg form the agents already use. The cut itself
+surfaced a latent 0.17 xdist scheduling defect; the fix is pinned by
+the worker contract.
+
+### The config command never prints the key (T1)
+- `hive config show` is now a SECTION / KEY / VALUE / SOURCE table —
+  the documented precedence (HIVE_* env > user config > install
+  default) made visible per key: SOURCE is `env <HIVE_*>` (the env
+  value is shown) when the override is set, else `user config`, else
+  `default`. `hive config show --json` is the merged document with
+  the secrets masked; the unknown-key warnings stay on stderr and the
+  `_unknown_keys` marking stays top-level in the JSON.
+- Secret keys (api_key, apikey, authorization, token, password,
+  secret — case-insensitive, at any section depth — the same family
+  the dashboard strips from `/api/config`) never print their value:
+  `get` and the table read `<set — masked>` for a set key (a
+  secret's env value is masked like every other layer's), an empty
+  value prints as empty, and an unset key stays unset (exit 1,
+  `(unset: <key>)`). The config CLI was the one surface in the
+  system that printed the key in plaintext — doctor, `llm test`, and
+  the dashboard already named only the source. Non-secret `get`
+  output is byte-identical to 0.17.0.
+- `hive config path` resolves the file the same way the rest of the
+  command does (the HIVE_CONFIG env var wins) — a HIVE_CONFIG
+  override is no longer a path that exists while every other action
+  read the default.
+- LLM-PROVIDERS.md's standard now covers every surface.
+
+### `hive roster` — who is working on what, in the terminal (T2)
+- A new `hive roster [dept] [--active] [--json]` — read-only,
+  CLI-only: it rides `roster_get` (the same script path, the same
+  rebuild-before-read), so no script and no wire contract moves.
+  The default renders NAME / ROLE / DEPT / STATUS / TICKET / LAST
+  ACTIVE — active rows first, then claimed, then inactive — ending in
+  the count line (`N agent(s) — M active`). On a never-run workspace
+  the listing IS the state: the six inactive VPs + `0 active` say
+  "company not running" without a dead-end branch.
+- The read path's silent-empty hole is closed: roster-update.sh's
+  `list` prints `[]` with exit 0 when roster.json is absent —
+  reachable only when the rebuild it triggers fails (or there is no
+  .company at all) — so "rebuild broken" and "no agents" were
+  indistinguishable to the reader. The CLI now names the states: no
+  .company → `No .company here — run 'hive init'` (exit 1);
+  roster.json still absent after the forced rebuild → `roster
+  unavailable — the rebuild failed; run 'hive doctor'` (exit 1); a
+  present roster with zero agents → a count-0 listing (exit 0); an
+  unknown department → the error with the known departments (exit
+  1). `--json` prints the roster document's `.agents` array —
+  exactly what roster_get returns: one byte-identical contract for
+  the CLI and the MCP side.
+
+### `hive chat send <channel> <message>` (T3)
+- The one-arg form the agents already use: author defaults to the OS
+  user running the command and department to the channel's own
+  department (`dept-rd` → `rd`; a named channel → itself) — the same
+  defaults the agents carry inline (the harness and the agent
+  prompts), now in one place. `--author` / `--dept` override; the
+  MCP payload shape is unchanged (chat_send gets the same four
+  keys). A send without a message names its usage error (exit 1)
+  instead of argparse's positional complaint; the `--json` envelope
+  is unchanged (stdout face).
+- The 0.17 positional form's test pins moved with the change.
+
+### The cut, and the xdist contract fix it surfaced (T4)
+- gate-2's first run on the 0.18 tree caught a latent 0.17 defect:
+  under the default `--dist=load`, xdist sends the pending queue in
+  consecutive chunks (up to `--maxschedchunk`, 8 by default), so an
+  ordered end-to-end class with more tests than a chunk can be split
+  across two workers — each worker then instantiates the class-
+  scoped fixture in its OWN temp dir, and the test that reads state
+  mutated by an earlier same-class test sees the unmutated fixture
+  (TestTicketHumanFace: "5 ticket(s) in rd" read as 3, the mutations
+  having landed on another worker). 0.17's CI passed by luck of the
+  chunk draw.
+- The fix: pytest.ini runs `--dist=loadgroup` (per-test scheduling
+  for unmarked tests — the suite's load profile is unchanged —
+  group-unit scheduling for marked classes), and every class whose
+  class-scoped fixture carries ordered state carries
+  `@pytest.mark.xdist_group` (the seven ordered e2e classes in
+  test_commands.py + TestEmbeddedSpaScript in test_dashboard.py).
+  The new static guard (`test_xdist_contract.py::
+  TestXdistGroupContract`) fails a class-scoped fixture without the
+  mark, or a pytest.ini without the strategy; the root AGENTS.md
+  xdist worker contract gains the rule.
+- Suite wall, this host, `-n 8` (runs sequential, same machine):
+
+| metric | 0.17.0 (fac347d) | 0.18.0 (c54b8e8) |
+|---|---|---|
+| suite wall | 210.36s (1503 passed, 7 skipped) | 238.86s (1534 passed, 6 skipped) |
+| CI test-job wall (3.12 / 3.13 rows) | 247s / 284s (run 43090010431) | 264s / 301s (run 43121558741) |
+
+  The +28s local / +17s-per-CI-row delta is the 30 new e2e tests
+  (the roster forced-rebuild matrix and the chat-send defaults
+  matrix spawn a stdio MCP server per call); no existing test grew
+  — the targets are in-process CLI faces over one read-only script
+  path, and the loadgroup change leaves the unmarked tests' per-test
+  scheduling untouched.
+
+### Notes
+- The T1 mask tests seed fake LLM keys; their spellings had to
+  satisfy the repo's own secret scanners (the history-scrub guard's
+  `sk-` pattern and gitleaks' generic-api-key rule), so they are
+  short, dash-broken values that match neither. The scrub guard
+  doing its job on the first (over-eager) spellings is exactly the
+  point — no real credential ever entered the tree.
+
 ## 0.17.0
 
 The readable release.
