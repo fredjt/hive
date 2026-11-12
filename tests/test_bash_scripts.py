@@ -1272,6 +1272,115 @@ class TestAgentSpawnPython:
             f"(got: {r.stderr!r})")
 
 
+class TestAgentSpawnActiveRecord:
+    """T1 (0.21): the in-flight spawn record speaks the dashboard's contract.
+
+    A real agent-spawn.sh run (harness stubbed — the file's established
+    shape — so it stays alive one turn without an LLM call) must leave
+    logs/active/<id>.json WHILE ALIVE with spawn_id, stream_file, id and
+    pid all present, spawn_id equal to the file name's stem, and
+    stream_file pointing at logs/streams/<spawn_id>.jsonl. The dashboard
+    (0.21) addresses the spawn by spawn_id and reads its stream off
+    stream_file; pre-0.21 records carried neither field, which is why
+    Watch / Watch Global / the Events column read dead for every live
+    spawn.
+    """
+
+    def _scratch(self, tmp_path):
+        root = tmp_path / "hive-root"
+        (root / "lib" / "core").mkdir(parents=True)
+        # Stub harness: one turn, then exit 0 — alive long enough for the
+        # reader to observe the active record mid-run.
+        (root / "lib" / "core" / "agent-harness.py").write_text(
+            "import sys, time, json\n"
+            "print(json.dumps({'type': 'system', 'subtype': 'init'}))\n"
+            "time.sleep(3)\n"
+            "print(json.dumps({'type': 'result', 'is_error': False, "
+            "'num_turns': 1}))\n"
+            "sys.exit(0)\n")
+        (root / "lib" / "core" / "agent-spawn.sh").write_text(
+            Path(f"{CORE_DIR}/agent-spawn.sh").read_text())
+        return root
+
+    def _env(self, tmp_path, root):
+        home = tmp_path / "home"
+        (home / ".config" / "hive").mkdir(parents=True)
+        env = os.environ.copy()
+        env.pop("HIVE_INSTALL_DIR", None)
+        env.pop("HIVE_VERIFICATION_MODEL", None)
+        env.update({
+            "HIVE_ROOT": str(root),
+            "HOME": str(home),
+            "HIVE_AGENT": "ic-engineer",
+            "HIVE_DEPT": "rd",
+            "HIVE_ROLE": "IC",
+            "HIVE_TICKET": "RD-1",
+            "COMPANY_DIR": str(tmp_path / "company"),
+            "HIVE_ENV_FILE": str(tmp_path / "no-such-env.sh"),
+        })
+        return env
+
+    def test_active_record_carries_spawn_contract_while_alive(self,
+                                                             tmp_path):
+        root = self._scratch(tmp_path)
+        company = tmp_path / "company"
+        proc = subprocess.Popen(
+            ["bash", str(root / "lib" / "core" / "agent-spawn.sh"),
+             "--no-mcp", "--", "test prompt"],
+            env=self._env(tmp_path, root),
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        try:
+            active_dir = company / "logs" / "active"
+            rec, stem = None, None
+            deadline = time.time() + 10
+            while time.time() < deadline and rec is None:
+                if active_dir.exists():
+                    for f in active_dir.iterdir():
+                        if f.suffix == ".json" and not f.name.endswith(".tmp."):
+                            try:
+                                rec = json.loads(f.read_text())
+                                stem = f.name[:-5]
+                            except (ValueError, OSError):
+                                rec = None  # mid-write; retry
+                if rec is None:
+                    time.sleep(0.02)
+            assert rec is not None, ("active record never appeared in "
+                                     "logs/active/ while the spawn was alive")
+            # One id field: the record's spawn_id IS the file name's stem
+            # (the convention agent-spawn.sh enforces for the stream file).
+            assert rec["spawn_id"] == stem, (
+                "spawn_id must equal the active record's file stem")
+            assert rec["id"] == stem, ("id stays for the 0.20 orphan "
+                                       "fallback — must still be the stem")
+            # pid is a JSON string in the record (the heredoc embeds it
+            # verbatim) — the dashboard coerces; assert the value, not the type.
+            assert str(rec["pid"]).isdigit() and int(rec["pid"]) > 0
+            try:
+                os.kill(int(rec["pid"]), 0)
+                alive = True
+            except OSError:
+                alive = False
+            assert alive, "the record's pid must be alive mid-run"
+            # One stream pointer: the tee'd stream-json file.
+            expected_stream = str(company / "logs" / "streams" /
+                                  f"{stem}.jsonl")
+            assert rec["stream_file"] == expected_stream, (
+                f"stream_file must point at logs/streams/<spawn_id>.jsonl "
+                f"(got {rec['stream_file']!r})")
+            # The record commits before the tee pipeline sets up, so the
+            # stream file can lag the record by one poll — wait it out.
+            deadline = time.time() + 5
+            while not Path(expected_stream).exists() and time.time() < deadline:
+                time.sleep(0.02)
+            assert Path(expected_stream).exists(), (
+                "the pointed-at stream file never appeared while the "
+                "spawn was alive")
+        finally:
+            proc.wait(timeout=30)
+        # The EXIT trap removes the record on a clean end.
+        assert not (active_dir / f"{stem}.json").exists()
+
+
 class TestAllScriptsExist:
     """Ensure every .sh file in lib/tools/ is executable and parseable."""
 

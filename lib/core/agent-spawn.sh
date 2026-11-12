@@ -13,7 +13,12 @@ set -uo pipefail
 #      set, inject --model "$HIVE_VERIFICATION_MODEL".
 #   4. Log the spawn to .company/logs/spawns.log for audit.
 #   5. Register the in-flight spawn in .company/logs/active/<id>.json so the
-#      dashboard can show "what's currently running"; remove on exit.
+#      dashboard can show "what's currently running"; remove on exit. The
+#      record carries the dashboard's spawn contract: spawn_id (the id the
+#      dashboard addresses the spawn by — equal to the file name's stem) and
+#      stream_file (the pointer to the tee'd stream-json file). `id` stays
+#      for one release: orphaned 0.20 records outlive a dashboard upgrade,
+#      and orphan-recovery owns their lifecycle, not this record.
 #   6. Tee the stream-json events to .company/logs/streams/<id>.jsonl so the
 #      dashboard can replay tool calls + text per spawn.
 #   7. On exit append a one-line summary to .company/logs/cycles.jsonl for a
@@ -82,6 +87,8 @@ ACTIVE_FILE_TMP="${ACTIVE_FILE}.tmp.$$"
 cat > "$ACTIVE_FILE_TMP" <<META
 {
   "id": "$SPAWN_ID",
+  "spawn_id": "$SPAWN_ID",
+  "stream_file": "$STREAM_FILE",
   "agent": "$HIVE_AGENT",
   "dept": "${HIVE_DEPT:-}",
   "role": "${HIVE_ROLE:-}",
