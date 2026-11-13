@@ -1103,11 +1103,17 @@ class TestConfigLlmPanel:
                 time.sleep(0.1)
         return False
 
-    def test_api_config_serves_saved_dumps(self, tmp_path):
+    def test_api_config_serves_saved_dumps_with_their_age(self, tmp_path):
+        """T3 (0.22): each snapshot is served WITH its file mtime and
+        age ({data, mtime_ms, age_ms}) — the panel renders the age next
+        to the badge, and the age must be the FILE's freshness (the
+        content's ts is the same write, but the file is what the panel
+        reads)."""
         import socket
         import urllib.request
         company = self._company(tmp_path)
-        (company / "state" / "doctor.json").write_text(json.dumps({
+        doctor_file = company / "state" / "doctor.json"
+        doctor_file.write_text(json.dumps({
             "ok": True, "ts": "2026-11-03T00:00:00Z", "version": "0.7.1",
             "checks": [{"name": "LLM provider configured", "ok": True,
                         "detail": "provider=openai model=panel-model "
@@ -1129,17 +1135,213 @@ class TestConfigLlmPanel:
             with urllib.request.urlopen(
                     f"http://127.0.0.1:{port}/api/config", timeout=5) as r:
                 data = json.loads(r.read())
-            assert data["doctor"]["llm"]["provider"] == "openai"
-            assert data["doctor"]["llm"]["model"] == "panel-model"
-            assert data["doctor"]["ok"] is True
-            assert data["llm_test"]["ok"] is True
-            assert data["llm_test"]["reply"] == "OK"
+            assert data["doctor"]["data"]["llm"]["provider"] == "openai"
+            assert data["doctor"]["data"]["llm"]["model"] == "panel-model"
+            assert data["doctor"]["data"]["ok"] is True
+            assert data["llm_test"]["data"]["ok"] is True
+            assert data["llm_test"]["data"]["reply"] == "OK"
+            # The age is present and non-negative for both snapshots.
+            assert data["doctor"]["age_ms"] >= 0
+            assert data["llm_test"]["age_ms"] >= 0
+            # The served mtime is the file's mtime (±1s — the write and
+            # the stat are seconds apart at worst).
+            import os
+            for name in ("doctor", "llm_test"):
+                f = (company / "state" / (name.replace("_", "-") + ".json")
+                     if name == "llm_test"
+                     else company / "state" / "doctor.json")
+                assert abs(data[name]["mtime_ms"] / 1000.0
+                           - os.path.getmtime(str(f))) < 1.0, (
+                    f"the served {name} mtime is not the file's mtime")
         finally:
             proc.terminate()
             try:
                 proc.wait(timeout=5)
             except Exception:
                 proc.kill()
+
+    def test_api_config_snapshot_age_matches_file_mtime(self, tmp_path):
+        """T3 (0.22): the snapshot's AGE is measured, not guessed — a
+        doctor.json backdated 41 minutes serves age_ms ≈ 41m (±2s:
+        the request round trip plus xdist load; the contract is the
+        file's mtime, not an instant)."""
+        import os
+        import socket
+        import time
+        import urllib.request
+        company = self._company(tmp_path)
+        doctor_file = company / "state" / "doctor.json"
+        doctor_file.write_text(json.dumps(
+            {"ok": True, "checks": [], "warnings": [], "llm": {}}))
+        past = time.time() - 41 * 60
+        os.utime(str(doctor_file), (past, past))
+        s = socket.socket(); s.bind(("127.0.0.1", 0))
+        port = s.getsockname()[1]; s.close()
+        proc = self._start_server(company, port)
+        try:
+            assert self._wait(port), "dashboard did not start"
+            with urllib.request.urlopen(
+                    f"http://127.0.0.1:{port}/api/config", timeout=5) as r:
+                data = json.loads(r.read())
+            age_s = data["doctor"]["age_ms"] / 1000.0
+            assert abs(age_s - 41 * 60) <= 2.0, (
+                f"the served snapshot age is not the file's age ("
+                f"{age_s:.1f}s — the panel would render a wrong "
+                f"freshness next to the badge)")
+        finally:
+            proc.terminate()
+            try:
+                proc.wait(timeout=5)
+            except Exception:
+                proc.kill()
+
+    def test_config_resolved_block_agrees_with_hive_llm(self, tmp_path):
+        """T3 (0.22): ONE FACT, TWO FACES — the resolved
+        provider / model / base_url / key source the panel renders
+        (served over HTTP from the doctor dump the CLI wrote) must
+        equal what `hive llm` resolves on the SAME seeded tree: a
+        resolver drift fails the suite, not the user. Face A is the
+        CLI writing the dump (hive doctor); face B is the dashboard's
+        /api/config over HTTP; face C is `hive llm test` printing its
+        own resolution against a live stub endpoint (stdlib, so the
+        round trip succeeds and the resolution lines are printed)."""
+        import http.server
+        import socket
+        import threading
+        import urllib.request
+
+        class _Stub(http.server.BaseHTTPRequestHandler):
+            def do_POST(self):  # noqa: N802 — the handler name
+                body = json.dumps(
+                    {"choices": [{"message": {"content": "OK"}}]})
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body.encode())
+
+            def log_message(self, *a):
+                pass
+
+        s = socket.socket(); s.bind(("127.0.0.1", 0))
+        stub_port = s.getsockname()[1]; s.close()
+        stub = http.server.HTTPServer(("127.0.0.1", stub_port), _Stub)
+        thread = threading.Thread(target=stub.serve_forever, daemon=True)
+        thread.start()
+        try:
+            proj = tmp_path / "proj"
+            proj.mkdir()
+            (proj / ".company").mkdir()
+            cfg = tmp_path / "config.toml"
+            cfg.write_text(
+                '[llm]\nprovider = "openai"\nmodel = "face-model"\n'
+                f'base_url = "http://127.0.0.1:{stub_port}/v1"\n'
+                'api_key = "k"\n')
+            env = os.environ.copy()
+            env["HIVE_INSTALL_DIR"] = str(REPO)
+            env["HIVE_CONFIG"] = str(cfg)
+            env["PYTHONPATH"] = str(REPO / "lib")
+            # Drop any ambient HIVE_* LLM vars: the CONFIG face is the
+            # one under test (env would shadow it on both faces and
+            # hide exactly the drift this test exists to catch).
+            for k in list(env):
+                if (k.startswith("HIVE_") and k not in
+                        ("HIVE_INSTALL_DIR", "HIVE_CONFIG", "HIVE_LOCK_VENV")):
+                    del env[k]
+            # Face A: the CLI writes the doctor dump (some checks fail
+            # in a scratch env — rc is not the point, the dump is).
+            r = subprocess.run(
+                [sys.executable, "-m", "hive_cli.main", "doctor",
+                 str(proj)],
+                capture_output=True, text=True, timeout=120,
+                cwd=str(proj), env=env)
+            dump_file = proj / ".company" / "state" / "doctor.json"
+            assert dump_file.is_file(), (
+                "the doctor run wrote no dump:\n" + r.stdout[-500:])
+            # Face B: the dashboard serves it over HTTP.
+            s2 = socket.socket(); s2.bind(("127.0.0.1", 0))
+            dport = s2.getsockname()[1]; s2.close()
+            proc = self._start_server(proj / ".company", dport)
+            try:
+                assert self._wait(dport), "dashboard did not start"
+                with urllib.request.urlopen(
+                        f"http://127.0.0.1:{dport}/api/config", timeout=5) as rr:
+                    served = json.loads(rr.read())
+            finally:
+                proc.terminate()
+                try:
+                    proc.wait(timeout=5)
+                except Exception:
+                    proc.kill()
+            # Face C: `hive llm test` — the CLI's own resolution, printed
+            # against the stub (a dead endpoint would skip the print).
+            r = subprocess.run(
+                [sys.executable, "-m", "hive_cli.main", "llm", "test"],
+                capture_output=True, text=True, timeout=60,
+                cwd=str(proj), env=env)
+            assert r.returncode == 0, (
+                "hive llm test did not round-trip the stub:\n"
+                + r.stdout[-500:] + r.stderr[-300:])
+            cli = {}
+            for line in r.stdout.splitlines():
+                line = line.strip()
+                for key, label in (("provider", "provider:"),
+                                   ("model", "model:"),
+                                   ("base_url", "base_url:"),
+                                   ("key", "key:")):
+                    if line.startswith(label):
+                        cli[key] = line[len(label):].strip()
+            assert set(cli) == {"provider", "model", "base_url", "key"}, (
+                "could not parse the resolution out of `hive llm test` "
+                f"stdout:\n{r.stdout}")
+            doc_llm = served["doctor"]["data"]["llm"]
+            assert doc_llm["provider"] == cli["provider"], (
+                f"provider drift: panel {doc_llm['provider']!r} vs "
+                f"`hive llm` {cli['provider']!r}")
+            assert doc_llm["model"] == cli["model"], (
+                f"model drift: panel {doc_llm['model']!r} vs "
+                f"`hive llm` {cli['model']!r}")
+            assert doc_llm["base_url"] == cli["base_url"], (
+                f"base_url drift: panel {doc_llm['base_url']!r} vs "
+                f"`hive llm` {cli['base_url']!r}")
+            # The key label differs in FORMAT only (doctor: 'config
+            # [llm].api_key', llm test: 'from config [llm].api_key') —
+            # the FACT is the source; compare it after normalizing the
+            # prefix.
+            cli_key = (cli["key"][5:]
+                       if cli["key"].startswith("from ") else cli["key"])
+            assert doc_llm["key_source"] == cli_key, (
+                f"key-source drift: panel {doc_llm['key_source']!r} vs "
+                f"`hive llm` {cli_key!r}")
+        finally:
+            stub.shutdown()
+
+    def test_config_panel_renders_age_and_real_glyphs(self):
+        """T3 (0.22) static probe: the snapshot's age renders next to
+        the badge (ageAgo on the served age_ms), and the broken
+        unicode escapes are fixed — 0.21's Config view rendered the
+        LITERAL text 'u2014' as its em-dash placeholder and 'u2713' /
+        'u2717' as the pass/fail glyph (a missing backslash turned the
+        escape into a string of digits)."""
+        content = _spa_text()
+        assert "function ageAgo" in content, (
+            "the relative-age formatter (ageAgo) must exist — the panel "
+            "renders the snapshot's age next to the badge")
+        assert "ageAgo(doc.age_ms)" in content, (
+            "the doctor badge line must carry the snapshot's age")
+        assert "ageAgo(lt.age_ms)" in content, (
+            "the llm-test badge line must carry the snapshot's age")
+        for bad in ("'u2014'", "'u2713'", "'u2717'"):
+            assert bad not in content, (
+                f"the quoted literal {bad} is still in the delivered "
+                "script — the broken escape (a missing backslash) "
+                "renders as a string of digits, not the glyph. Note "
+                "the check is on the QUOTED form: the fixed escape "
+                "'\\u2014' contains 'u2014' as a substring.")
+        assert "\\u2014" in content and "\\u2713" in content and \
+            "\\u2717" in content, (
+            "the real escapes (\\u2014 / \\u2713 / \\u2717) must be "
+            "present — the panel's em dash and pass/fail glyphs")
 
     def test_api_config_never_returns_api_key(self, tmp_path):
         """The redacted key never appears (zero-trace pattern on the
