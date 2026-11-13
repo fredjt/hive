@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from hive_mcp.server_compat import Server
-
 from hive_mcp.shell import run
 
 

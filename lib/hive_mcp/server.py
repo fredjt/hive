@@ -19,30 +19,13 @@ import importlib
 import sys
 
 from hive_mcp.server_compat import Server, run_http
+from hive_mcp.tools import TOOL_MODULES  # re-exported for existing readers
 
 from hive_paths import install_root
 
 
 # G9: install root resolved once in lib/hive_paths.py.
 HIVE_ROOT = install_root()
-
-
-# Order matters only for stable docs/help output.
-TOOL_MODULES = [
-    "init",
-    "tickets",
-    "chat",
-    "status",
-    "verification",
-    "worktrees",
-    "agents",
-    "company",
-    "sprint",
-    "reports",
-    "llm_usage",
-    "github",
-    "release",
-]
 
 
 def build_server() -> Server:

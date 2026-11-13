@@ -681,3 +681,82 @@ class TestLibCommitPointGuard:
         hits = self.scan(planted)
         assert any("COMPANY_DIR/rounds/halt" in s for _, s in hits), (
             "the planted direct write must be caught: " + repr(hits))
+
+
+class TestToolModulesSdkFree:
+    """T1 (0.22) — the SDK severance is pinned by construction.
+
+    The 0.22 wall: a stopped read (the CLI's in-process rung) paid
+    `import mcp` ~0.96 s because every tool module imported
+    ``hive_mcp.server_compat`` for the ``Server`` annotation on
+    ``register`` — a string under ``from __future__ import annotations``,
+    so runtime cost with zero runtime use. 0.22 deletes the import
+    from all tool modules (the annotation survives as a string) and
+    drives the rung through a duck-typed collector. The regression
+    that costs the next release its wall is a NEW server_compat import
+    in a tool module — it fails THIS suite, not the wall.
+
+    The dynamic leg runs in a subprocess (contract: fresh interpreter,
+    same env contract — the xdist worker's own sys.modules may already
+    carry the SDK from the server-side tests, so the assertion is
+    per-process, not per-worker): the SDK is poisoned (a fake mcp.py
+    that raises ImportError, first on PYTHONPATH — the mcp.py poison
+    pattern from test_harness_tool_loop), and EVERY tool module must
+    import cleanly with `mcp` never landing in sys.modules."""
+
+    REPO = TESTS_DIR.parent
+
+    def _tool_module_files(self):
+        return sorted(p for p in (self.REPO / "lib" / "hive_mcp"
+                                  / "tools").glob("*.py")
+                      if p.name != "__init__.py")
+
+    def test_no_tool_module_imports_server_compat(self):
+        """Static: no tool module carries the server_compat import —
+        grep-level, in the shape of the stdio-spawn retirement pin
+        (TestStdioSpawnRetired): the string is absent, so no code path
+        can drag the SDK back into the tool import chain."""
+        offenders = []
+        for p in self._tool_module_files():
+            src = p.read_text()
+            for i, line in enumerate(src.splitlines(), 1):
+                if "server_compat" in line:
+                    offenders.append(f"{p.name}:{i}: {line.strip()}")
+        assert not offenders, (
+            "server_compat in a tool module — the SDK import must stay "
+            "where the SDK is actually used (server.py / the transport "
+            "path), never in the tool import chain: the in-process rung "
+            "(the stopped read) imports these modules directly and "
+            "would pay `import mcp` again (T1, 0.22 severance). "
+            + "; ".join(offenders))
+
+    def test_tool_module_imports_need_no_sdk(self):
+        """Dynamic: with the SDK poisoned, importing ANY tool module
+        succeeds and `mcp` never lands in sys.modules (asserted on
+        sys.modules, not on the poison's side effect)."""
+        poison = TESTS_DIR.parent / ".scratch" / "hive-sdk-poison"
+        poison.mkdir(parents=True, exist_ok=True)
+        (poison / "mcp.py").write_text(
+            "raise ImportError('mcp SDK intentionally absent')\n")
+        code = (
+            "import sys\n"
+            f"sys.path.insert(0, {str(self.REPO / 'lib')!r})\n"
+            "from hive_mcp.tools import TOOL_MODULES\n"
+            "for mod in TOOL_MODULES:\n"
+            "    __import__('hive_mcp.tools.' + mod)\n"
+            "assert 'mcp' not in sys.modules, "
+            "'mcp landed in sys.modules while importing tool modules'\n"
+            "print(f'OK {len(TOOL_MODULES)} modules')\n"
+        )
+        r = subprocess.run(
+            [sys.executable, "-c", code],
+            capture_output=True, text=True, timeout=60,
+            env={**os.environ,
+                 "PYTHONPATH": str(poison)})
+        assert r.returncode == 0, (
+            "tool module import under a poisoned SDK failed — the "
+            "severance is broken (a tool module imports the SDK): "
+            f"{r.stdout[-400:]} {r.stderr[-800:]}")
+        assert r.stdout.strip().startswith("OK "), (
+            "the import leg must print its module count: "
+            + repr(r.stdout[-200:]))

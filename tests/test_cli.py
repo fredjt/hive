@@ -5,6 +5,7 @@ import re
 import socket
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -322,24 +323,26 @@ class TestMain:
 
 
 class TestInProcessFallback:
-    """T1 (0.20): with the HTTP server down, the CLI runs the tool
-    function IN-PROCESS (build_server() + the registry's .fn) — the
-    stopped company answers with no dead stdio process.
+    """T1 (0.20/0.22): with the HTTP server down, the CLI runs the tool
+    function IN-PROCESS — the stopped company answers with no dead
+    stdio process. 0.22 severs the SDK from the rung itself: the tool
+    module is imported through a duck-typed collector (no
+    build_server(), no `import mcp`), so the stopped read works in a
+    no-SDK tree AND costs the tool's own work.
 
     Regression lineage: the 0.8.3-era pin kept MCP-routed CLI commands
     alive in source checkouts with no venv (the old failure was a raw
     FileNotFoundError on the venv interpreter the retired stdio spawn
     needed). 0.20 retires the spawn itself — the in-process rung is the
-    fallback, and it works identically in a venv-less tree (no spawn,
-    no NOTE line).
+    fallback; 0.22 makes it SDK-free by construction.
     """
 
     def test_cli_ticket_create_without_venv_runs_in_process(self,
                                                             tmp_project_dir):
         """End-to-end: HTTP server down + no venv in the install dir, and
-        an MCP-routed CLI command still succeeds (in-process fallback,
-        not a FileNotFoundError, not a spawn NOTE line)."""
-        pytest.importorskip("mcp")  # the in-process rung imports the server (the SDK)
+        an MCP-routed CLI command still succeeds (in-process rung,
+        not a FileNotFoundError, not a spawn NOTE line). No SDK
+        prerequisite (T1, 0.22): the rung never imports the SDK."""
         # Dead port → the HTTP probe fails → the in-process rung is forced.
         s = socket.socket()
         s.bind(("127.0.0.1", 0))
@@ -371,6 +374,57 @@ class TestInProcessFallback:
             (company / "departments" / "it" / "tickets" / "backlog").glob("*.json"))
         assert len(tickets) == 1
         assert json.loads(tickets[0].read_text())["status"] == "backlog"
+
+    def test_cli_status_sdk_poisoned_is_green_under_ceiling(
+            self, tmp_project_dir, tmp_path):
+        """T1 (0.22) CLI smoke — poisoned env, stopped company: `hive
+        status` exits 0 and runs under the 0.6 s ceiling on this host
+        (2x the ~0.25 s target — the ceiling is for flake resistance,
+        the receipt carries the exact figure). Pre-severance the same
+        command paid `import mcp` twice (1.09 s measured); the poison
+        proves the wall is not bought back by a lazy SDK import.
+        The wall clock is a LOAD property of the host, so on a slow
+        runner the same run may legitimately exceed the host-tuned
+        ceiling — scale it by core count (the import cost is
+        single-threaded, but the 2-core CI runner also loses disk and
+        scheduler slack): never below the 0.6 s host value, capped at
+        2.4 s."""
+        s = socket.socket()
+        s.bind(("127.0.0.1", 0))
+        dead_port = s.getsockname()[1]
+        s.close()
+
+        install_dir = Path(__file__).resolve().parent.parent
+        company = tmp_project_dir / ".company"
+        (company / "departments" / "it" / "tickets" / "backlog").mkdir(
+            parents=True)
+
+        # tmp_path child — the house contract: no per-test mktemp litter
+        # (the scratch-snowball guard pins module-level sites only).
+        poison = tmp_path / "poison"
+        poison.mkdir(parents=True, exist_ok=True)
+        (poison / "mcp.py").write_text(
+            "raise ImportError('mcp SDK intentionally absent')\n")
+
+        env = {**os.environ,
+               "HIVE_INSTALL_DIR": str(install_dir),
+               "HIVE_MCP_PORT": str(dead_port),
+               "PYTHONPATH": str(poison) + os.pathsep + str(install_dir / "lib")}
+        t0 = time.monotonic()
+        r = subprocess.run(
+            [sys.executable, "-m", "hive_cli.main", "status"],
+            capture_output=True, text=True, timeout=60,
+            cwd=str(tmp_project_dir), env=env)
+        wall = time.monotonic() - t0
+        assert r.returncode == 0, r.stdout + r.stderr
+        cores = max(1, os.cpu_count() or 1)
+        ceiling = min(2.4, 0.6 * max(1.0, 8.0 / cores))
+        assert wall < ceiling, (
+            f"`hive status` (SDK poisoned, company stopped) took {wall:.2f}s "
+            f">= the {ceiling:.2f}s ceiling — the stopped read is paying "
+            "for the SDK import again (T1, 0.22 severance regressed)")
+
+
 class TestTicketListPriority:
     """E2 (0.9.0): hive ticket list --priority filters by priority."""
 

@@ -5,8 +5,6 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from hive_mcp.server_compat import Server
-
 from hive_mcp.shell import run
 
 

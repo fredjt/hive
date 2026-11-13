@@ -10,8 +10,6 @@ Note: GitHub Issues mirroring has been removed. PR operations still work.
 from __future__ import annotations
 
 
-from hive_mcp.server_compat import Server
-
 from hive_mcp.shell import run
 
 

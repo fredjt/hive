@@ -13,6 +13,14 @@ _hive_lib = str(Path(__file__).resolve().parent.parent / "lib")
 if _hive_lib not in sys.path:
     sys.path.insert(0, _hive_lib)
 
+# tests/ is a package — make the shared conftest helpers importable by
+# name (the test_state_layer pattern: the shared normalize_clock helper
+# lives in conftest, R1/0.11 xdist worker contract).
+_hive_tests = str(Path(__file__).resolve().parent)
+if _hive_tests not in sys.path:
+    sys.path.insert(0, _hive_tests)
+from conftest import normalize_clock  # noqa: E402
+
 
 
 import pytest
@@ -1005,29 +1013,49 @@ class TestHttpTransportWire:
             "way (the wire drops it): "
             f"{over_wire} != {in_proc}")
 
-    def test_error_when_server_down_and_sdk_missing(self, tmp_company_dir,
-                                                    monkeypatch):
-        """With no HTTP server listening AND the mcp SDK missing, a tool
-        call must fail fast with the house error envelope — not hang, not
-        raise, and not silently succeed. T1 (0.20): the envelope's shape
-        did not move; the rung is named "in-process fallback
-        unavailable" (the stdio spawn retired from the CLI)."""
-        dead_port = _free_local_port()  # nothing listens here
-        mcp_client = _mcp_client_on_port(dead_port, monkeypatch)
-        assert mcp_client._is_http_server_up() is False
+    def test_server_down_and_sdk_free_still_runs_in_process(
+            self, http_mcp_server, tmp_company_dir, monkeypatch):
+        """T1 (0.22): the in-process rung no longer needs the SDK —
+        server down AND SDK missing still EXECUTES the tool (the module
+        is imported through the duck-typed collector), and the missing
+        ticket surfaces the tool's own error face. The 0.20 ladder
+        envelope ("in-process fallback unavailable") is gone: it was
+        the symptom of the SDK import the rung used to pay.
+        Envelope invariance: the same call returns the SAME dict the
+        wire and the SDK-present in-process rungs return (one
+        implementation)."""
+        live = _mcp_client_on_port(http_mcp_server, monkeypatch)
+        dead = _mcp_client_on_port(_free_local_port(), monkeypatch)
+        assert dead._is_http_server_up() is False
 
-        # Make the SDK unresolvable (the SDK-free environment) — with the
-        # server down too, there is no rung left but the error envelope.
-        monkeypatch.setattr(mcp_client, "_sdk_available", lambda: False)
+        # Make the SDK unresolvable (the SDK-free environment).
+        monkeypatch.setattr(dead, "_sdk_available", lambda: False)
 
-        res = mcp_client.call_tool("ticket_get", {
-            "dept": "it", "ticket_id": "TICKET-001",
-            "company_dir": str(tmp_company_dir),
-        })
-        assert res == {"ok": False,
-                       "error": "MCP HTTP server not reachable and the mcp "
-                                "SDK is not installed (in-process fallback "
-                                "unavailable)"}, res
+        args = {"dept": "it", "ticket_id": "TICKET-001",
+                "company_dir": str(tmp_company_dir)}
+        res = dead.call_tool("ticket_get", dict(args))
+        over_wire = live.call_tool("ticket_get", dict(args))
+        assert res.get("ok") is False, res
+        assert "in-process fallback unavailable" not in json.dumps(res)
+        assert "MCP HTTP server not reachable" not in json.dumps(res)
+        assert "TypeError" not in json.dumps(res)
+        assert res == over_wire, (
+            "server-down + SDK-free must return the SAME envelope as "
+            "the wire (the tool's own error face): "
+            f"{res} != {over_wire}")
+
+    def test_unknown_tool_is_a_named_defect(self, tmp_company_dir,
+                                            monkeypatch):
+        """T1 (0.22): rung 3 is a real defect, not the default path —
+        a name no tool module provides returns the house error
+        envelope with the rung named (module import failure / missing
+        tool), never a crash and never a silent empty success."""
+        dead = _mcp_client_on_port(_free_local_port(), monkeypatch)
+        res = dead.call_tool("no_such_tool",
+                             {"company_dir": str(tmp_company_dir)})
+        assert res["ok"] is False, res
+        assert "in-process tool resolution failed" in res["error"], res
+        assert "no_such_tool" in res["error"], res
 
 
 class TestStdioSpawnRetired:
@@ -1094,6 +1122,128 @@ class TestMcpClientSdkFree:
                            env={**os.environ, "PYTHONPATH": str(repo / "lib")})
         assert r.returncode == 0, f"{r.stdout[-400:]} {r.stderr[-800:]}"
         assert "SDKFREE_OK" in r.stdout
+
+
+class TestSdkPoisonedRoundTrip:
+    """T1 (0.22) — the severance, proven at the process boundary.
+
+    The mcp SDK is poisoned (a fake ``mcp.py`` that raises ImportError,
+    first on PYTHONPATH — the mcp.py poison pattern from
+    test_harness_tool_loop), the MCP server is DOWN, and the read face
+    (status, roster, ticket list, backlog, gates, release status)
+    returns envelopes BYTE-IDENTICAL to a SDK-importable process —
+    and ``mcp`` never lands in sys.modules (asserted on sys.modules,
+    not on the poison's side effect). Subprocess isolation: the
+    poisoning is env-level, and the xdist worker's own sys.modules may
+    already carry the SDK (the server-side tests import it) — the
+    contract is per-process, so each leg runs in a fresh interpreter
+    under the same env contract (tests/test_hive_paths.py is the
+    pattern). Wall-clock keys (roster.json's updated_at) are compared
+    through conftest.normalize_clock — identical STATE, not identical
+    INSTANT (the xdist worker contract, R1).
+    """
+
+    REPO = Path(__file__).resolve().parent.parent
+
+    #: The read face — (label, tool, static args); company_dir is
+    #: injected at run time.
+    FACES = [
+        ("status", "status_get", {}),
+        ("roster", "roster_get", {}),
+        ("ticket list", "ticket_list", {}),
+        ("backlog", "ticket_list", {"status": "backlog"}),
+        ("gates", "gates_check", {"dept": "it", "ticket_id": "T-1"}),
+        ("release status", "release_status", {}),
+    ]
+
+    @staticmethod
+    def _seed(company: Path):
+        """A static company: every face reads files (or a deterministic
+        rebuild of them), so both legs read the same bytes — the
+        envelopes differ in no key but the roster rebuild's wall
+        clock (handled by normalize_clock at the assert)."""
+        depts = company / "departments" / "it" / "tickets"
+        for status in ("backlog", "sprint-current", "in-progress",
+                       "in-review", "done"):
+            (depts / status).mkdir(parents=True, exist_ok=True)
+        ticket = {
+            "id": "T-1", "title": "poison round-trip ticket",
+            "type": "chore", "priority": "low", "status": "backlog",
+            "created_by": "t1", "source": "manual",
+            "created_at": "2026-01-01T00:00:00Z",
+            "updated_at": "2026-01-01T00:00:00Z",
+        }
+        (depts / "backlog" / "T-1.json").write_text(
+            json.dumps(ticket, indent=2))
+        (company / "departments" / "it" / "status.json").write_text(
+            json.dumps({"dept": "it", "updated_at": "2026-01-01T00:00:00Z",
+                        "tickets": {"total": 1,
+                                    "by_status": {"backlog": 1}}},
+                       indent=2))
+        sprints = company / "sprints"
+        sprints.mkdir(exist_ok=True)
+        (sprints / "current.json").write_text(json.dumps(
+            {"sprint_id": "sprint-1", "stage": "tdd-red",
+             "release": {"version": "0.0.0", "state": "idle"}}, indent=2))
+
+    def _run_leg(self, company: Path, poisoned: bool, tool: str,
+                 args: dict, scratch: Path) -> str:
+        """One leg in a fresh interpreter; returns the printed envelope
+        line. The poisoned leg additionally prints NOMCP_OK after
+        asserting 'mcp' out of sys.modules. The poison dir is a
+        tmp_path child (the house contract: no per-test mktemp
+        litter — the reaper pins the module-level sites only)."""
+        poison = scratch / ("poison" if poisoned else "noop")
+        poison.mkdir(parents=True, exist_ok=True)
+        if poisoned:
+            (poison / "mcp.py").write_text(
+                "raise ImportError('mcp SDK intentionally absent')\n")
+        extra = ("assert 'mcp' not in sys.modules, "
+                 "'mcp landed in sys.modules on the stopped read'\n"
+                 "print('NOMCP_OK')\n") if poisoned else ""
+        code = (
+            "import sys, json\n"
+            f"sys.path.insert(0, {str(self.REPO / 'lib')!r})\n"
+            "from hive_cli import mcp_client\n"
+            f"res = mcp_client.call_tool({tool!r}, {json.dumps(args)})\n"
+            "print(json.dumps(res, sort_keys=True))\n"
+            + extra
+        )
+        pypath = os.environ.get("PYTHONPATH", "")
+        if poisoned:
+            pypath = (str(poison) + os.pathsep + pypath) if pypath \
+                else str(poison)
+        r = subprocess.run(
+            [sys.executable, "-c", code],
+            capture_output=True, text=True, timeout=60,
+            cwd=str(company.parent),
+            env={**os.environ, "PYTHONPATH": pypath})
+        assert r.returncode == 0, (
+            f"{tool} ({'poisoned' if poisoned else 'clean'}) leg failed:\n"
+            f"{r.stdout[-400:]}\n{r.stderr[-800:]}")
+        lines = r.stdout.strip().splitlines()
+        if poisoned:
+            assert lines and lines[-1] == "NOMCP_OK", (
+                "the poisoned leg must assert 'mcp' out of sys.modules "
+                "(not merely that the poison raised): " + r.stdout[-200:])
+            return lines[-2]
+        return lines[-1]
+
+    @pytest.mark.parametrize("label,tool,static_args", FACES,
+                             ids=[f[0] for f in FACES])
+    def test_poisoned_envelope_matches_clean(self, tmp_company_dir,
+                                             tmp_path, label, tool,
+                                             static_args):
+        self._seed(tmp_company_dir)
+        args = {**static_args, "company_dir": str(tmp_company_dir)}
+        clean = json.loads(
+            self._run_leg(tmp_company_dir, False, tool, args, tmp_path))
+        poisoned = json.loads(
+            self._run_leg(tmp_company_dir, True, tool, args, tmp_path))
+        assert normalize_clock(clean) == normalize_clock(poisoned), (
+            f"{label}: SDK-poisoned envelope must equal the SDK-"
+            "importable envelope (byte-identical modulo the shared "
+            f"clock keys): {clean} != {poisoned}")
 
 
 @pytest.mark.skipif(not _HAS_FASTMCP, reason="mcp SDK not available")

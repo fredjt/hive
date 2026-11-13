@@ -10,8 +10,6 @@ import os
 
 from hive_agents import FIXED_DEPTS, compose_dept_vp
 
-from hive_mcp.server_compat import Server
-
 from hive_mcp.shell import HIVE_ROOT
 
 
