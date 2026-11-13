@@ -2885,6 +2885,188 @@ class TestSseStreamPush:
 
 
 @pytest.mark.skipif(not _node_available(), reason="node not available")
+class TestGitChangeSse:
+    """T3 (0.22): the Git view sees agent commits and worktree edits.
+
+    The server watches what the panel reads — .git/HEAD (branch
+    moves), .git/refs/heads (commit / branch updates) and every
+    .worktrees/<TID> directory (file writes — the ticket worktree
+    convention, no new layout) — and fires git-change on the SSE
+    channel. The shared emit key coalesces a burst into ONE refresh at
+    the 500 ms slow-class window. The panel registers a refresher so
+    the event re-renders it (0.21 named the ticket-change wiring but
+    registered no refresher — refreshActive('git') no-oped, and an
+    agent commit left dirty / changedFiles stale until a navigation).
+    Live-server shape: python SSE client, node on an ephemeral port,
+    scratch project with a real git repo — no chromium."""
+
+    @staticmethod
+    def _free_port():
+        s = socket.socket()
+        s.bind(("127.0.0.1", 0))
+        p = s.getsockname()[1]
+        s.close()
+        return p
+
+    @classmethod
+    def _start_server(cls, company, port):
+        full_env = os.environ.copy()
+        proc = subprocess.Popen(
+            ["node", "lib/dashboard/server.js", "--dir", str(company),
+             "--port", str(port)],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            cwd=str(Path(__file__).resolve().parent.parent),
+            env=full_env)
+        deadline = time.time() + 10
+        while time.time() < deadline:
+            if proc.poll() is not None:
+                raise AssertionError("dashboard exited before ready")
+            try:
+                with urllib.request.urlopen(
+                        f"http://127.0.0.1:{port}/api/status", timeout=1):
+                    return proc
+            except Exception:
+                time.sleep(0.1)
+        raise AssertionError("dashboard did not start")
+
+    @staticmethod
+    def _git(args, cwd):
+        r = subprocess.run(["git", "-c", "user.name=t3", "-c",
+                            "user.email=t3@example.com", "-c",
+                            "commit.gpgsign=false"] + args,
+                           cwd=str(cwd), capture_output=True, text=True,
+                           timeout=30)
+        assert r.returncode == 0, f"git {args[0]} failed: {r.stderr}"
+        return r
+
+    def _scratch_repo(self, tmp_path):
+        """A scratch project: a real git repo with one commit, a
+        .company/ workspace (the server's --dir), and one ticket
+        worktree (.worktrees/T1) with a file in it."""
+        proj = tmp_path / "proj"
+        proj.mkdir()
+        company = proj / ".company"
+        (company / "chat").mkdir(parents=True)
+        (company / "logs").mkdir(parents=True)
+        (company / "manifest.json").write_text(
+            json.dumps({"project_name": "git-change-test"}))
+        self._git(["init", "-q"], proj)
+        (proj / "README.md").write_text("seed\n")
+        self._git(["add", "README.md"], proj)
+        self._git(["commit", "-q", "-m", "seed"], proj)
+        wt = proj / ".worktrees" / "T1"
+        wt.mkdir(parents=True)
+        (wt / "work.txt").write_text("v1\n")
+        return proj, company
+
+    def _stop(self, proc):
+        proc.terminate()
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+
+    def test_worktree_write_and_commit_fire_git_change(self, tmp_path):
+        """A file write inside a ticket worktree, then a commit in the
+        main repo, each fire git-change (the commit via the
+        .git/refs/heads watcher — a commit does NOT move .git/HEAD).
+        The panel's refetch then shows the new state (the refresher is
+        registered — pinned by the static probe below)."""
+        proj, company = self._scratch_repo(tmp_path)
+        port = self._free_port()
+        proc = self._start_server(company, port)
+        try:
+            sse = _SSESocket(port)
+            try:
+                sse.wait_for_head(8.0)
+                # 1. A file write inside the existing worktree.
+                (proj / ".worktrees" / "T1" / "work.txt").write_text(
+                    "v2\n")
+                sse.wait_for(b"event: git-change", 8.0)
+                n1 = sse.buf.count(b"event: git-change")
+                assert n1 >= 1, (
+                    "a worktree file write fired no git-change — the "
+                    "worktree panel stays stale until a navigation "
+                    "(0.21 behavior)")
+                # Outwait the shared-key 500 ms suppression window.
+                time.sleep(0.6)
+                # 2. A commit in the main repo.
+                (proj / "next.txt").write_text("x\n")
+                self._git(["add", "next.txt"], proj)
+                self._git(["commit", "-q", "-m", "second"], proj)
+                deadline = time.time() + 8
+                while time.time() < deadline and \
+                        sse.buf.count(b"event: git-change") < n1 + 1:
+                    sse.pump(0.2)
+                assert sse.buf.count(b"event: git-change") >= n1 + 1, (
+                    "a commit in the main repo fired no git-change — "
+                    ".git/HEAD does not move on a commit, so the "
+                    ".git/refs/heads watcher is what must catch it")
+            finally:
+                sse.close()
+        finally:
+            self._stop(proc)
+
+    def test_new_worktree_attaches_itself(self, tmp_path):
+        """A worktree created AFTER server start (a ticket picking one
+        up at runtime) is caught: the parent .worktrees watcher emits
+        on the creation AND attaches the sub watcher, so a LATER write
+        inside it fires again — nothing catches it if the attach never
+        happened."""
+        proj, company = self._scratch_repo(tmp_path)
+        port = self._free_port()
+        proc = self._start_server(company, port)
+        try:
+            sse = _SSESocket(port)
+            try:
+                sse.wait_for_head(8.0)
+                t2 = proj / ".worktrees" / "T2"
+                t2.mkdir()
+                # Written immediately after the mkdir: coalesced into
+                # the creation event by the shared emit key (by design
+                # — one refresh covers both facts).
+                (t2 / "a.txt").write_text("a\n")
+                sse.wait_for(b"event: git-change", 8.0)
+                n1 = sse.buf.count(b"event: git-change")
+                assert n1 >= 1, (
+                    "creating a new worktree dir fired no git-change")
+                time.sleep(0.6)
+                (t2 / "a.txt").write_text("b\n")
+                deadline = time.time() + 8
+                while time.time() < deadline and \
+                        sse.buf.count(b"event: git-change") < n1 + 1:
+                    sse.pump(0.2)
+                assert sse.buf.count(b"event: git-change") >= n1 + 1, (
+                    "a write inside a worktree created AFTER server "
+                    "start fired no git-change — the parent watcher "
+                    "must attach new subdirectories")
+            finally:
+                sse.close()
+        finally:
+            self._stop(proc)
+
+    def test_git_view_registers_a_refresher_and_listens(self):
+        """The static surface: the Git view listens for git-change AND
+        registers the refresher the event needs — 0.21 called
+        refreshActive('git') with no refresher registered (a dead
+        wiring); a listener without the refresher is the same defect."""
+        content = _spa_text()
+        assert "addEventListener('git-change'" in content, (
+            "the Git view must listen for git-change — an agent commit "
+            "or a worktree write must reach the panel on the SSE "
+            "channel")
+        assert "startAutoRefresh(refreshGit)" in content, (
+            "the Git view must REGISTER a refresher — 0.21 called "
+            "refreshActive('git') with none registered (a dead wiring); "
+            "the event is a nudge only if the panel can re-render")
+        assert "function refreshGit" in content, (
+            "the git refresher (refreshGit) must exist")
+        assert "function renderGitPanel" in content, (
+            "the git render must be a function the refresher can call "
+            "on every event, not inline in the one-shot navigation")
+
+
+@pytest.mark.skipif(not _node_available(), reason="node not available")
 class TestGhMirror:
     """T3 (0.21): the GitHub page shows GitHub's actual state.
 
