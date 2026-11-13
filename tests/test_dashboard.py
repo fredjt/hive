@@ -3066,6 +3066,82 @@ class TestGitChangeSse:
             "on every event, not inline in the one-shot navigation")
 
 
+class TestChatNewPillSpa:
+    """T3 (0.22): the "N new — jump to latest" pill (the static surface).
+
+    The transcript-level signal for a reader scrolled up in the open
+    channel: new messages arrive while the reader is reading history,
+    the reader STAYS where they are (0.21's refetch scrolled to the
+    bottom unconditionally — a scrolled-up reader was yanked to the
+    tail on every chat-change), the pill COUNTS what was missed (a
+    count, not a bare "new"), the jump snaps to the tail and clears.
+    The channel-list badge (messageCount) stays the list-level signal.
+    The headless leg (open channel, scroll up, append a message ->
+    "1 new", click -> the tail, pill clears) is recorded in the cut
+    receipt — this class pins the delivered script the leg drives."""
+
+    def test_pill_template_and_jump_handler(self):
+        content = _spa_text()
+        assert 'id="chat-new-pill"' in content, (
+            "the pill element (chat-new-pill) must exist in the delivered "
+            "script — the transcript-level 'what you missed' signal")
+        assert 'onclick="chatJumpToLatest()"' in content, (
+            "the pill must JUMP — its onclick calls chatJumpToLatest")
+        assert "jump to latest" in content, (
+            "the pill names its action: 'jump to latest'")
+        assert "function chatJumpToLatest" in content, (
+            "the jump handler must be a defined function")
+        # The jump snaps to the tail and clears the count.
+        m = re.search(r"function chatJumpToLatest\(\)\{[\s\S]*?\n\}",
+                      content)
+        assert m, "chatJumpToLatest body not found"
+        body = m.group(0)
+        assert "scrollTop=msgs.scrollHeight" in body, (
+            "the jump must snap to the tail (scrollTop = scrollHeight)")
+        assert "chatNewCount=0" in body, (
+            "the jump must clear the count")
+
+    def test_pill_counts_and_reads_atbottom(self):
+        content = _spa_text()
+        assert "chatNewCount+" in content, (
+            "the pill must show a COUNT (built from chatNewCount), not a "
+            "bare 'new'")
+        assert "chatSeen" in content, (
+            "the seen-per-channel count (chatSeen) must exist — the pill "
+            "counts messages since the reader's last position, per "
+            "channel")
+        # atBottom wiring: the same 16px threshold expression the scroll
+        # machinery (saveScroll) uses, measured BEFORE the re-render.
+        assert ("(preMsgs.scrollHeight-preMsgs.clientHeight-"
+                "preMsgs.scrollTop)<=16" in content), (
+            "the follow-vs-count decision must read atBottom (the 16px "
+            "threshold) from the pre-render element — after innerHTML "
+            "the new element starts at scrollTop 0 and reads atBottom "
+            "for a scrolled-up reader")
+        # Manual scroll to the tail clears the pill too.
+        assert "function chatScrollHandler" in content, (
+            "a manual scroll to the tail must clear the pill")
+        assert "addEventListener('scroll',chatScrollHandler)" in content, (
+            "the scroll listener must be attached to the message scroller")
+
+    def test_follow_the_tail_still_follows(self):
+        """The 0.21 behavior is preserved for a reader AT the tail: the
+        unconditional yank became a follow — the pill's follow branch
+        resets the count and scrolls to the tail on every render."""
+        content = _spa_text()
+        # The follow branch: first open OR at the tail -> seen = count,
+        # no pill, scroll to the tail.
+        m = re.search(r"if\(chatSeen\[name\]==null\|\|wasAtBottom\)\{[\s\S]*?\}\s*else",
+                      content)
+        assert m, ("the follow-vs-count branch (chatSeen[name]==null || "
+                   "wasAtBottom) not found — the at-tail reader must "
+                   "still follow the tail")
+        assert "chatSeen[name]=data.messages.length" in m.group(0), (
+            "the follow branch must mark the current tail as seen")
+        assert "chatNewCount=0" in m.group(0), (
+            "the follow branch must not leave a stale count")
+
+
 @pytest.mark.skipif(not _node_available(), reason="node not available")
 class TestGhMirror:
     """T3 (0.21): the GitHub page shows GitHub's actual state.
