@@ -2707,3 +2707,22 @@ class TestGhSpaProbes:
         assert "0 issues on" in c, (
             "the issues empty state must be a real fact "
             "('0 issues on <owner>/<repo>'), not a dead poller reference")
+
+class TestHashRoutingSpa:
+
+    VIEWS = "dashboard board chat sprint org roster reports marketing logs verification activity rounds github releases config git brief processes"
+
+    def test_route_table_lockstep_with_view_list(self):
+        c = _spa_text()
+        for v in self.VIEWS.split():
+            assert "'%s':" % v in c, "route missing: %s" % v
+
+    def test_every_view_writes_its_hash(self):
+        c = _spa_text()
+        assert c.count("writeHash(") >= 22
+        i = c.index("function showDashboard(")
+        assert 'writeHash("dashboard")' in c[i:i+300]
+
+    def test_hashchange_listener_installed_first(self):
+        c = _spa_text()
+        assert c.index("addEventListener('hashchange'") < c.rindex("checkStatus()")
