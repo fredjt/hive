@@ -1385,6 +1385,128 @@ class TestConfigLlmPanel:
         assert "never run" in content
 
 
+@pytest.mark.skipif(not _node_available(), reason="node not available")
+class TestBriefPanel:
+    """T3 (0.22): the Brief view gets audited — the last un-audited
+    face. Findings: a bare .company (not created by hive init) had NO
+    manifest section at all — the absence was silent, not named — and
+    the brief empty state ('No brief.md found') named the absence but
+    not the next step (the 0.17 convention: every empty state names
+    its next step; brief.md is optional at init time via --brief, so
+    the state is real, not an error)."""
+
+    @staticmethod
+    def _free_port():
+        s = socket.socket()
+        s.bind(("127.0.0.1", 0))
+        p = s.getsockname()[1]
+        s.close()
+        return p
+
+    @classmethod
+    def _start_server(cls, company, port):
+        proc = subprocess.Popen(
+            ["node", "lib/dashboard/server.js", "--dir", str(company),
+             "--port", str(port)],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            cwd=str(Path(__file__).resolve().parent.parent),
+            env=os.environ.copy())
+        deadline = time.time() + 10
+        while time.time() < deadline:
+            if proc.poll() is not None:
+                raise AssertionError("dashboard exited before ready")
+            try:
+                with urllib.request.urlopen(
+                        f"http://127.0.0.1:{port}/api/status", timeout=1):
+                    return proc
+            except Exception:
+                time.sleep(0.1)
+        raise AssertionError("dashboard did not start")
+
+    def test_bare_company_names_both_absences(self, tmp_path):
+        """A bare company (no brief.md, no manifest.json — a scratch
+        .company that never ran hive init): the endpoint serves both
+        absences as null, and the delivered script names each absence
+        with its next step — nothing vanishes silently."""
+        import urllib.request
+        company = tmp_path / ".company"
+        (company / "chat").mkdir(parents=True)
+        (company / "logs").mkdir(parents=True)
+        port = self._free_port()
+        proc = self._start_server(company, port)
+        try:
+            with urllib.request.urlopen(
+                    f"http://127.0.0.1:{port}/api/brief", timeout=8) as r:
+                data = json.loads(r.read())
+            assert data["brief"] is None
+            assert data["manifest"] is None
+        finally:
+            proc.terminate()
+            try:
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+        # The delivered script names both absences — the silent
+        # manifest section and the next-step-less brief empty state are
+        # both fixed.
+        content = _spa_text()
+        assert "No manifest.json" in content, (
+            "the manifest section must NAME its absence on a bare "
+            "company — 0.21 rendered no section at all (silent)")
+        after_manifest = content.split("No manifest.json", 1)[1][:300]
+        assert "hive init" in after_manifest, (
+            "the manifest empty state must name the next step (hive "
+            "init creates manifest.json)")
+        assert "No brief.md" in content
+        after_brief = content.split("No brief.md", 1)[1][:300]
+        assert "--brief" in after_brief, (
+            "the brief empty state must name the next step (hive init "
+            "--brief writes brief.md)")
+
+    def test_seeded_brief_and_manifest_serve_through(self, tmp_path):
+        """A seeded manifest + brief render: the endpoint serves both
+        (the panel's input), so the grid and the markdown body have
+        their facts."""
+        import urllib.request
+        company = tmp_path / ".company"
+        (company / "chat").mkdir(parents=True)
+        (company / "logs").mkdir(parents=True)
+        (company / "manifest.json").write_text(json.dumps({
+            "project_name": "brief-test", "mode": "build",
+            "auto_mode": False, "sprint": 1,
+            "created_at": "2026-11-12T00:00:00Z"}))
+        (company / "brief.md").write_text(
+            "# Brief\n\nSeed body for the audit.\n")
+        port = self._free_port()
+        proc = self._start_server(company, port)
+        try:
+            with urllib.request.urlopen(
+                    f"http://127.0.0.1:{port}/api/brief", timeout=8) as r:
+                data = json.loads(r.read())
+            assert data["brief"] is not None
+            assert "Seed body for the audit" in data["brief"]
+            assert data["manifest"] is not None
+            assert data["manifest"]["project_name"] == "brief-test"
+            assert data["manifest"]["sprint"] == 1
+        finally:
+            proc.terminate()
+            try:
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+
+    def test_manifest_grid_renders_seeded_fields(self):
+        """The static surface: the manifest grid still renders a seeded
+        manifest (project_name leads the fixed key list) — the audit
+        added the empty branch, not a re-render of the filled one."""
+        content = _spa_text()
+        assert "manifest-grid" in content
+        grid = content.split("manifest-grid", 1)[1][:800]
+        assert "project_name" in grid, (
+            "the manifest grid must render the seeded manifest's "
+            "fields (project_name leads the fixed key list)")
+
+
 class TestTicketBoardWritePath:
     """C.10: ticket-board write path — fields typed into the create form
     must actually be persisted, and write failures must surface to the
