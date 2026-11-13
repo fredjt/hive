@@ -23,6 +23,7 @@ import os
 import shutil
 import socket
 import subprocess
+import tempfile
 import time
 import urllib.request
 from pathlib import Path
@@ -84,6 +85,41 @@ def build_scratch_repo(proj: Path):
     _git(["add", "-A"], wt)
     _git(["commit", "-qm", "fixture: second commit"], wt,
          date="2026-11-02T09:00:00 +0000")
+
+
+# T3 (0.21) the gh mirror probes the gh the server PROCESS sees: `command
+# -v gh` and `gh auth status` run with the server's PATH. Auth state is
+# MACHINE-DEPENDENT — the record machine's gh may be logged in, CI
+# runners' gh is not — while the committed fixture was recorded with gh
+# ON PATH and AUTHENTICATED (gh_authed: true). The record server (the C2
+# drift test and gen_spa_fixtures.py) must therefore be given a STUB gh
+# that answers `auth status` as authenticated and never reaches the
+# network: the scratch project has no origin remote, so
+# syncGithubMirror never calls `gh pr/issue list`, and the defensive
+# exit 1 below trips if that ever changes. Same pattern as the gh shim
+# in tests/test_dashboard.py.
+GH_STUB = (
+    "#!/bin/sh\n"
+    'case "$*" in\n'
+    "  'auth status'*) exit 0 ;;\n"
+    "  *) echo 'gh stub: network calls are disabled in the fixture run' >&2; exit 1 ;;\n"
+    "esac\n"
+)
+
+_GH_STUB_DIR = None
+
+
+def _gh_stub_dir() -> Path:
+    """The dir holding the stub `gh` the record server sees (GH_STUB).
+    One per process (module scope, hive-* prefix — the reaper reaps it;
+    see TestScratchSnowballGuard in tests/test_xdist_contract.py)."""
+    global _GH_STUB_DIR
+    if _GH_STUB_DIR is None:
+        _GH_STUB_DIR = Path(tempfile.mkdtemp(prefix="hive-spa-gh-"))
+        stub = _GH_STUB_DIR / "gh"
+        stub.write_text(GH_STUB)
+        stub.chmod(0o755)
+    return _GH_STUB_DIR
 
 
 def _free_port():
@@ -157,9 +193,13 @@ class TestSpaSmoke:
 
     def _start_server(self, company):
         port = _free_port()
+        # The stub gh first on PATH: the host's gh (authed or not) must
+        # never decide what /api/gh/mirror reports in a record run.
+        env = {**os.environ,
+               "PATH": f"{_gh_stub_dir()}{os.pathsep}{os.environ.get('PATH', '')}"}
         proc = subprocess.Popen(
             [self.node, str(SERVER_JS), "--dir", str(company), "--port", str(port)],
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env=env)
         _wait_http(f"http://127.0.0.1:{port}/api/status")
         return proc, port
 
@@ -223,3 +263,58 @@ class TestSpaSmoke:
         assert rep.get("unhandled") == [], (
             f"unhandled rejections during the smoke (view threw): "
             f"{rep['unhandled']}")
+
+    # ── record server: the gh state the fixture pins is served, not the
+    #    host's (0.21 — CI drifted /api/gh/mirror: the runner's gh is
+    #    not authenticated, the record machine's was) ───────────────────
+
+    def test_gh_stub_wins_path_and_reports_authed(self):
+        """The stub gh must WIN PATH resolution ahead of any host gh
+        (authed or not) and answer `auth status` as authenticated — the
+        committed fixture pins gh_authed=true, and that is what the
+        record run may depend on."""
+        stub_dir = _gh_stub_dir()
+        env = {**os.environ,
+               "PATH": f"{stub_dir}{os.pathsep}{os.environ.get('PATH', '')}"}
+        r = subprocess.run(["sh", "-c", "command -v gh"], env=env,
+                           capture_output=True, text=True, timeout=10)
+        assert r.returncode == 0 and r.stdout.strip() == str(stub_dir / "gh"), (
+            "the stub gh must be the FIRST gh on the record PATH, ahead "
+            f"of the host's (got {r.stdout.strip()!r})")
+        r = subprocess.run(["sh", "-c", "gh auth status"], env=env,
+                           capture_output=True, text=True, timeout=10)
+        assert r.returncode == 0, (
+            "the stub gh must answer `auth status` as authenticated "
+            f"(rc={r.returncode}, {r.stderr.strip()!r})")
+
+    def test_record_server_reports_the_pinned_gh_state(self, tmp_path):
+        """The record server (what the C2 drift test and
+        gen_spa_fixtures.py run against) must report the PINNED gh
+        diagnostics — on PATH, authenticated, no remote — regardless of
+        the host's gh: an unauthenticated host gh leaking through would
+        make /api/gh/mirror machine-dependent (the 0.21 CI failure)."""
+        self._needs_node()
+        if not self.git:
+            pytest.skip("git unavailable — cannot build the scratch repo")
+        proj = self._copy_project(tmp_path)
+        server, port = self._start_server(proj / "company")
+        try:
+            with urllib.request.urlopen(
+                    f"http://127.0.0.1:{port}/api/gh/mirror", timeout=5) as r:
+                d = json.loads(r.read())
+            diag = d["_diagnostics"]
+            assert diag["gh_on_path"] is True, (
+                "the record server must see a gh on PATH (the stub)")
+            assert diag["gh_authed"] is True, (
+                "the record server must see an AUTHENTICATED gh — the "
+                "committed fixture pins gh_authed=true; a host gh leaking "
+                "through would make the fixture machine-dependent")
+            assert diag["remote_configured"] is False
+            assert d["_sync_error"] == (
+                "cannot reach GitHub (check the diagnostic block)")
+        finally:
+            server.terminate()
+            try:
+                server.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                server.kill()

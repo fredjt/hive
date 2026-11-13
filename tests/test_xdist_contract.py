@@ -300,6 +300,9 @@ class TestScratchSnowballGuard:
         ("conftest.py", "tempfile.mkdtemp(prefix=\"hive-test-\")"),
         ("test_mcp_tools.py", "tempfile.mkdtemp(prefix=\"hive-poison-\")"),
         ("test_verification_gates.py", "tempfile.mkdtemp(prefix=\"hive-gates-\""),
+        # 0.21: the SPA record server's stub gh — one dir per process,
+        # never per test (module-scoped cache in _gh_stub_dir).
+        ("test_spa_smoke.py", "tempfile.mkdtemp(prefix=\"hive-spa-gh-\")"),
     }
 
     def test_no_new_per_test_mktemp_sites(self):
