@@ -28,21 +28,42 @@ import pytest
 TIMESTAMP_KEYS = ("created_at", "updated_at", "started_at",
                   "resolved_at", "stage_started_at", "timestamp")
 
+#: Keys whose values are wall-clock instants in EPOCH MILLISECONDS — a
+#: file's mtime and the age derived from it (the dashboard's /api/config
+#: snapshot freshness). Same contract as TIMESTAMP_KEYS: the instant is
+#: not part of the state's identity, so it is normalized to the same
+#: constant "T" before any cross-instant comparison (the SPA fixture
+#: drift guard compares two records of the same state written at
+#: different instants).
+FRESHNESS_KEYS = ("mtime_ms", "age_ms")
 
-def normalize_clock(value, timestamp_keys=TIMESTAMP_KEYS):
-    """Replace wall-clock timestamp strings with the constant "T".
 
-    Recurses through dicts and lists. Used before comparing two pieces of
-    state written at different instants (the two shared move paths in
-    test_state_layer), so the comparison asserts identical move paths —
-    not identical instants.
+def normalize_clock(value, timestamp_keys=TIMESTAMP_KEYS,
+                    freshness_keys=FRESHNESS_KEYS):
+    """Replace wall-clock timestamps with the constant "T".
+
+    String instants in timestamp_keys and numeric (epoch-ms) instants in
+    freshness_keys are both replaced — the instant is not part of the
+    state's identity. Recurses through dicts and lists. Used before
+    comparing two pieces of state written at different instants (the two
+    shared move paths in test_state_layer), so the comparison asserts
+    identical move paths — not identical instants.
     """
     if isinstance(value, dict):
-        return {k: ("T" if k in timestamp_keys and isinstance(v, str)
-                    else normalize_clock(v, timestamp_keys))
-                for k, v in value.items()}
+        out = {}
+        for k, v in value.items():
+            if k in timestamp_keys and isinstance(v, str):
+                out[k] = "T"
+            elif (k in freshness_keys
+                  and isinstance(v, (int, float))
+                  and not isinstance(v, bool)):
+                out[k] = "T"
+            else:
+                out[k] = normalize_clock(v, timestamp_keys, freshness_keys)
+        return out
     if isinstance(value, list):
-        return [normalize_clock(v, timestamp_keys) for v in value]
+        return [normalize_clock(v, timestamp_keys, freshness_keys)
+                for v in value]
     return value
 
 # Ensure hive lib is on PYTHONPATH for all tests.

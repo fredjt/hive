@@ -872,15 +872,19 @@
       "body": {
         "doctor": null,
         "llm_test": {
-          "ok": true,
-          "provider": "openai",
-          "model": "gpt-4o",
-          "base_url": "https://api.openai.com/v1",
-          "key_source": "from config [llm].api_key",
-          "latency_ms": 421,
-          "reply": "pong",
-          "error": "",
-          "ts": "2026-11-04T09:00:00Z"
+          "data": {
+            "ok": true,
+            "provider": "openai",
+            "model": "gpt-4o",
+            "base_url": "https://api.openai.com/v1",
+            "key_source": "from config [llm].api_key",
+            "latency_ms": 421,
+            "reply": "pong",
+            "error": "",
+            "ts": "2026-11-04T09:00:00Z"
+          },
+          "mtime_ms": 1767269625000,
+          "age_ms": 27316054551
         }
       }
     }

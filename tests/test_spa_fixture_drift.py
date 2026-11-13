@@ -12,8 +12,16 @@ manifest is regenerated with `python tests/gen_spa_fixtures.py`.
 """
 import json
 import subprocess
+import sys
+from pathlib import Path
 
 import pytest
+
+# tests/ is a package — make the shared conftest helpers importable by
+# bare name (the test_mcp_tools.py pattern).
+_tests_dir = str(Path(__file__).resolve().parent)
+if _tests_dir not in sys.path:
+    sys.path.insert(0, _tests_dir)
 
 # The C1 module owns the shared fixture locations, the node/git
 # availability checks, and the scratch-project + server helpers.
@@ -21,6 +29,13 @@ from tests.test_spa_smoke import (
     SPA_FIX_DIR,
     TestSpaSmoke as _Helpers,
 )
+
+# The shared clock normalizer (conftest): the snapshot freshness fields
+# (mtime_ms / age_ms on the /api/config body) are wall-clock instants,
+# not part of the response's identity — two records of the same state
+# written at different instants must compare equal on their identity
+# (xdist worker contract, R1).
+from conftest import normalize_clock
 
 
 class TestSpaFixtureDrift:
@@ -76,7 +91,10 @@ class TestSpaFixtureDrift:
                 f"{name}: endpoint set drifted — live server serves "
                 f"{sorted(set(a['responses']) ^ set(b['responses']))}")
             for key in sorted(a["responses"]):
-                assert a["responses"][key] == b["responses"][key], (
+                # Clock-normalized: mtime_ms / age_ms carry the instant
+                # the record was written, not the state's identity.
+                assert normalize_clock(a["responses"][key]) == \
+                    normalize_clock(b["responses"][key]), (
                     f"{name}: /api/{key} response shape drifted from the "
                     f"committed SPA fixture — the server's JSON changed "
                     "(field rename?); regenerate the fixture with "
