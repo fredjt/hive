@@ -2626,3 +2626,49 @@ class TestGhMirror:
             except subprocess.TimeoutExpired:
                 proc.kill()
 
+    def test_gh_change_fires_on_state_delta(self, tmp_path):
+        """HIVE_DASHBOARD_GH_SYNC_SECS=1 + the shim flipping PR 12 to
+        MERGED between ticks: a connected SSE client sees gh-change (the
+        delta broadcast) and the next poll reflects the flip."""
+        repo, company = self._fixture(tmp_path)
+        bin_dir, state = (tmp_path / "shim-bin"), (tmp_path / "st")
+        bin_dir.mkdir()
+        state.write_text("OPEN")
+        gh = bin_dir / "gh"
+        gh.write_text(self._SHIM.replace("__STATE__", str(state)))
+        gh.chmod(0o755)
+        port = self._free_port()
+        proc = self._start(company, port,
+                           env={"HIVE_DASHBOARD_GH_SYNC_SECS": "1"},
+                           path_extra=str(bin_dir))
+        try:
+            sse = _SSESocket(port)
+            try:
+                sse.wait_for_head(8.0)
+                # initial sync (OPEN)
+                with urllib.request.urlopen(
+                        f"http://127.0.0.1:{port}/api/gh/mirror",
+                        timeout=5) as r:
+                    d0 = json.loads(r.read())
+                assert d0["prs"]["12"]["state"] == "open"
+                # flip the PR to MERGED
+                state.write_text("MERGED")
+                # wait for the delta broadcast
+                sse.wait_for(b"event: gh-change", 8.0)
+                # the next poll reflects the flip (TTL=1s has lapsed)
+                time.sleep(1.2)
+                with urllib.request.urlopen(
+                        f"http://127.0.0.1:{port}/api/gh/mirror",
+                        timeout=5) as r:
+                    d1 = json.loads(r.read())
+                assert d1["prs"]["12"]["state"] == "merged", (
+                    "the second poll must reflect the flip "
+                    f"(got {d1['prs']['12']['state']!r})")
+            finally:
+                sse.close()
+        finally:
+            proc.terminate()
+            try:
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                proc.kill()
