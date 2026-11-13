@@ -1,3 +1,106 @@
+## 0.21.0
+
+0.21 starts the dashboard arc. 0.15-0.20 covered the install path, the
+suite, the CLI faces, and the read path; the one face the user actually
+looks at while the company runs — the dashboard — was the least solid
+surface in the tree: the live-update path was broken at three
+independent, measured layers (the SSE transport, the event-to-view
+wiring, and the spawn data contract), the GitHub page read a file
+nothing in the tree writes, and a refresh threw the user back to the
+ticket board. 0.21 repairs the foundation and pins each repair with a
+live-server test, so the next dashboard release builds on a floor that
+holds. Every change is a dashboard module, a SPA line, or a test —
+the scripts and tools the agents call are untouched, every --json
+envelope stays byte-identical, and no exit code moves in this release.
+
+### The Activity page watches what's actually happening (T1)
+- The spawn data contract speaks one dialect now: `spawn_id` in the
+  record, the stream pointer, and the dashboard's read side resolve it
+  with a fallback chain (`spawn_id` -> legacy id -> record filename),
+  so a 0.20-shaped orphaned active record survives an upgrade readable
+  by the 0.21 dashboard.
+- Watch opens a REAL spawn: the per-spawn event count climbs per
+  second on a live spawn (0.20: the viewer never opened — the stream
+  file was addressed by an id nothing wrote, 0 events forever).
+- Watch Global merges every active stream: active_count and rendered
+  events for every in-flight spawn, per-event updates while an
+  appender runs (0.20: `{"total":0,"active_count":0}` with a 26-line
+  file on an alive spawn). The Events column counts the file's real
+  lines (0.20: 0).
+
+### The SSE transport actually delivers (T2)
+- The response head and the `: connected` line arrive at connect on an
+  IDLE company (0.20: 0 bytes until the first file change, measured
+  >2 s) — `res.flushHeaders()` + the comment at the head of the
+  stream.
+- A keepalive heartbeat (`: hb` every `HIVE_DASHBOARD_SSE_HB_SECS`,
+  default 15 s) keeps the idle pipe warm: a byteless pipe is a dead
+  pipe (proxies and browsers give up silently; EventSource fires
+  onerror, not onopen).
+- `setupWatchers` no longer throws `STATUSES is not defined` for any
+  company with a department ticket board (the whole watcher tree never
+  installed; the board's ticket dirs fired no ticket-change).
+- The SPA shows what the transport is doing: `reconnecting…` is a
+  state of its own with a 5 -> 10 -> 30 s backoff (0.20: a flat 5 s
+  loop), and the live indicator carries the last-byte age — "live"
+  means bytes are arriving, not that a socket once opened.
+- spawn STARTING or STOPPING fires its own event (`logs/active` ->
+  `spawn-registry-change`); the wiring gaps close: the global stream
+  refreshes on spawn-stream-change, sprint-change and report-change
+  reach the Releases view, ticket-change reaches the Git view, and
+  gh-change refreshes the GitHub page.
+
+### The GitHub page shows GitHub's actual state (T3)
+- gh is the source of truth: every PR and issue on the remote is a
+  row (`gh pr list --state all`; `gh issue list` open + closed). The
+  sidecar (`.company/integrations/github-mirror.json`) — written by
+  nothing in the tree — is demoted to a ticket-link overlay +
+  last-good cache and is now written by the sync itself on success.
+- The Hive ticket column maps `feature/<TID>` branches (sidecar
+  explicit links win); deep links come from `git remote get-url
+  origin` (no remote -> plain numbers, no dead anchors).
+- `_diagnostics` names which check failed (gh on PATH / gh authed /
+  remote configured / network) alongside `_sync_error`, and the panel
+  renders the diagnostic block (named check + actionable fix) over
+  the last good state — instead of a warning badge over two empty
+  tables.
+- A dashboard-process timer (`HIVE_DASHBOARD_GH_SYNC_SECS`, default
+  60 s — no new daemon) re-syncs on a connected company and
+  broadcastSSEs `gh-change` on any state delta: a PR merged outside
+  the dashboard flips on the page within one interval, no
+  navigation.
+
+### Refresh keeps you where you are (T4)
+- A hash route per top-level view (`#/board/<dept>`, `#/chat/<channel>`,
+  `#/activity/spawn/<id>`, `#/activity/global`, `#/logs/<file>`,
+  `#/rounds/<id>`, ...): every showX() writes the hash and drilldowns
+  update it, so the URL a user is looking at is the URL that gets them
+  back, and back/forward work (0.20: reload from any view -> All
+  Departments; the back button had never done anything).
+- Drilldowns rehydrate from the hash (a completed spawn re-renders in
+  full from the `from=0` replay; a live spawn resumes and follows via
+  the existing SSE wiring); a bad hash falls to the parent view's
+  normal empty state — a bad hash never blanks the app.
+
+Before/after — the 0.20.0 and 0.21.0 faces, side by side (R3):
+
+| face | 0.20.0 | 0.21.0 (this host) |
+|---|---|---|
+| SSE on an idle company | 0 bytes until the first file change (>2 s) | head + `: connected` at connect; `: hb` every 15 s |
+| Watch (live spawn) | viewer never opens (spawnId ""), 0 events | viewer opens; the per-spawn count climbs per second |
+| Watch Global | `{"total":0,"active_count":0}` with a 26-line file on an alive spawn | spawn visible, events rendered, per-event updates while the appender runs |
+| Events column / total | 0 | the file's line count |
+| GitHub page | Issues 0 (always); ticket column "?"; dead anchors; no live refresh | real issues/PRs; mapped tickets; deep links; gh-change refresh; the diagnostic block with gh absent |
+| refresh on any view | lands on All Departments | stays (hash routing + rehydration) |
+- The upgrade path from v0.20.0 verifies (the 0.15 T5 contract:
+  scratch-install the published 0.20.0, install the staged tree on
+  top, doctor it) — including a 0.20-shaped orphaned active record
+  surviving the upgrade readable by the 0.21 dashboard (the T1
+  fallback chain's field case).
+- PARKED (named in the release notes so the deferral is visible, not
+  silent): the SDK-free in-process rung, the worker-count guidance,
+  the CI 3.14 row — 0.22 candidates.
+
 ## 0.20.0
 
 0.20 is the speed-and-hand release. 0.17/0.18/0.19 covered what the
