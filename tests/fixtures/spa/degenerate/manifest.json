@@ -143,9 +143,21 @@
     "gh/mirror": {
       "status": 200,
       "body": {
+        "repo": {
+          "name": null,
+          "url": null
+        },
         "issues": {},
         "prs": {},
-        "_sync_error": "Command failed: gh pr list --state all --limit 100 --json number,state,mergedAt,closedAt,headRefName,title"
+        "_last_gh_sync_ms": null,
+        "_sync_error": "cannot reach GitHub (check the diagnostic block)",
+        "_diagnostics": {
+          "gh_on_path": true,
+          "gh_authed": true,
+          "remote_configured": false,
+          "stale": true,
+          "error": "cannot reach GitHub (check the diagnostic block)"
+        }
       }
     },
     "releases/current": {

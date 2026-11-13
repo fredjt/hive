@@ -2452,3 +2452,177 @@ class TestSseSpawnRegistry:
         assert content.count("Read-only — refreshed when you open this view") >= 2, (
             "Config and Brief must both name themselves read-only, "
             "refreshed on navigation (they have no live SSE event)")
+
+@pytest.mark.skipif(not _node_available(), reason="node not available")
+class TestGhMirror:
+    """T3 (0.21): the GitHub page shows GitHub's actual state.
+
+    gh is the source of truth; the sidecar (integrations/github-mirror.
+    json) is a ticket-link overlay + last-good cache written by the sync
+    itself. The fixture is a real git repo with a fixture origin remote
+    and a `gh` shim on PATH emitting canned JSON; the no-gh face uses a
+    restricted PATH (no gh binary at all)."""
+
+    git = shutil.which("git") is not None
+
+    @classmethod
+    def setup_class(cls):
+        if not cls.git:
+            pytest.skip("git unavailable — cannot build the fixture repo")
+
+    @staticmethod
+    def _free_port():
+        s = socket.socket()
+        s.bind(("127.0.0.1", 0))
+        p = s.getsockname()[1]
+        s.close()
+        return p
+
+    @staticmethod
+    def _fixture(tmp_path):
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        def g(*a):
+            subprocess.run(["git"] + list(a), cwd=str(repo), check=True,
+                           stdout=subprocess.DEVNULL,
+                           stderr=subprocess.DEVNULL)
+        g("init", "-q", "-b", "main", ".")
+        g("remote", "add", "origin",
+          "https://github.com/fredtest/hive-fixture.git")
+        company = repo / ".company"
+        (company / "integrations").mkdir(parents=True)
+        (company / "manifest.json").write_text(
+            json.dumps({"project_name": "gh-fixture"}))
+        return repo, company
+
+    # The shim emits canned JSON; PR #12's state comes from a file the
+    # tests can flip between sync ticks.
+    _SHIM = (
+        "#!/bin/sh\n"
+        'case "$*" in\n'
+        "  'auth status'*) exit 0 ;;\n"
+        "  'pr list'*)\n"
+        '    S=$(cat "__STATE__" 2>/dev/null || echo OPEN)\n'
+        '    printf \'[{"number":12,"state":"%s","mergedAt":null,'
+        '"closedAt":null,"headRefName":"feature/FINANCE-0001",'
+        '"title":"Billing export"}]\' "$S" ;;\n'
+        "  'issue list --state open'*)\n"
+        '    printf \'%s\' \'[{"number":3,"state":"OPEN","title":"Poller leak"}]\' ;;\n'
+        "  'issue list --state closed'*)\n"
+        '    printf \'%s\' \'[{"number":2,"state":"CLOSED","title":"Docs typo"}]\' ;;\n'
+        "  *) exit 1 ;;\n"
+        "esac\n"
+    )
+
+    @classmethod
+    def _start(cls, company, port, path_extra=None, env=None):
+        full = os.environ.copy()
+        if path_extra:
+            full["PATH"] = path_extra + os.pathsep + full["PATH"]
+        if env:
+            full.update(env)
+        proc = subprocess.Popen(
+            ["node", "lib/dashboard/server.js", "--dir", str(company),
+             "--port", str(port)],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            cwd=str(Path(__file__).resolve().parent.parent), env=full)
+        deadline = time.time() + 10
+        while time.time() < deadline:
+            if proc.poll() is not None:
+                raise AssertionError("dashboard exited before ready")
+            try:
+                with urllib.request.urlopen(
+                        f"http://127.0.0.1:{port}/api/status", timeout=1):
+                    return proc
+            except Exception:
+                time.sleep(0.1)
+        raise AssertionError("dashboard did not start")
+
+    def test_gh_shim_full_state(self, tmp_path):
+        """Fixture gh on PATH + fixture origin: open AND closed issues and
+        the PR land, feature/<TID> maps to the ticket column, deep links
+        carry the fixture owner/repo, _diagnostics is clean, and the sync
+        writes the sidecar cache itself."""
+        repo, company = self._fixture(tmp_path)
+        bin_dir, state = (tmp_path / "shim-bin"), (tmp_path / "st")
+        bin_dir.mkdir()
+        state.write_text("OPEN")
+        gh = bin_dir / "gh"
+        gh.write_text(self._SHIM.replace("__STATE__", str(state)))
+        gh.chmod(0o755)
+        port = self._free_port()
+        proc = self._start(company, port, path_extra=str(bin_dir))
+        try:
+            with urllib.request.urlopen(
+                    f"http://127.0.0.1:{port}/api/gh/mirror", timeout=5) as r:
+                d = json.loads(r.read())
+            assert d["repo"]["name"] == "fredtest/hive-fixture"
+            assert d["repo"]["url"] == "https://github.com/fredtest/hive-fixture"
+            assert d["_diagnostics"]["stale"] is False
+            assert d["_sync_error"] is None
+            pr12 = d["prs"]["12"]
+            assert pr12["state"] == "open"
+            assert pr12["ticket"] == "FINANCE-0001", (
+                "feature/<TID> branch must map to the ticket column")
+            assert pr12["url"] == ("https://github.com/"
+                                   "fredtest/hive-fixture/pull/12")
+            assert d["issues"]["3"]["state"] == "open"
+            assert d["issues"]["2"]["state"] == "closed"
+            assert d["issues"]["3"]["url"].endswith("/issues/3")
+            # the sync itself owns the sidecar cache now
+            side = json.loads(
+                (company / "integrations" / "github-mirror.json").read_text())
+            assert "12" in side["prs"] and side["_last_gh_sync_ms"]
+        finally:
+            proc.terminate()
+            try:
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+
+    def test_no_gh_serves_last_good_sync_with_named_diagnostic(self,
+                                                                tmp_path):
+        """PATH without gh: 200 (no 500), _diagnostics names the missing
+        gh, _sync_error present, and the SEEDED sidecar (last good sync)
+        is still served."""
+        repo, company = self._fixture(tmp_path)
+        seed = {
+            "prs": {"12": {"number": 12, "title": "Billing export",
+                           "state": "open", "branch": "feature/FINANCE-0001",
+                           "ticket": "FINANCE-0001"}},
+            "issues": {"3": {"number": 3, "title": "Poller leak",
+                             "state": "open"}},
+            "_last_gh_sync_ms": 1700000000000,
+        }
+        (company / "integrations" / "github-mirror.json").write_text(
+            json.dumps(seed))
+        # A PATH that has sh + git + coreutils but NO gh.
+        bin_dir = tmp_path / "nopath-bin"
+        bin_dir.mkdir()
+        for name in ("sh", "git", "cat", "node"):
+            src = shutil.which(name)
+            if src:
+                os.symlink(src, str(bin_dir / name))
+        port = self._free_port()
+        full_env = {"PATH": str(bin_dir)}
+        proc = self._start(company, port, env=full_env)
+        try:
+            with urllib.request.urlopen(
+                    f"http://127.0.0.1:{port}/api/gh/mirror", timeout=5) as r:
+                assert r.status == 200
+                d = json.loads(r.read())
+            assert d["_diagnostics"]["gh_on_path"] is False
+            assert d["_diagnostics"]["stale"] is True
+            assert d["_sync_error"] and "gh" in d["_sync_error"]
+            assert d["repo"]["name"] == "fredtest/hive-fixture", (
+                "the repo URL needs only git, not gh")
+            assert d["prs"].get("12"), (
+                "the last good sync (seeded sidecar) must still be served")
+            assert d["prs"]["12"]["ticket"] == "FINANCE-0001"
+        finally:
+            proc.terminate()
+            try:
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+
