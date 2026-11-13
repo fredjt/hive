@@ -2672,3 +2672,38 @@ class TestGhMirror:
                 proc.wait(timeout=5)
             except subprocess.TimeoutExpired:
                 proc.kill()
+
+
+@pytest.mark.skipif(not _node_available(), reason="node not available")
+class TestGhSpaProbes:
+    """T3 (0.21): static probes for the delivered GitHub template."""
+
+    def _content(self):
+        return _spa_text()
+
+    def test_no_dead_anchors_in_github_template(self):
+        c = self._content()
+        assert 'onclick="return false"' not in c, (
+            "dead anchors (onclick='return false') must not remain in "
+            "the GitHub template — rows link to real deep links or render "
+            "plain numbers")
+
+    def test_gh_change_listener_present(self):
+        c = self._content()
+        assert "addEventListener('gh-change'" in c, (
+            "the github panel must listen for gh-change to refresh")
+
+    def test_diagnostic_rendering_present(self):
+        c = self._content()
+        assert "GitHub sync is not working" in c, (
+            "the diagnostic block must name the failed sync")
+        assert "gh auth login" in c, (
+            "the diagnostic must carry an actionable fix")
+        assert "origin remote configured" in c, (
+            "the diagnostic must name the remote check")
+
+    def test_real_fact_empty_states(self):
+        c = self._content()
+        assert "0 issues on" in c, (
+            "the issues empty state must be a real fact "
+            "('0 issues on <owner>/<repo>'), not a dead poller reference")
