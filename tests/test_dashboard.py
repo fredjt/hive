@@ -2100,6 +2100,11 @@ class _SSESocket:
                 self._chunk_left = None
                 return
             n = min(self._chunk_left, len(self._raw))
+            if n == 0:
+                # Chunk size seen, body not (yet) — a recv split right
+                # after the size line. Without this the min() above is 0
+                # and the loop spins forever; return and wait for bytes.
+                return
             self.buf += self._raw[:n]
             self._raw = self._raw[n:]
             self._chunk_left -= n
@@ -2452,6 +2457,432 @@ class TestSseSpawnRegistry:
         assert content.count("Read-only — refreshed when you open this view") >= 2, (
             "Config and Brief must both name themselves read-only, "
             "refreshed on navigation (they have no live SSE event)")
+
+
+@pytest.mark.skipif(not _node_available(), reason="node not available")
+class TestSseStreamPush:
+    """T2 (0.22): the stream event RIDES the SSE channel.
+
+    Push, not nudge-plus-refetch: the streams watcher's trailing 50 ms
+    debounce coalesces a micro-burst into ONE delta read + ONE broadcast
+    on the already-open /api/events connection. The per-spawn push
+    (`spawn-stream-event`) carries only the DELTA (a per-file cursor —
+    lines already pushed — so nothing is ever resent); the global push
+    (`spawn-stream-global`) carries the server-side time-ordered merge
+    with the per-spawn metadata. The cursor endpoints are UNCHANGED —
+    they are the demoted catch-up path (open / SSE reconnect) and their
+    goldens (TestSpawnContractEndpoints) pass untouched."""
+
+    @staticmethod
+    def _free_port():
+        s = socket.socket()
+        s.bind(("127.0.0.1", 0))
+        p = s.getsockname()[1]
+        s.close()
+        return p
+
+    @staticmethod
+    def _idle_company(tmp_path):
+        company = tmp_path / ".company"
+        (company / "chat").mkdir(parents=True)
+        (company / "logs").mkdir(parents=True)
+        (company / "manifest.json").write_text(
+            json.dumps({"project_name": "sse-push-test"}))
+        return company
+
+    @classmethod
+    def _start_server(cls, company, port, env=None):
+        full_env = os.environ.copy()
+        if env:
+            full_env.update(env)
+        proc = subprocess.Popen(
+            ["node", "lib/dashboard/server.js", "--dir", str(company),
+             "--port", str(port)],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            cwd=str(Path(__file__).resolve().parent.parent),
+            env=full_env)
+        deadline = time.time() + 10
+        while time.time() < deadline:
+            if proc.poll() is not None:
+                raise AssertionError("dashboard exited before ready")
+            try:
+                with urllib.request.urlopen(
+                        f"http://127.0.0.1:{port}/api/status", timeout=1):
+                    return proc
+            except Exception:
+                time.sleep(0.1)
+        raise AssertionError("dashboard did not start")
+
+    @staticmethod
+    def _push_payloads(sse, name):
+        """Parse the `event: <name>` payloads out of the de-chunked body,
+        in wire order."""
+        out = []
+        for block in sse.text.split("\n\n"):
+            lines = [l for l in block.strip("\n").splitlines() if l]
+            if not lines or lines[0] != f"event: {name}":
+                continue
+            data_lines = [l[len("data: "):]
+                          for l in lines if l.startswith("data: ")]
+            if data_lines:
+                out.append(json.loads(data_lines[0]))
+        return out
+
+    def _spawn_files(self, company, spawn_id, started_ts):
+        active = company / "logs" / "active"
+        active.mkdir(parents=True, exist_ok=True)
+        (active / (spawn_id + ".json")).write_text(json.dumps({
+            "spawn_id": spawn_id, "agent": spawn_id.lower(),
+            "dept": "rd", "role": "engineer", "ticket": "RD-1",
+            "started_ts": started_ts}))
+        streams = company / "logs" / "streams"
+        streams.mkdir(parents=True, exist_ok=True)
+        return streams / (spawn_id + ".jsonl")
+
+    @staticmethod
+    def _line(n):
+        return json.dumps(
+            {"type": "assistant",
+             "message": {"content": [{"type": "text", "text": f"line-{n}"}]}})
+
+    def test_push_carries_the_delta_not_a_nudge(self, tmp_path):
+        """3 lines appended to a live spawn's stream file → the connected
+        client receives a `spawn-stream-event` carrying EXACTLY those 3
+        lines (not merely a nudge); a second append carries only the new
+        lines (server-side per-file cursor — no resend)."""
+        company = self._idle_company(tmp_path)
+        stream = self._spawn_files(company, "pushA", 1000)
+        port = self._free_port()
+        proc = self._start_server(company, port)
+        try:
+            sse = _SSESocket(port)
+            try:
+                sse.wait_for_head(8.0)
+                stream.write_text("\n".join(self._line(i) for i in range(3))
+                                  + "\n")
+                sse.wait_for(b"event: spawn-stream-event", 8.0)
+                deadline = time.time() + 8
+                pushes = []
+                while time.time() < deadline:
+                    pushes = self._push_payloads(sse, "spawn-stream-event")
+                    if pushes and pushes[-1]["next"] >= 3:
+                        break
+                    sse.pump(0.2)
+                assert pushes, (
+                    "a stream append fired no spawn-stream-event push — "
+                    "the 0.21 nudge (a refetch nudge) is all this "
+                    f"connection saw: {sse.buf[:300]!r}")
+                p = pushes[0]
+                assert p["spawn_id"] == "pushA"
+                assert p["from"] == 0 and p["next"] == 3, (
+                    f"the first push must carry lines 0..3 (got "
+                    f"from={p['from']} next={p['next']})")
+                assert len(p["events"]) == 3, (
+                    "the push must carry the events, not just a nudge "
+                    f"(carried {len(p['events'])})")
+                assert [e["message"]["content"][0]["text"]
+                        for e in p["events"]] == [
+                            "line-0", "line-1", "line-2"], (
+                    "the push must carry exactly the 3 appended lines "
+                    "in order")
+                with stream.open("a") as f:
+                    f.write(self._line(3) + "\n" + self._line(4) + "\n")
+                deadline = time.time() + 8
+                while time.time() < deadline:
+                    pushes = self._push_payloads(sse, "spawn-stream-event")
+                    if (len(pushes) > 1
+                            and pushes[-1]["next"] >= 5):
+                        break
+                    sse.pump(0.2)
+                assert len(pushes) > 1 and pushes[-1]["next"] >= 5, (
+                    "the second append fired no follow-up push (the "
+                    f"per-file cursor must advance) — pushes: "
+                    f"{[ (q['from'], q['next']) for q in pushes ]!r}")
+                p2 = pushes[-1]
+                assert p2["from"] >= 3, (
+                    "the second push must start where the first ended "
+                    f"(from={p2['from']} — it re-sends held lines)")
+                texts = [e["message"]["content"][0]["text"]
+                         for e in p2["events"]]
+                assert "line-0" not in texts and "line-2" not in texts, (
+                    "the second push re-sent lines the client already "
+                    f"holds: {texts!r}")
+                assert texts == ["line-3", "line-4"], (
+                    "the second push must carry exactly the new lines "
+                    f"(got {texts!r})")
+            finally:
+                sse.close()
+        finally:
+            proc.terminate()
+            try:
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+
+    def test_burst_coalesces_and_cursors_are_contiguous(self, tmp_path):
+        """50 lines written back-to-back → the pushes carry all 50 and the
+        `next` cursors are contiguous across pushes (no gaps, no
+        duplicates) — the client's appended events equal the file content
+        exactly."""
+        company = self._idle_company(tmp_path)
+        stream = self._spawn_files(company, "burstA", 1000)
+        port = self._free_port()
+        proc = self._start_server(company, port)
+        try:
+            sse = _SSESocket(port)
+            try:
+                sse.wait_for_head(8.0)
+                stream.write_text("\n".join(self._line(i) for i in range(50))
+                                  + "\n")
+                sse.wait_for(b"event: spawn-stream-event", 8.0)
+                deadline = time.time() + 10
+                while time.time() < deadline:
+                    pushes = self._push_payloads(sse, "spawn-stream-event")
+                    if pushes and pushes[-1]["next"] >= 50:
+                        # Outwait one more debounce window so a stray
+                        # re-push (there must be none) would have landed.
+                        sse.pump(0.3)
+                        pushes = self._push_payloads(
+                            sse, "spawn-stream-event")
+                        break
+                    sse.pump(0.2)
+                pushes = self._push_payloads(sse, "spawn-stream-event")
+                assert pushes and pushes[-1]["next"] >= 50, (
+                    f"the 50-line burst never fully pushed — pushes: "
+                    f"{[(q['from'], q['next']) for q in pushes]!r}")
+                # Contiguity: first from 0, each from == previous next.
+                assert pushes[0]["from"] == 0, (
+                    f"the first push must start at 0 (from="
+                    f"{pushes[0]['from']})")
+                for i in range(1, len(pushes)):
+                    assert pushes[i]["from"] == pushes[i - 1]["next"], (
+                        f"cursor gap/overlap between push {i - 1} and "
+                        f"{i}: {pushes[i-1]['from']}->{pushes[i-1]['next']}")
+                # Integrity: the pushed events equal the file content
+                # exactly (no loss, no duplicates, in order).
+                sent = [e for q in pushes for e in q["events"]]
+                with stream.open() as f:
+                    expected = [json.loads(l) for l in f
+                                if l.strip()]
+                assert len(sent) == 50, (
+                    f"the pushes carried {len(sent)} events, the file "
+                    "holds 50 (loss or duplicates)")
+                assert sent == expected, (
+                    "the pushed events do not equal the file content "
+                    "exactly")
+            finally:
+                sse.close()
+        finally:
+            proc.terminate()
+            try:
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+
+    def test_global_push_merges_in_order_and_tracks_the_registry(self,
+                                                                 tmp_path):
+        """`spawn-stream-global` events are time-ordered (started_ts then
+        line) with the correct per-event spawn_id; active_count tracks
+        the registry create / remove (the 0.21 registry watcher,
+        unchanged) — the completed spawn's tail keeps pushing with the
+        endpoint's '?' fallback meta."""
+        company = self._idle_company(tmp_path)
+        sA = self._spawn_files(company, "gA", 1000)   # started first
+        sB = self._spawn_files(company, "gB", 2000)
+        port = self._free_port()
+        proc = self._start_server(company, port)
+        try:
+            sse = _SSESocket(port)
+            try:
+                sse.wait_for_head(8.0)
+                sA.write_text(self._line(0) + "\n" + self._line(1) + "\n")
+                sB.write_text(self._line(0) + "\n")
+                sse.wait_for(b"event: spawn-stream-global", 8.0)
+                deadline = time.time() + 8
+                while time.time() < deadline:
+                    pushes = self._push_payloads(sse, "spawn-stream-global")
+                    if pushes and pushes[-1]["total"] >= 3:
+                        break
+                    sse.pump(0.2)
+                pushes = self._push_payloads(sse, "spawn-stream-global")
+                assert pushes, "no spawn-stream-global push arrived"
+                p = pushes[0]
+                assert p["active_count"] == 2, (
+                    f"active_count must count the registry (got "
+                    f"{p['active_count']}, 2 records)")
+                seq = [(e["spawn_id"], e["line"]) for e in p["events"]]
+                assert seq == [("gA", 0), ("gA", 1), ("gB", 0)], (
+                    "the merge must be time-ordered by started_ts then "
+                    f"line, with the per-event spawn_id (got {seq!r})")
+                assert all(e["agent"] == e["spawn_id"].lower()
+                           for e in p["events"]), (
+                    "each event must carry its source spawn's metadata")
+                # gB completes: its record is removed, its tail must
+                # still push ('?' fallback), and active_count drops to 1.
+                (company / "logs" / "active" / "gB.json").unlink()
+                sB.write_text(self._line(0) + "\n" + self._line(1) + "\n")
+                deadline = time.time() + 8
+                while time.time() < deadline:
+                    pushes = self._push_payloads(sse, "spawn-stream-global")
+                    if (len(pushes) > 1
+                            and ("gB", 1) in
+                            [(e["spawn_id"], e["line"])
+                             for e in pushes[-1]["events"]]):
+                        break
+                    sse.pump(0.2)
+                pushes = self._push_payloads(sse, "spawn-stream-global")
+                assert len(pushes) > 1, (
+                    "removing the registry record and appending its tail "
+                    "fired no second global push")
+                p2 = pushes[-1]
+                assert p2["active_count"] == 1, (
+                    f"active_count must drop to 1 after the record is "
+                    f"removed (got {p2['active_count']})")
+                tails = [e for e in p2["events"]
+                         if e["spawn_id"] == "gB"]
+                assert [e["line"] for e in tails] == [1], (
+                    "the completed spawn's push must carry only its new "
+                    f"tail line (got {[(e['line']) for e in tails]!r})")
+                assert tails and tails[0]["agent"] == "?", (
+                    "the completed spawn's events ride the endpoint's "
+                    "'?' fallback meta")
+            finally:
+                sse.close()
+        finally:
+            proc.terminate()
+            try:
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+
+    def test_reconnect_catch_up_then_pushes_resume_without_dups(self,
+                                                                tmp_path):
+        """A client disconnects, appends continue, the client reconnects →
+        the wire fetch (stream?from=<cursor>) returns exactly the missed
+        lines, and the pushes resume from the server cursor with no
+        duplication."""
+        company = self._idle_company(tmp_path)
+        stream = self._spawn_files(company, "reA", 1000)
+        port = self._free_port()
+        proc = self._start_server(company, port)
+        try:
+            sse = _SSESocket(port)
+            try:
+                sse.wait_for_head(8.0)
+                stream.write_text("\n".join(self._line(i) for i in range(3))
+                                  + "\n")
+                deadline = time.time() + 8
+                while time.time() < deadline:
+                    pushes = self._push_payloads(sse, "spawn-stream-event")
+                    if pushes and pushes[-1]["next"] >= 3:
+                        break
+                    sse.pump(0.2)
+                client_next = 3  # the client's cursor after the push
+            finally:
+                sse.close()
+            # Disconnected: the file grows with no client listening.
+            with stream.open("a") as f:
+                f.write(self._line(3) + "\n" + self._line(4) + "\n")
+            time.sleep(0.6)  # outwait the debounce window
+            # Reconnect: the wire catch-up from the saved cursor returns
+            # exactly the missed lines.
+            with urllib.request.urlopen(
+                    f"http://127.0.0.1:{port}/api/spawns/reA/stream"
+                    f"?from={client_next}&limit=500", timeout=5) as r:
+                data = json.loads(r.read().decode())
+            assert [e["message"]["content"][0]["text"]
+                    for e in data["events"]] == ["line-3", "line-4"], (
+                "the catch-up fetch must return exactly the missed lines "
+                f"(got {data['events']!r})")
+            assert data["next"] == 5 and data["total"] == 5
+            client_next = data["next"]
+            # A new client follows: the next push resumes from the server
+            # cursor (>= client_next) and carries only new lines.
+            sse2 = _SSESocket(port)
+            try:
+                sse2.wait_for_head(8.0)
+                with stream.open("a") as f:
+                    f.write(self._line(5) + "\n")
+                sse2.wait_for(b"event: spawn-stream-event", 8.0)
+                deadline = time.time() + 8
+                while time.time() < deadline:
+                    pushes = self._push_payloads(sse2, "spawn-stream-event")
+                    if (pushes and pushes[-1]["from"] >= client_next
+                            and pushes[-1]["next"] >= 6):
+                        break
+                    sse2.pump(0.2)
+                pushes = self._push_payloads(sse2, "spawn-stream-event")
+                assert pushes, (
+                    "after reconnect, a new append fired no push on the "
+                    "new connection")
+                p = pushes[0]
+                assert p["from"] >= client_next, (
+                    f"the post-reconnect push must start at or beyond "
+                    f"the catch-up cursor (from={p['from']}, catch-up "
+                    f"next={client_next})")
+                texts = [e["message"]["content"][0]["text"]
+                         for e in p["events"]]
+                assert all(t not in texts for t in
+                           ("line-0", "line-1", "line-2", "line-3",
+                            "line-4")), (
+                    "the post-reconnect push re-sent lines the client "
+                    f"already holds (catch-up or earlier push): {texts!r}")
+                assert "line-5" in texts, (
+                    f"the post-reconnect push must carry the new line "
+                    f"(got {texts!r})")
+            finally:
+                sse2.close()
+        finally:
+            proc.terminate()
+            try:
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+
+    # ── Static SPA probes: the delivered script's surface ────────────
+
+    def test_delivered_script_listens_to_both_push_events(self):
+        content = _spa_text()
+        assert "addEventListener('spawn-stream-event'" in content, (
+            "the delivered script must listen for the per-spawn push "
+            "(spawn-stream-event) — the viewer appends, it does not "
+            "refetch")
+        assert "addEventListener('spawn-stream-global'" in content, (
+            "the delivered script must listen for the global push "
+            "(spawn-stream-global) — the server-side merge replaces the "
+            "global-stream poll as the live path")
+
+    def test_delivered_script_appends_pushes_with_wire_dedupe(self):
+        content = _spa_text()
+        # The push handlers APPEND with the resume invariants: per-spawn
+        # overlap is sliced on (from, next), global on (spawn_id, line).
+        assert "activityStream.next-d.from" in content, (
+            "the per-spawn push handler must slice the overlap against "
+            "the client cursor (from/next dedupe)")
+        assert "globalStream.maxLine" in content, (
+            "the global push handler must dedupe on (spawn_id, line) "
+            "via the per-spawn maxLine map")
+        # A gap (a push lost mid-reconnect) falls back to the wire.
+        assert "refreshSpawnStream();  // gap: the wire catch-up is the truth" in content or (
+            "gap: the wire catch-up is the truth" in content), (
+            "the per-spawn push handler must resync over the wire on a "
+            "cursor gap")
+
+    def test_delivered_script_keeps_the_cursor_fetch_paths(self):
+        """The cursor fetches are demoted, NOT deleted: the open /
+        rehydration path and the SSE-reconnect catch-up still use them —
+        the guard fails if either path is removed."""
+        content = _spa_text()
+        assert "stream?from=" in content, (
+            "the per-spawn cursor fetch (spawns/<id>/stream?from=) must "
+            "stay — it is the open / reconnect catch-up path")
+        assert "global-stream?limit=400" in content, (
+            "the global cursor fetch must stay — it is the open / "
+            "reconnect catch-up path")
+        assert "sseEstablishedOnce" in content, (
+            "the reconnect catch-up must fire only on RECONNECT (the "
+            "initial connect's open fetch already seeds the history)")
+
 
 @pytest.mark.skipif(not _node_available(), reason="node not available")
 class TestGhMirror:
