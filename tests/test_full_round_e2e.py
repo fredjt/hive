@@ -169,7 +169,7 @@ class RoundResponder:
     def _vp_plan_hr(self) -> str:
         # The hr ticket rides the DEFAULT (no explicit work_kind): the
         # resolver falls through to the dept's kind — deliverable for hr
-        # (the legacy name list until the org chart declares kinds).
+        # (the org chart the fresh init scaffolded declares it, W2).
         cmd = (
             'bash %s hr chore medium "Hiring memo" '
             '"Write the Q4 hiring memo for the engineering hiring plan. "'
@@ -237,15 +237,18 @@ class RoundResponder:
         return "Implementing add().\n\n```bash:\n%s\n```" % cmd
 
     def _verify(self, tid: str, dept: str) -> str:
+        # 0.23 W4: the breaker is routed by work kind — the rd code ticket
+        # (work_kind=code, filed by the VP stub) meets verification-ic; the
+        # hr deliverable meets verification-ic-admin. The stamp is the
+        # calling agent's identity.
+        verifier = "verification-ic" if dept == "rd" else "verification-ic-admin"
         return (
             "The implementation is minimal and correct; the [TDD-RED] test "
             "passes.\n\n"
-            # rd is an admin dept in the default scaffold (dept-helpers.sh
-            # DH_ADMIN_DEPTS), so the lifecycle spawns verification-ic-admin
-            # for its tickets.
             "```mcp: ticket_approve(dept=\"%s\", ticket_id=\"%s\", "
-            "verifier=\"verification-ic-admin\", rationale=\"add() implemented; "
-            "failing test now passes; nothing to simplify.\")```" % (dept, tid))
+            "verifier=\"%s\", rationale=\"add() implemented; "
+            "failing test now passes; nothing to simplify.\")```"
+            % (dept, tid, verifier))
 
     def _release_verify(self) -> str:
         cmd = (
@@ -628,7 +631,8 @@ class TestFullRoundE2E:
                 f"scripted LLM calls")
             callers = {e["caller"] for e in usage}
             for needed in ("ceo", "vp-rd", "vp-hr", "ic-tester", "ic-engineer",
-                           "ic-admin", "verification-ic-admin", "release-ic"):
+                           "ic-admin", "verification-ic", "verification-ic-admin",
+                           "release-ic"):
                 assert needed in callers, (
                     f"{needed} never called the LLM: {sorted(callers)}")
 
@@ -647,8 +651,22 @@ class TestFullRoundE2E:
             htid = th["id"]
             assert th["status"] == "done", \
                 f"hr deliverable ticket not done: {th.get('status')}"
-            assert th.get("verified_by"), \
-                "the deliverable ticket was not verification-stamped"
+            # W4: the content breaker stamped the deliverable.
+            assert th.get("verified_by") == "verification-ic-admin", \
+                f"deliverable ticket stamped by {th.get('verified_by')!r}"
+            # W3: the four deliverable gates recorded pass in the
+            # per-ticket gate record (the code gates never ran).
+            gate_rec = (company / "departments" / "hr" / "components" / htid /
+                        "gates.json")
+            assert gate_rec.is_file(), \
+                "no per-ticket gate record for the deliverable"
+            gates = json.loads(gate_rec.read_text())["gates"]
+            for g in ("deliverable-named", "deliverable-exists",
+                      "no-placeholders", "followup-scoped"):
+                assert gates.get(g, {}).get("status") == "pass", \
+                    f"deliverable gate {g}: {gates.get(g)}"
+            assert "worktree-exists" not in gates, \
+                f"the code gates ran on a deliverable: {sorted(gates)}"
             assert not (company / ".worktrees" / htid).exists(), \
                 "a worktree was created for a deliverable ticket"
             r = subprocess.run(["git", "-C", str(proj), "branch", "--list",
@@ -690,7 +708,20 @@ class TestFullRoundE2E:
             assert t["status"] == "done", f"ticket not done: {t.get('status')}"
             assert t.get("work_kind") == "code", \
                 "the rd code ticket lost its work_kind field"
-            assert t.get("verified_by"), "ticket_approve did not stamp verified_by"
+            # W4: the code breaker (not the content reviewer) stamped it.
+            assert t.get("verified_by") == "verification-ic", \
+                f"code ticket stamped by {t.get('verified_by')!r}"
+            # The code leg's per-ticket pipeline record: tester, engineer,
+            # and the code reviewer — no doc doer, no content reviewer.
+            rd_entries = [e for e in round_entries["entries"]
+                          if e.get("ticket") == tid]
+            rd_agents = {e["agent"] for e in rd_entries}
+            for needed in ("ic-tester", "ic-engineer", "verification-ic"):
+                assert needed in rd_agents, \
+                    f"the code ticket's pipeline missed {needed}: {rd_agents}"
+            for must_not in ("ic-admin", "verification-ic-admin"):
+                assert must_not not in rd_agents, \
+                    f"the code ticket met {must_not}: {rd_agents}"
             assert t.get("archived_in_sprint"), "archive did not stamp the sprint"
 
             # Both TDD commits exist in the repo (on the branch, or already

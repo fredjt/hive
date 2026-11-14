@@ -22,8 +22,9 @@ export COMPANY_DIR PROJECT_ROOT SKILL_DIR
 # ticket loop, vp-review after a halted relaunch) - source it unconditionally
 # instead of relying on run_vp_plan to have sourced it earlier in this shell.
 . "$SKILL_DIR/lib/tools/load-agent-prompt.sh"
-# dept-helpers: is_admin_dept (the legacy verifier-selection fallback) and
-# work_kind_of (the 0.23 work-kind dispatch — the single lookup).
+# dept-helpers: work_kind_of (the 0.23 work-kind dispatch — the single
+# lookup behind the doer dispatch and the verifier routing; is_admin_dept
+# is only its legacy fallback rung).
 . "$SKILL_DIR/lib/tools/dept-helpers.sh"
 ss_init
 
@@ -1112,15 +1113,22 @@ After exit 0, this script will:
   log "$log_prefix: spawning verification IC"
   local VERIF_AGENT VERIF_FILE LOG_TO CURRENT_STATUS
 
-  VERIF_AGENT="verification-ic"
-  # Check if admin dept
-  local is_admin=0
-  if [ -f "$SKILL_DIR/lib/tools/dept-helpers.sh" ]; then
-    # shellcheck disable=SC1091
-    . "$SKILL_DIR/lib/tools/dept-helpers.sh"
-    if is_admin_dept "$dept"; then
-      VERIF_AGENT="verification-ic-admin"
-    fi
+  # W4 (0.23): the breaker is chosen by WORK KIND (the W2 resolver),
+  # not by the dept name list — a code ticket in a fixed dept (the rd
+  # prototype) meets the code breaker, and a deliverable in a dynamic
+  # dept meets the content breaker. The legacy name list is only the
+  # resolver's last rung, so a pre-0.23 company routes exactly as it
+  # always did.
+  local WORK_KIND REVIEW_FILE
+  # The ticket is in IN-REVIEW here (moved above); $TFILE still holds the
+  # in-progress path from function entry and no longer exists — the
+  # resolver's ticket-field rung reads the file that is there now.
+  REVIEW_FILE="$COMPANY_DIR/departments/$dept/tickets/in-review/${ticket}.json"
+  WORK_KIND=$(work_kind_of "$dept" "$REVIEW_FILE")
+  if [ "$WORK_KIND" = "deliverable" ]; then
+    VERIF_AGENT="verification-ic-admin"
+  else
+    VERIF_AGENT="verification-ic"
   fi
 
   VERIF_FILE="$SKILL_DIR/lib/agents/${VERIF_AGENT}.md"
