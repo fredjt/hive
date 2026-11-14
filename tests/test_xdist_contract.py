@@ -760,3 +760,119 @@ class TestToolModulesSdkFree:
         assert r.stdout.strip().startswith("OK "), (
             "the import leg must print its module count: "
             + repr(r.stdout[-200:]))
+
+
+class TestAdaptiveWorkerDefault:
+    """T4 (0.22): the bare `pytest tests/` runs parallel with the
+    capped adaptive worker count — a host fact, not a 0.11 constant.
+    The mechanism is the -p adaptive_xdist plugin (registered in
+    pytest.ini's addopts): xdist 3.8 reads config.option.numprocesses
+    in its own pytest_configure, which a conftest cannot precede
+    (probed on this stack: a conftest setter left a bare run serial),
+    and a conftest cannot implement pytest_load_initial_conftests for
+    itself. The formula: min(32, max(4, cpu // 4)) — the cap is the
+    load-sensitive tail (the subprocess-heavy harness round-trips and
+    cut-receipt re-run flake beyond it), the floor is where parallel
+    overhead buys nothing, the quarter because workers each spawn
+    their own process tree."""
+
+    @staticmethod
+    def _plugin():
+        import importlib
+        return importlib.import_module("adaptive_xdist")
+
+    def test_pytest_ini_registers_the_plugin(self):
+        ini = (TESTS_DIR.parent / "pytest.ini").read_text()
+        assert "-p adaptive_xdist" in ini, (
+            "pytest.ini's addopts must register the adaptive_xdist "
+            "plugin — without it a bare `pytest tests/` is serial "
+            "(0.22: the parallel default must not depend on a "
+            "remembered -n)")
+        assert "--dist=loadgroup" in ini, (
+            "the loadgroup strategy must survive the addopts change "
+            "(the xdist_group pins depend on it)")
+
+    def test_formula_boundaries(self, monkeypatch):
+        p = self._plugin()
+        cases = [(1, 4), (4, 4), (15, 4), (16, 4), (88, 22), (128, 32),
+                 (1000, 32)]
+        for cpu, want in cases:
+            monkeypatch.setattr(p.os, "cpu_count", lambda c=cpu: c)
+            got = p._adaptive_worker_count()
+            assert got == want, (
+                f"cpu={cpu}: formula gives {got}, expected {want} "
+                "(min(32, max(4, cpu // 4)))")
+
+    def test_unset_gets_the_host_count(self):
+        import argparse
+        p = self._plugin()
+        opt = argparse.Namespace(numprocesses=None)
+        p.pytest_load_initial_conftests(argparse.Namespace(option=opt))
+        assert opt.numprocesses == p._adaptive_worker_count(), (
+            "no -n: the setter must install the host's adaptive count "
+            "(the fixture host's fact, not a constant)")
+
+    def test_explicit_n_always_wins(self):
+        import argparse
+        p = self._plugin()
+        for n in (1, 4, 64):
+            opt = argparse.Namespace(numprocesses=n)
+            p.pytest_load_initial_conftests(argparse.Namespace(option=opt))
+            assert opt.numprocesses == n, (
+                f"-n {n}: an explicit -n ALWAYS wins — the setter must "
+                "not touch a non-None numprocesses (CI's -n auto on "
+                "the 2-core runners depends on this)")
+
+    def test_agents_md_names_the_cap_and_the_probe_trio(self):
+        """Static guard (the TestPythonFloorConsistency shape): the
+        loop guidance must tell the MEASURED story from the canonical
+        source — the cap value from lib/adaptive_xdist.py, the
+        probe trio as the new-box verification protocol — and the
+        0.11 "-n 8 sweet spot" claim must be gone."""
+        import importlib
+        p = importlib.import_module("adaptive_xdist")
+        text = (TESTS_DIR.parent / "AGENTS.md").read_text()
+        missing = []
+        if str(p.XDIST_CAP) not in text:
+            missing.append(f"the cap value {p.XDIST_CAP}")
+        if "adaptive" not in text.lower():
+            missing.append("the adaptive worker default")
+        if "probe trio" not in text:
+            missing.append("the probe trio (the new-box verification "
+                          "protocol)")
+        assert not missing, (
+            "AGENTS.md's loop guidance is out of date (0.22 T4): "
+            "missing " + ", ".join(missing))
+        assert "sweet spot" not in text, (
+            "AGENTS.md still names the 0.11 reference box's '-n 8 "
+            "sweet spot' — the guidance must state the measured fact "
+            "(the adaptive capped default), not the old constant")
+
+    def test_bare_nested_run_spawns_workers(self):
+        """Runtime proof (the loadgroup-pin pattern): a bare nested
+        pytest (no -n) on a probe under .scratch/ must spawn the
+        adaptive workers — it passes only if the ini's addopts
+        registers the plugin AND the plugin lands before xdist's
+        pytest_configure."""
+        pytest.importorskip("xdist")
+        probe_dir = TESTS_DIR.parent / ".scratch" / "adaptive-probe"
+        probe_dir.mkdir(parents=True, exist_ok=True)
+        probe = probe_dir / "test_probe.py"
+        probe.write_text("def test_probe():\n    pass\n")
+        r = subprocess.run(
+            [sys.executable, "-m", "pytest", "test_probe.py",
+             "-q", "--no-header", "-p", "no:cacheprovider", "-v"],
+            cwd=str(probe_dir),
+            capture_output=True, text=True, timeout=120,
+            env={**os.environ,
+                 "PYTHONPATH": str(TESTS_DIR.parent / "lib")
+                 + os.pathsep + os.environ.get("PYTHONPATH", "")})
+        assert r.returncode == 0, (
+            "the bare nested probe run failed:\n" + r.stdout[-500:]
+            + r.stderr[-500:])
+        assert re.search(r"created: \d+/\d+ workers", r.stdout), (
+            "the bare nested run stayed SERIAL — the adaptive default "
+            "is not in force (the plugin is not registered, or it "
+            "lands after xdist read the option). The xdist session "
+            "header 'created: N/N workers' is the marker (-q "
+            "suppresses the per-test gw ids):\n" + r.stdout[-400:])

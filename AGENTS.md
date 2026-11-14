@@ -175,12 +175,14 @@ after a requirements.txt change: `bash packaging/refresh-venv-lock.sh`.
 # From the repo root
 cd hive
 
-# Run the full test suite — PRIMARY loop: parallel (needs pytest-xdist;
-# the speedup is host-dependent — see the "xdist worker contract"
-# section below). The suite is xdist-safe by construction, so this is
-# the recommended dev loop; measure the split on your host with:
-#   time python -m pytest tests/ -q -n 8   vs   time python -m pytest tests/ -q
-python -m pytest tests/ -n 8
+# Run the full test suite — PRIMARY loop. A BARE `pytest tests/` (no
+# -n) runs parallel with the capped ADAPTIVE worker count — the host's
+# core count through min(32, max(4, cpu // 4)) in lib/adaptive_xdist.py
+# (registered by pytest.ini's addopts), so the loop works on any box
+# with no remembered constant. An explicit -n always wins. The speedup
+# is host-dependent — see the "xdist worker contract" section below and
+# the probe-trio verification protocol for a new box:
+python -m pytest tests/
 
 # Debug mode: serial, verbose — single-worker runs while writing a
 # regression test or reproducing a worker-specific failure
@@ -307,16 +309,27 @@ def test_agent_prompt_has_required_sections():
 # Run all tests (fast feedback loop)
 python -m pytest tests/ -v
 
-# Run in parallel (needs pytest-xdist). The speedup is HOST-DEPENDENT:
-# on the 0.11 reference box the full suite is ≈155s serial and ≈155s
-# with -n 8 (the subprocess-heavy lifecycle tests dominate, so xdist
-# buys nothing there), while a many-core box goes ≈760s -> ≈160s.
-# -n 8 is the sweet spot; more workers don't help.
-# The suite is xdist-safe by construction (see the "xdist worker
-# contract" in Test Suite Architecture): ephemeral ports, per-test
-# temp dirs, in-process MCP servers, no in-process reload of lib
-# modules.
-python -m pytest tests/ -n 8
+# Run in parallel (needs pytest-xdist). A BARE `pytest tests/` already
+# runs parallel — the adaptive capped count, min(32, max(4, cpu // 4))
+# in lib/adaptive_xdist.py, registered by pytest.ini's addopts. The
+# speedup is HOST-DEPENDENT and LOAD-DEPENDENT: on the 0.11 reference
+# box the full suite is ≈155s serial and ≈155s with -n 8 (the
+# subprocess-heavy lifecycle tests dominate, so xdist buys nothing
+# there). On the 88-core dev box the 0.21-era (quiet) full-suite
+# figures were -n 8 ≈200s / -n 32 ≈149s; under co-tenant load (a local
+# LLM server + monitoring loops sharing the cores) a bare run (22
+# workers) measured ≈280s green and BEAT an explicit -n 32 (≈365s) in
+# the same session — more workers make a contended box slower (each
+# worker spawns its own process tree), which is exactly what the
+# adaptive count exists to avoid. The CAP (32) is the measured fact,
+# not a constant: the load-sensitive tail (the two subprocess-heavy
+# harness round-trips and the cut-receipt re-run — the "probe trio",
+# the verification protocol on a new box) flakes beyond it. An
+# explicit -n always wins. The suite is xdist-safe by construction
+# (see the "xdist worker contract" in Test Suite Architecture):
+# ephemeral ports, per-test temp dirs, in-process MCP servers, no
+# in-process reload of lib modules.
+python -m pytest tests/
 
 # Single test file while developing
 python -m pytest tests/test_bash_scripts.py::TestSprintStateScript -v
@@ -343,10 +356,11 @@ ptw --watch lib/ -k ticket_move
 ```
 
 Notes:
-- `ptw` runs the *serial* suite; add `-n 8` after the `--` only if you
-  want the parallel run inside the loop (usually unnecessary for a subset).
+- `ptw` runs the *serial* suite; add `-n <N>` after the `--` only if
+  you want a pinned parallel run inside the loop (a bare `pytest` is
+  already adaptive — usually unnecessary for a subset).
 - If `ptw` is unavailable, the equivalent one-liner is
-  `watch -n 2 'python -m pytest tests/ -q -n 8'`.
+  `watch -n 2 'python -m pytest tests/ -q'`.
 
 ### 4. Fixing Bugs
 
