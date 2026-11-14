@@ -318,6 +318,24 @@ async function main() {
         return r.ok ? true : null;
       }, 30000);
     }
+    // T5: driver-side baseline for the endpoint the deep-link leg
+    // depends on — a DIRECT fetch of /api/logs with no Chrome in the
+    // loop. If this responds, a runner-side leg hang lives in the
+    // browser's connection handling, not the server; if it hangs, the
+    // server is at fault.
+    {
+      const t0 = Date.now();
+      try {
+        const r = await fetch(BASE + '/api/logs');
+        const j = await r.json();
+        console.log('API-LOGS direct: ' + r.status + ' ' +
+          (Array.isArray(j) ? j.length + ' entries' : 'weird shape') +
+          ' in ' + (Date.now() - t0) + 'ms');
+      } catch (e) {
+        console.log('API-LOGS direct FAILED after ' + (Date.now() - t0) +
+          'ms: ' + e.name + ' ' + e.message);
+      }
+    }
     // The canary must pass before any leg may measure a file event.
     {
       const saw = await canaryWatch(COMPANY);
@@ -607,8 +625,22 @@ async function main() {
         } catch (e) {
           first = first || (e.message || String(e));
           if (n === 2) {
+            // T5: a FRESH driver-side connection (no Chrome in the loop)
+            // at the exact moment of failure — instant means the server
+            // is fine and the browser's pool is stuck; a hang means the
+            // server's loop is blocked.
+            const t0 = Date.now();
+            let direct = 'direct fetch errored';
+            try {
+              const r = await fetch(BASE + '/api/logs');
+              await r.json();
+              direct = 'OK ' + r.status + ' in ' + (Date.now() - t0) + 'ms';
+            } catch (e) {
+              direct = 'FAILED after ' + (Date.now() - t0) + 'ms: ' +
+                (e.name || '') + ' ' + (e.message || '');
+            }
             throw new Error('log-deep-link: both attempts failed — ' + first +
-              ' | diag: ' + await diag());
+              ' | diag: ' + await diag() + ' | driver-direct: ' + direct);
           }
         }
       }
