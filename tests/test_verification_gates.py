@@ -67,7 +67,8 @@ def make_code_project(root: Path, ticket_id: str, passing_tests: bool = True):
 ENGINEERING_DEPT = "backend"
 
 
-def make_company(root: Path, ticket_id: str, dept: str = ENGINEERING_DEPT):
+def make_company(root: Path, ticket_id: str, dept: str = ENGINEERING_DEPT,
+                 work_kind: str | None = None):
     company = root / ".company"
     for status in ["backlog", "sprint-current", "in-progress", "in-review", "done"]:
         (company / "departments" / dept / "tickets" / status).mkdir(parents=True, exist_ok=True)
@@ -79,6 +80,8 @@ def make_company(root: Path, ticket_id: str, dept: str = ENGINEERING_DEPT):
         "type": "feature",
         "priority": "medium",
     }
+    if work_kind is not None:
+        ticket["work_kind"] = work_kind
     (company / "departments" / dept / "tickets" / "in-review" / f"{ticket_id}.json").write_text(
         json.dumps(ticket, indent=2)
     )
@@ -90,6 +93,25 @@ def run_gates(project: Path, dept: str, *extra):
         ["bash", str(GATES), dept, str(project), *extra],
         capture_output=True, text=True, timeout=120,
     )
+
+
+def make_deliverable_ticket(project: Path, ticket_id: str, dept: str = ENGINEERING_DEPT):
+    """0.23: an in-review deliverable-kind ticket whose doer posted a
+    valid summary — the light gate-passing setup (no git worktree
+    needed). Replaces the old no-worktree auto-pass for tests that are
+    not about the code gates."""
+    make_company(project, ticket_id, dept=dept, work_kind="deliverable")
+    memo = project / ".company" / "reports" / f"{ticket_id}.md"
+    memo.parent.mkdir(parents=True, exist_ok=True)
+    memo.write_text("# Memo\n\n## Plan\nDo the thing.\n")
+    tfile = (project / ".company" / "departments" / dept / "tickets" /
+             "in-review" / f"{ticket_id}.json")
+    t = json.loads(tfile.read_text())
+    t["comments"] = [{"author": "ic-admin", "timestamp": "t", "body":
+                      "Delivered: the memo. Files written:\n"
+                      f"- {memo.relative_to(project).as_posix()}\n"
+                      "Follow-up tickets filed: none"}]
+    tfile.write_text(json.dumps(t, indent=2))
 
 
 class TestSecurityGate:
@@ -171,15 +193,15 @@ class TestTicketTargeting:
         daemon — exit 0, not exit 2 (exit 2 made the daemon log
         'restarting in 5s' every cycle for every idle dept)."""
         project = space_free_proj
-        make_company(project, "none")
+        make_deliverable_ticket(project, "none")
 
         result = run_gates(project, ENGINEERING_DEPT)
         assert result.returncode == 0, result.stderr
 
     def test_named_ticket_is_the_one_gated(self, space_free_proj):
         project = space_free_proj
-        make_company(project, "A1")
-        make_company(project, "B2")  # second ticket in the same dept
+        make_deliverable_ticket(project, "A1")
+        make_deliverable_ticket(project, "B2")  # second ticket in the same dept
 
         result = run_gates(project, ENGINEERING_DEPT, "--ticket", "B2")
         assert result.returncode == 0, result.stderr
@@ -322,9 +344,9 @@ class TestSkipTddRedFlag:
 
     def test_already_gated_ticket_is_not_re_gated(self, space_free_proj):
         """Second run over an already-gates_passed ticket must be a no-op:
-        no re-run of the test suite, no duplicate 'gates passed' comment."""
+        no re-run of the gates, no duplicate 'gates passed' comment."""
         project = space_free_proj
-        make_company(project, "C1")
+        make_deliverable_ticket(project, "C1")
 
         first = run_gates(project, ENGINEERING_DEPT)
         assert first.returncode == 0, first.stderr
@@ -340,16 +362,19 @@ class TestSkipTddRedFlag:
         assert len(ticket.get("comments", [])) == comments_after_first
 
 class TestAdminDeptGates:
-    """Item 7: an admin department is NOT a blanket gate waiver. The
-    field run's HR-0002 branch carried only a failing [TDD-RED] test and
-    still passed "strict gates" via the is_admin_dept auto-pass. Admin
-    tickets WITH code (a worktree or feature branch) must run the real
-    gates; only code-less tickets auto-skip."""
+    """0.23: the name-based waiver is gone. The resolver (ticket
+    work_kind → org-chart dept kind → legacy name list) decides which
+    gate set a ticket runs: a code-kind ticket in a fixed dept runs the
+    strict code gates; a deliverable-kind ticket runs the deliverable
+    gates."""
 
-    def test_admin_dept_with_failing_code_fails_gates(self, space_free_proj):
+    def test_code_kind_in_fixed_dept_runs_code_gates(self, space_free_proj):
+        """0.23: the waiver is gone. An hr ticket that declares
+        work_kind=code (the rd-prototype case) runs the STRICT code
+        gates despite its fixed dept."""
         project = space_free_proj
         make_code_project(project, "T7", passing_tests=False)
-        make_company(project, "T7", dept="hr")
+        make_company(project, "T7", dept="hr", work_kind="code")
 
         result = run_gates(project, "hr")
         assert result.returncode == 2
@@ -362,15 +387,175 @@ class TestAdminDeptGates:
             "admin auto-pass skipped the code gates"
         )
 
-    def test_admin_dept_without_code_still_auto_passes(self, space_free_proj):
-        """The legitimate skip: no worktree and no feature branch."""
+    def test_deliverable_kind_in_fixed_dept_runs_deliverable_gates(
+            self, space_free_proj):
+        """0.23: a code-less hr ticket is deliverable-kind (the legacy
+        name list) — it runs the deliverable gates, and with no summary
+        comment the deliverable-named gate FAILS (the blind waiver is
+        gone)."""
         project = space_free_proj
         make_company(project, "T8", dept="hr")
 
         result = run_gates(project, "hr")
-        assert result.returncode == 0
+        assert result.returncode == 2
         gates_file = (
             project / ".company" / "departments" / "hr" / "components" / "T8" / "gates.json"
         )
         gates = json.loads(gates_file.read_text())
-        assert gates["gates"]["admin-dept-ticket"]["status"] == "pass"
+        assert gates["gates"]["deliverable-named"]["status"] == "fail"
+        t8 = json.loads((project / ".company" / "departments" / "hr" /
+                         "tickets" / "in-progress" / "T8.json").read_text())
+        assert any("Gate failure" in c.get("body", "") for c in t8["comments"])
+
+
+class TestDeliverableGates:
+    """W3 (0.23): the four deterministic deliverable gates.
+
+    Input is the doer's summary comment — the prompt is the contract,
+    the gate is the enforcement.
+    """
+
+    def _setup(self, project, tid, body=None, work_kind="deliverable",
+               memo_text="# Memo\n\n## Plan\nDo the thing.\n"):
+        project.mkdir(parents=True, exist_ok=True)
+        (project / "README.md").write_text("proj\n")
+        make_company(project, tid, dept="hr", work_kind=work_kind)
+        memo = project / ".company" / "reports" / f"{tid}.md"
+        memo.parent.mkdir(parents=True, exist_ok=True)
+        memo.write_text(memo_text)
+        if body is not None:
+            tfile = (project / ".company" / "departments" / "hr" /
+                     "tickets" / "in-review" / f"{tid}.json")
+            t = json.loads(tfile.read_text())
+            t["comments"] = [{"author": "ic-admin", "timestamp": "t", "body": body}]
+            tfile.write_text(json.dumps(t, indent=2))
+        return memo
+
+    def test_pass_leg(self, space_free_proj):
+        """A named, existing, clean deliverable → rc 0, gates_passed,
+        four pass entries in the per-ticket record."""
+        p = space_free_proj
+        memo = self._setup(p, "D1")
+        self._comment(p, "D1", memo)
+        result = run_gates(p, "hr", "--ticket", "D1")
+        assert result.returncode == 0, result.stderr
+        gates = json.loads((p / ".company" / "departments" / "hr" / "components" /
+                            "D1" / "gates.json").read_text())
+        for g in ("deliverable-named", "deliverable-exists",
+                  "no-placeholders", "followup-scoped"):
+            assert gates["gates"][g]["status"] == "pass", (g, gates)
+        t1 = json.loads((p / ".company" / "departments" / "hr" / "tickets" /
+                         "in-review" / "D1.json").read_text())
+        assert t1.get("gates_passed") is True
+
+    def test_no_summary_comment_fails_named(self, space_free_proj):
+        """No summary comment at all is a FAIL of deliverable-named, not
+        a skip — the doer must name what it wrote, or it bounces."""
+        p = space_free_proj
+        self._setup(p, "D2", body=None)
+        result = run_gates(p, "hr", "--ticket", "D2")
+        assert result.returncode == 2
+        gates = json.loads((p / ".company" / "departments" / "hr" / "components" /
+                            "D2" / "gates.json").read_text())
+        assert gates["gates"]["deliverable-named"]["status"] == "fail"
+        t2 = json.loads((p / ".company" / "departments" / "hr" / "tickets" /
+                         "in-progress" / "D2.json").read_text())
+        assert any(c["body"].startswith("Gate failure") for c in t2["comments"])
+
+    def _gates(self, p, tid):
+        return json.loads((p / ".company" / "departments" / "hr" / "components" /
+                           f"{tid}" / "gates.json").read_text())
+
+    def test_missing_path_fails_exists(self, space_free_proj):
+        p = space_free_proj
+        self._setup(p, "D3", body=("Delivered: x. Files written:\n"
+                                   "- .company/nope/ghost.md\n"
+                                   "Follow-up tickets filed: none"))
+        result = run_gates(p, "hr", "--ticket", "D3")
+        assert result.returncode == 2
+        g = self._gates(p, "D3")
+        e = g["gates"]["deliverable-exists"]
+        assert e["status"] == "fail" and "ghost.md" in e["detail"], e
+
+    def test_empty_file_fails_exists(self, space_free_proj):
+        p = space_free_proj
+        memo = self._setup(p, "D4", memo_text="")
+        self._comment(p, "D4", memo)
+        result = run_gates(p, "hr", "--ticket", "D4")
+        assert result.returncode == 2
+        g = self._gates(p, "D4")
+        assert g["gates"]["deliverable-exists"]["status"] == "fail"
+
+    def test_one_of_two_missing_named_in_detail(self, space_free_proj):
+        p = space_free_proj
+        memo = self._setup(p, "D5")
+        self._comment(p, "D5", memo, extra="- .company/nope/second.md")
+        result = run_gates(p, "hr", "--ticket", "D5")
+        assert result.returncode == 2
+        g = self._gates(p, "D5")
+        e = g["gates"]["deliverable-exists"]
+        assert "second.md" in e["detail"] and memo.name not in e["detail"], e
+
+    def test_placeholder_fails(self, space_free_proj):
+        p = space_free_proj
+        self._setup(p, "D6", memo_text="# Memo\n\n## Plan\nDo the thing. TBD\n")
+        self._comment(p, "D6", p / ".company" / "reports" / "D6.md")
+        result = run_gates(p, "hr", "--ticket", "D6")
+        assert result.returncode == 2
+        g = self._gates(p, "D6")
+        n = g["gates"]["no-placeholders"]
+        assert n["status"] == "fail" and "D6.md" in n["detail"], n
+
+    def test_empty_section_heading_fails(self, space_free_proj):
+        p = space_free_proj
+        self._setup(p, "D7", memo_text="# Memo\n\n## Plan\nDo it.\n\n## Open\n\n## Done\nDone.\n")
+        self._comment(p, "D7", p / ".company" / "reports" / "D7.md")
+        result = run_gates(p, "hr", "--ticket", "D7")
+        assert result.returncode == 2
+        g = self._gates(p, "D7")
+        assert g["gates"]["no-placeholders"]["status"] == "fail"
+
+    def test_followup_nonexistent_fails(self, space_free_proj):
+        p = space_free_proj
+        memo = self._setup(p, "D8")
+        self._comment(p, "D8", memo, followup="HR-9999")
+        result = run_gates(p, "hr", "--ticket", "D8")
+        assert result.returncode == 2
+        g = self._gates(p, "D8")
+        f = g["gates"]["followup-scoped"]
+        assert f["status"] == "fail" and "HR-9999" in f["detail"], f
+
+    def test_followup_real_ticket_passes(self, space_free_proj):
+        p = space_free_proj
+        memo = self._setup(p, "D9")
+        other = p / ".company" / "departments" / "hr" / "tickets" / "backlog"
+        (other / "HR-7777.json").write_text(json.dumps(
+            {"id": "HR-7777", "status": "backlog"}))
+        self._comment(p, "D9", memo, followup="HR-7777")
+        result = run_gates(p, "hr", "--ticket", "D9")
+        assert result.returncode == 0, result.stderr
+        g = self._gates(p, "D9")
+        assert g["gates"]["followup-scoped"]["status"] == "pass"
+
+    def test_require_false_disables_gates(self, space_free_proj):
+        p = space_free_proj
+        self._setup(p, "D10", body=None)
+        (p / ".company" / "gates.json").write_text(
+            json.dumps({"require_deliverable_gates": False}))
+        result = run_gates(p, "hr", "--ticket", "D10")
+        assert result.returncode == 0, result.stderr
+        g = self._gates(p, "D10")
+        assert g["gates"]["deliverable-gates"]["status"] == "skip"
+
+    def _comment(self, p, tid, memo, extra=None, followup="none"):
+        lines = ["Delivered: the memo. Files written:",
+                 f"- {memo.relative_to(p).as_posix()}"]
+        if extra:
+            lines.append(extra)
+        lines.append(f"Follow-up tickets filed: {followup}")
+        tfile = (p / ".company" / "departments" / "hr" / "tickets" /
+                 "in-review" / f"{tid}.json")
+        t = json.loads(tfile.read_text())
+        t["comments"] = [{"author": "ic-admin", "timestamp": "t",
+                          "body": "\n".join(lines)}]
+        tfile.write_text(json.dumps(t, indent=2))

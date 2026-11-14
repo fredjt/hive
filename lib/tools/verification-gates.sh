@@ -8,7 +8,10 @@ set -euo pipefail
 # THIS IS A GATE, NOT A SHORTCUT. Tickets that fail any gate are bounced
 # back to in-progress with a comment explaining what failed.
 #
-# Gates (all blocking, all must pass):
+# The ticket's WORK KIND (dept-helpers.sh work_kind_of: ticket field ->
+# org-chart dept kind -> legacy name list) selects the gate set:
+#
+#   code (the default pipeline):
 #   1. Worktree exists for the ticket
 #   2. Branch has commits beyond main (work was actually done)
 #   3. TDD order — first commit mentioning this ticket touches a test file
@@ -16,6 +19,16 @@ set -euo pipefail
 #   5. All tests pass (no failures, no errors)
 #   6. Linter passes
 #   7. Security audit clean
+#
+#   deliverable (0.23, no worktree is created for these tickets):
+#   D1. deliverable-named  — the doer's 'Files written:' summary comment
+#                            names at least one path
+#   D2. deliverable-exists — every named path exists and is non-empty
+#   D3. no-placeholders    — no incomplete marker, no empty section
+#   D4. followup-scoped    — every named follow-up ticket exists
+#
+# A failed gate bounces the ticket to in-progress (the caller owns the
+# bounce count and the per-ticket cap).
 #
 # Usage: verification-gates.sh <dept> <project-root> [--ticket <id>] [--quiet] [--wait]
 #   --ticket <id>  Gate this specific in-review ticket (the lifecycle passes
@@ -74,17 +87,34 @@ if [ -f "$GATES_CONFIG" ]; then
   GATE_REQUIRE_SECURITY=$(jq -r '.require_security // true' "$GATES_CONFIG" 2>/dev/null)
   GATE_REQUIRE_COMMITS=$(jq  -r '.require_commits  // true'  "$GATES_CONFIG" 2>/dev/null)
   GATE_COVERAGE_MIN=$(jq    -r '.coverage_min // 0'         "$GATES_CONFIG" 2>/dev/null)
+  # has(), not `// true`: a jq `false // true` yields true — an explicit
+  # require_deliverable_gates=false must reach the script as false.
+  GATE_REQUIRE_DELIVERABLE=$(jq -r 'if has("require_deliverable_gates") then .require_deliverable_gates else true end' "$GATES_CONFIG" 2>/dev/null)
+  # 0.23 W3: the deliverable placeholder-marker list (JSON array of
+  # case-insensitive strings). Empty/absent → the built-in default.
+  GATE_DELIVERABLE_MARKERS=$(jq -r \
+    'if (.deliverable_markers? | type) == "array" and (.deliverable_markers | length) > 0
+     then .deliverable_markers | join("|") else empty end' "$GATES_CONFIG" 2>/dev/null)
 else
   GATE_REQUIRE_TESTS="${GATE_REQUIRE_TESTS:-true}"
   GATE_REQUIRE_LINT="${GATE_REQUIRE_LINT:-true}"
   GATE_REQUIRE_SECURITY="${GATE_REQUIRE_SECURITY:-true}"
   GATE_REQUIRE_COMMITS="${GATE_REQUIRE_COMMITS:-true}"
   GATE_COVERAGE_MIN="${GATE_COVERAGE_MIN:-0}"
+  GATE_REQUIRE_DELIVERABLE="${GATE_REQUIRE_DELIVERABLE:-true}"
+  GATE_DELIVERABLE_MARKERS="${GATE_DELIVERABLE_MARKERS:-}"
 fi
 GATE_REQUIRE_TESTS="${GATE_REQUIRE_TESTS_OVERRIDE:-$GATE_REQUIRE_TESTS}"
 GATE_REQUIRE_LINT="${GATE_REQUIRE_LINT_OVERRIDE:-$GATE_REQUIRE_LINT}"
 GATE_REQUIRE_SECURITY="${GATE_REQUIRE_SECURITY_OVERRIDE:-$GATE_REQUIRE_SECURITY}"
 GATE_REQUIRE_COMMITS="${GATE_REQUIRE_COMMITS_OVERRIDE:-$GATE_REQUIRE_COMMITS}"
+# 0.23 W3: the deliverable knobs follow the same convention. The marker
+# list is a '|' -separated grep -E fragment (the built-in list contains
+# no regex metacharacters; an override is responsible for its own escaping).
+DEFAULT_DELIVERABLE_MARKERS="TBD|TODO|FIXME|PLACEHOLDER|more to come|to be determined"
+[ -z "$GATE_DELIVERABLE_MARKERS" ] && GATE_DELIVERABLE_MARKERS="$DEFAULT_DELIVERABLE_MARKERS"
+GATE_REQUIRE_DELIVERABLE="${GATE_REQUIRE_DELIVERABLE_OVERRIDE:-$GATE_REQUIRE_DELIVERABLE}"
+GATE_DELIVERABLE_MARKERS="${GATE_DELIVERABLE_MARKERS_OVERRIDE:-$GATE_DELIVERABLE_MARKERS}"
 
 source "$SCRIPT_DIR/ticket-paths.sh"
 TICKET_DIR="$(ticket_dir "$DEPT")"
@@ -248,34 +278,175 @@ WORKTREE="$PROJECT_ROOT/.worktrees/$TID"
 BRANCH="feature/$TID"
 GATE_FAIL=""
 
-# ── Pre-gate: classify code vs. non-code ticket ─────────────────────
-# Item 7: an admin department is NOT a blanket gate waiver. The field
-# run's HR-0002 branch carried only a failing [TDD-RED] test and still
-# passed "strict gates" via the is_admin_dept auto-pass. The only
-# legitimate skip is "no code to gate": no worktree AND no feature
-# branch. Admin tickets with a worktree/branch run the real gates; the
-# verification IC reviews the deliverable content either way.
-IS_CODE=false
-if [ -d "$WORKTREE" ]; then
-  IS_CODE=true
-elif git -C "$PROJECT_ROOT" rev-parse --verify "$BRANCH" >/dev/null 2>&1; then
-  IS_CODE=true
-fi
+# ── Deliverable gates (0.23 W3) ───────────────────────────────────────────
+# The deterministic quality gate for work_kind=deliverable tickets —
+# the deliverable is NAMED, EXISTS, is COMPLETE, and its follow-ups are
+# SCOPED. No worktree is created for these tickets, so there are no code
+# gates to run; the blind name-match waivers (admin-dept-ticket /
+# non-code-ticket) are gone — nothing passes on a name anymore, and a
+# deliverable that did not name what it wrote bounces (the deliverable
+# path has no legitimate "nothing to check" state).
+#
+# The input is the doer's summary comment (the format ic-admin.md
+# prescribes — the prompt is the contract, this is the enforcement):
+#   Delivered: <one paragraph>. Files written:
+#   - .company/<path-1>
+#   - .company/<path-2>
+#   Follow-up tickets filed: <ticket ids, or none>
+#
+# Sets GATE_FAIL on failure (the caller bounces, the same machinery as
+# the code path). Records the four gate results in the per-ticket gate
+# record (same shape as the code gates).
+run_deliverable_gates() {
+  local ticket_id="$1"
+  local summary paths followup p target
+  GATE_FAIL=""
 
-if [ "$IS_CODE" = false ]; then
-  if [ -f "$SCRIPT_DIR/dept-helpers.sh" ]; then
-    # shellcheck disable=SC1091
-    . "$SCRIPT_DIR/dept-helpers.sh"
+  # ── Gate D1: deliverable-named ──────────────────────────────────
+  # The last ticket comment carrying the 'Files written:' marker names
+  # at least one path. No such comment at all is a FAIL of this gate,
+  # not a skip.
+  summary=$(jq -r '
+    [ .comments[]?
+      | select((.body // "") | type == "string")
+      | select(.body | contains("Files written:"))
+    ] | last | .body // empty' "$TICKET_FILE" 2>/dev/null)
+  if [ -z "$summary" ]; then
+    record_gate "$ticket_id" "deliverable-named" "fail" \
+      "no 'Files written:' summary comment on the ticket"
+    GATE_FAIL="the doer never posted the deliverable summary comment ('Delivered: … Files written: …')"
+    return 0
   fi
-  if is_admin_dept "$DEPT" 2>/dev/null; then
-    record_gate "$TID" "admin-dept-ticket" "pass" "admin dept ($DEPT), no worktree or feature branch - code gates skipped"
+  paths=$(printf '%s\n' "$summary" \
+    | awk '/Files written:/{f=1; next} /Follow-up tickets filed:/{f=0} f' \
+    | sed -e 's/^[[:space:]]*[-*][[:space:]]*//' -e 's/[[:space:]]*$//' \
+    | sed '/^$/d')
+  if [ -z "$paths" ]; then
+    record_gate "$ticket_id" "deliverable-named" "fail" \
+      "the summary comment names no paths under 'Files written:'"
+    GATE_FAIL="the deliverable is not named (no paths under 'Files written:')"
+    return 0
+  fi
+  record_gate "$ticket_id" "deliverable-named" "pass" \
+    "$(printf '%s\n' "$paths" | wc -l | tr -d ' ') path(s) named"
+
+  # ── Gate D2: deliverable-exists ─────────────────────────────────
+  # Every named path exists (relative to PROJECT_ROOT or absolute) and
+  # is non-empty.
+  local missing=""
+  while IFS= read -r p; do
+    [ -z "$p" ] && continue
+    if [ -d "$p" ]; then target="$p"; else target="$PROJECT_ROOT/$p"; fi
+    if [ ! -e "$target" ]; then
+      missing="$missing $p (missing)"
+    elif [ ! -s "$target" ]; then
+      missing="$missing $p (empty)"
+    fi
+  done <<< "$paths"
+  if [ -n "$missing" ]; then
+    record_gate "$ticket_id" "deliverable-exists" "fail" "missing/empty:${missing}"
+    GATE_FAIL="deliverable path(s) missing or empty:${missing}"
+    return 0
+  fi
+  record_gate "$ticket_id" "deliverable-exists" "pass" \
+    "every named path exists and is non-empty"
+
+  # ── Gate D3: no-placeholders ───────────────────────────────
+  # No named deliverable contains an incomplete marker (the
+  # configurable, case-insensitive list) or an empty section heading (a
+  # '#' line whose next non-blank line is another heading or EOF).
+  # The deterministic half of what verification-ic-admin rejects on.
+  local ph_fail="" line_no
+  while IFS= read -r p; do
+    [ -z "$p" ] && continue
+    if [ -d "$p" ]; then target="$p"; else target="$PROJECT_ROOT/$p"; fi
+    if grep -qiE "$GATE_DELIVERABLE_MARKERS" "$target" 2>/dev/null; then
+      ph_fail="${ph_fail}${p}: incomplete marker at line $(grep -inE "$GATE_DELIVERABLE_MARKERS" "$target" 2>/dev/null | head -1 | cut -d: -f1);"
+    fi
+    # A heading is EMPTY when the next non-blank line is a heading of
+    # the same or shallower level (or EOF). A title whose next line is a
+    # deeper sub-heading has a body (the section) and passes.
+    line_no=$(awk '
+      { lines[NR] = $0 }
+      END {
+        for (i = 1; i <= NR; i++)
+          if (match(lines[i], /^#{1,6}[ \t]+/)) {
+            lvl = RLENGTH
+            j = i + 1
+            while (j <= NR && lines[j] ~ /^[ \t]*$/) j++
+            if (j > NR) { print i; exit }
+            if (match(lines[j], /^#{1,6}[ \t]+/) && RLENGTH <= lvl)
+              { print i; exit }
+          }
+      }' "$target" 2>/dev/null)
+    if [ -n "$line_no" ]; then
+      ph_fail="${ph_fail}${p}: empty section heading at line ${line_no};"
+    fi
+  done <<< "$paths"
+  if [ -n "$ph_fail" ]; then
+    record_gate "$ticket_id" "no-placeholders" "fail" "$ph_fail"
+    GATE_FAIL="incomplete deliverable:${ph_fail}"
+    return 0
+  fi
+  record_gate "$ticket_id" "no-placeholders" "pass" \
+    "no incomplete markers or empty sections in any named deliverable"
+
+  # ── Gate D4: followup-scoped ───────────────────────────────
+  # Every ticket id on the 'Follow-up tickets filed:' line exists in the
+  # company's ticket dirs (any status); a line reading 'none' (or an
+  # absent line) passes.
+  followup=$(printf '%s\n' "$summary" \
+    | grep 'Follow-up tickets filed:' 2>/dev/null | head -1 \
+    | sed 's/.*Follow-up tickets filed:[[:space:]]*//')
+  if [ -z "$followup" ] || [ "$(printf '%s' "$followup" | tr '[:upper:]' '[:lower:]')" = "none" ]; then
+    record_gate "$ticket_id" "followup-scoped" "pass" "no follow-up tickets claimed"
+    return 0
+  fi
+  local bad="" id found
+  for id in $(printf '%s' "$followup" | tr ',;' '  ' | tr -s ' '); do
+    found=$(find "$COMPANY_DIR/departments" -type f -path "*/tickets/*/${id}.json" 2>/dev/null | head -1)
+    [ -z "$found" ] && bad="$bad $id"
+  done
+  if [ -n "$bad" ]; then
+    record_gate "$ticket_id" "followup-scoped" "fail" "unknown ticket id(s):${bad}"
+    GATE_FAIL="follow-up ticket id(s) do not exist:${bad}"
   else
-    record_gate "$TID" "non-code-ticket" "pass" "no worktree or feature branch - code gates skipped"
+    record_gate "$ticket_id" "followup-scoped" "pass" \
+      "every named follow-up ticket exists"
+  fi
+  return 0
+}
+
+# ── Pre-gate: classify by WORK KIND (0.23) ──────────────────────────────
+# The resolver (dept-helpers.sh work_kind_of) is the single lookup:
+# the ticket's work_kind field → the org chart's dept kind → the legacy
+# name list. A deliverable-kind ticket runs the deliverable gates
+# whether or not a stray worktree exists — a worktree is not a claim on
+# the code pipeline. A code-kind ticket runs the strict gates below
+# exactly as before; the blind name-match waiver is gone (a code ticket
+# with no worktree and no branch now fails Gate 1 — as it should: there
+# is no work to verify).
+# shellcheck source=/dev/null
+. "$SCRIPT_DIR/dept-helpers.sh"
+WORK_KIND=$(work_kind_of "$DEPT" "$TICKET_FILE")
+
+if [ "$WORK_KIND" = "deliverable" ]; then
+  if [ "$GATE_REQUIRE_DELIVERABLE" != "true" ]; then
+    record_gate "$TID" "deliverable-gates" "skip" \
+      "require_deliverable_gates=false — deliverable gates disabled for this company"
+    mark_gates_passed "$TID"
+    exit 0
+  fi
+  run_deliverable_gates "$TID"
+  if [ -n "$GATE_FAIL" ]; then
+    bounce_ticket "$TID" "$GATE_FAIL"
+    exit 2
   fi
   mark_gates_passed "$TID"
   exit 0
 fi
 
+# Code-kind ticket: the strict gates below evaluate its actual work.
 # NOTE: skip_tdd_red=true is deliberately NOT a gate. The flag means
 # "skip the tester; the engineer works the ticket directly" (set by
 # ticket-bounce.sh --skip-tdd-red, the PR-merge-conflict rollback, and
