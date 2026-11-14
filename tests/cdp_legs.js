@@ -383,11 +383,22 @@ async function main() {
         const c = await content();
         return (c && c.indexOf('GitHub sync is not working') !== -1) ? c : null;
       });
-      for (const needle of ['gh on PATH', 'FAILED', 'install: https://cli.github.com']) {
+      for (const needle of ['gh on PATH', 'FAILED']) {
         if (t.indexOf(needle) === -1) {
           throw new Error('the diagnostic block is missing "' + needle + '" — ' +
             t.slice(0, 300));
         }
+      }
+      // The fix line depends on the HOST: where the restricted PATH truly
+      // has no gh the failing check is 'gh on PATH' (install: cli.github.com);
+      // on the CI runner gh lives in /usr/bin (on the restricted PATH) but
+      // is NOT authenticated there — the failing check is 'gh authenticated'
+      // (gh auth login). Both faces are the diagnostic block: a named
+      // failing check + an actionable fix, not two empty tables.
+      if (t.indexOf('install: https://cli.github.com') === -1 &&
+          t.indexOf('gh auth login') === -1) {
+        throw new Error('the diagnostic block names no actionable fix — ' +
+          t.slice(0, 300));
       }
       return 'named the failing check + the fix';
     });
