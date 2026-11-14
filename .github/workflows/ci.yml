@@ -2,8 +2,11 @@
 # Runs on every push to main and on every pull request.
 #
 # Jobs:
-#   1. **Python tests** — EXACTLY TWO FULL ROWS (T4, 0.15): 3.12 and
-#      3.13, both running the full suite. The S4 (0.12) risk split —
+#   1. **Python tests** — THREE FULL ROWS (T5, 0.22): 3.12, 3.13 and
+#      3.14, all running the full suite (3.14: "the row that proves the
+#      new version runs the whole thing" — T4's two-row rule was
+#      floor+top; 3.14 extends the ceiling, same full-suite contract).
+#      The S4 (0.12) risk split —
 #      one full row + version-sensitive subsets — retires with the 3.10
 #      row: Python 3.10 is EOL (2026-10-04) and 3.11 is the floor
 #      (packaging/pyproject.toml), so the version-sensitive surface
@@ -23,6 +26,15 @@
 #   4. **Node.js dashboard** — basic syntax validation of server.js
 #   5. **Secret scan** — gitleaks over the full history; any finding fails
 #      the pipeline (C.1: a secret can never land in history again)
+#   6. **Browser legs** (T5, 0.22) — the delivered dashboard SPA driven
+#      through the runner's OWN Chrome (zero install: the job greps PATH
+#      for the standard names; no npm, no browser download): headless
+#      legs over the real CDP protocol by tests/cdp_legs.js (node
+#      builtins only) against the real dashboard server on a copy of the
+#      fixture tree. The 0.21+ dashboard floor is a GATE, not a receipt
+#      artifact: transport-live, the spawn push (T2), reload-stays
+#      (T4), the chat pill (T3), the gh-absent diagnostic, and the
+#      log deep-link (the T5 shell fix) run on every push/PR.
 #
 # Usage: push to main or open a PR; the workflow runs automatically.
 name: CI
@@ -47,6 +59,11 @@ jobs:
           - python: '3.12'
             suite: full
           - python: '3.13'
+            suite: full
+          # T5 (0.22): the 3.14 full row — a NEW interpreter running the
+          # ENTIRE suite (not a subset): if 3.14 breaks anything the
+          # ceiling row is the one that says so on every push/PR.
+          - python: '3.14'
             suite: full
     steps:
       - uses: actions/checkout@v4
@@ -176,6 +193,70 @@ jobs:
         run: |
           # Validate the dashboard server has no syntax errors
           node --check lib/dashboard/server.js
+
+  # ──────────────────────────────────────────────
+  # 3b. Browser legs (T5, 0.22) — the dashboard floor as a GATE
+  # ──────────────────────────────────────────────
+  browser:
+    name: Dashboard browser legs (headless Chrome, zero-dep CDP)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Locate the runner's Chrome (zero install — grep PATH for the standard names)
+        run: |
+          for c in google-chrome google-chrome-stable chromium chromium-browser; do
+            if command -v "$c" >/dev/null 2>&1; then
+              echo "CHROME_BIN=$(command -v "$c")" >> "$GITHUB_ENV"
+              break
+            fi
+          done
+          [ -n "${CHROME_BIN:-}" ] || {
+            echo "no Chrome under the standard names on this runner — the zero-install contract assumes one (the job installs nothing)"
+            exit 1
+          }
+          "$CHROME_BIN" --version
+
+      - name: Copy the fixture tree (the simulated writes ride a copy — the committed tree stays pristine)
+        run: |
+          rm -rf /tmp/hive-cdp-company
+          cp -r tests/fixtures/company /tmp/hive-cdp-company
+
+      - name: Start the dashboard servers and drive the legs
+        run: |
+          # Main server: full PATH. The runner's gh must NOT leak into
+          # the gh-absent server below (on the runner it lives in
+          # /usr/local/bin, which /usr/bin:/bin does not include).
+          node lib/dashboard/server.js --dir /tmp/hive-cdp-company --port 3901 &
+          MAIN=$!
+          NODE_BIN=$(command -v node)
+          (
+            export PATH=/usr/bin:/bin
+            exec "$NODE_BIN" lib/dashboard/server.js --dir /tmp/hive-cdp-company --port 3902
+          ) &
+          GH=$!
+          for i in $(seq 1 60); do
+            if curl -sf http://127.0.0.1:3901/api/status >/dev/null 2>&1 \
+               && curl -sf http://127.0.0.1:3902/api/status >/dev/null 2>&1; then
+              break
+            fi
+            sleep 1
+          done
+          curl -sf http://127.0.0.1:3901/api/status >/dev/null
+          # Drive the legs (tests/cdp_legs.js — node builtins only: the
+          # DevTools HTTP surface, the built-in WebSocket, child_process,
+          # fs. No npm, no third-party driver, no build step).
+          RC=0
+          node tests/cdp_legs.js --chrome "$CHROME_BIN" \
+            --base http://127.0.0.1:3901 --ghbase http://127.0.0.1:3902 \
+            --company /tmp/hive-cdp-company || RC=1
+          kill $MAIN $GH 2>/dev/null
+          exit $RC
 
   # ──────────────────────────────────────────────
   # 4. Python linting (ruff)
