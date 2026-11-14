@@ -63,6 +63,9 @@ jobs:
           # T5 (0.22): the 3.14 full row — a NEW interpreter running the
           # ENTIRE suite (not a subset): if 3.14 breaks anything the
           # ceiling row is the one that says so on every push/PR.
+          # First green (run 43558247830, 2026-11-14): full-suite job
+          # wall 6m37s (job wall includes checkout + setup + install;
+          # the 3.12 / 3.13 rows of the same run: 5m18s / 4m14s).
           - python: '3.14'
             suite: full
     steps:
