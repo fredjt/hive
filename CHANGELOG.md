@@ -1,3 +1,170 @@
+## 0.22.0
+
+0.22 is the walls-and-legs release — the stopped read stops paying
+for the SDK it never uses (1.1s → ~0.3s: the SDK import severed from
+the tool modules, the in-process rung costs the tool's own work), the
+stream event rides the live channel (viewers append pushed events —
+no more nudge-plus-refetch per event batch), the last four views are
+audited (the git panel sees agent commits; chat shows what you
+missed; config proves one fact, two faces), the loop's worker count
+is a host fact (a capped adaptive default behind a hardened tail —
+~200s → ~150s on an 88-core box, quiet), and CI earns its rows (a
+3.14 full row, and the headless legs run in CI against the runner's
+Chrome — the dashboard floor is a gate, not a receipt artifact). No
+rc moves to call out: the exit-code matrix is unchanged across the
+whole release.
+
+### The stopped read stops paying for the SDK it never uses (T1)
+- The tool modules are SDK-free by construction: the
+  `from hive_mcp.server_compat import Server` import is deleted from
+  every tool module — with `from __future__ import annotations` in
+  every file the `Server` annotation is a string, so the import was
+  runtime cost with zero runtime use, and it dragged `import mcp`
+  (~0.96s) into every stopped read, paid twice (the CLI's
+  build_server() and every tool module).
+- TOOL_MODULES lives in the SDK-free package (the tools'
+  `__init__.py`) — the single source of truth the SDK server and the
+  SDK-free rung both enumerate.
+- The in-process rung is SDK-free by construction: it imports ONLY
+  the requested tool module (lazy per-command, no all-modules
+  sweep), through a duck-typed collector — no build_server(), no
+  `import mcp`. The ladder's shape holds: HTTP when the server is
+  up (SDK client, or the SDK-free wire client), in-process-SDK-free
+  when it is down, the named error envelope when the module import
+  itself fails (a real defect, not the default path).
+- Envelope invariance is unchanged in kind, wider in scope: the same
+  call returns byte-identical envelopes across all three rungs —
+  the stopped-read test family gains the SDK-poisoned leg (`mcp`
+  never lands in sys.modules).
+- Measured on this host: 1.09–1.14s before → 0.27–0.30s after (the
+  remaining wall is the module's own import — httpx for the HTTP
+  probe — plus the tool's work; the 0.6s CLI-smoke ceiling is the
+  flake-resistant pin).
+- The guard pins it: importing ANY tool module must not import mcp
+  (SDK poisoned) — a future server_compat import fails the suite,
+  not the wall.
+
+### The stream event rides the live channel (T2)
+- The per-spawn viewer stops fetching per event: the streams
+  watcher's trailing 50ms debounce coalesces a micro-burst into ONE
+  delta read + ONE broadcast on the existing /api/events channel —
+  `spawn-stream-event` carries the DELTA (a per-file push cursor:
+  the lines already pushed, so nothing is ever resent) with
+  `from`/`next`, so a post-restart overlap is sliced away (the
+  cursor is process state; the client's wire cursor is truth).
+- The global view the same: `spawn-stream-global` — the time-ordered
+  merge across spawn files moves server-side; `active_count` tracks
+  the registry create/remove, not the cursor; completed spawns keep
+  pushing their tail.
+- The cursor fetches are demoted, not deleted: they run on
+  open/rehydration and on SSE reconnect (catch up once over the
+  wire, then follow the pushes). Dedupe is (from, next) per spawn
+  and (spawn_id, line) globally.
+- The nudge stays: the activity table's Events column / live total
+  still ride the spawns/active poll on spawn-stream-change —
+  refreshActivity fetches the TABLE data, zero stream HTTP.
+- The protocol is additive (the two new event names are unknown to
+  old clients; the cursor endpoints are untouched; the harness's
+  stream-json is byte-identical), and the C2 SPA manifest stays
+  byte-identical.
+- Headless request counts (this host, ONE driver against both eras —
+  tests/cdp_stream_fetch_count.js, a 5-line burst at 700 ms
+  intervals): 0.21.0 = 4 open + 5 push-phase fetches (one per
+  batch, 9 total); 0.22.0 = 4 open + 0 push-phase (4 total) — the
+  delta is exactly the push phase.
+- Also fixed: a latent infinite loop in the test SSE de-chunker (a
+  recv split right after a chunk-size line left the counter at 0;
+  large push payloads exposed it).
+
+### The last four views get audited (T3)
+The audit is the deliverable: each face is driven, the findings are
+fixed as found, and each fix is pinned.
+
+| view | finding (0.21) | fix (0.22) | test |
+|---|---|---|---|
+| git | refreshed only on ticket-change — and even that wiring was DEAD: showGit never registered a refresher, so refreshActive('git') no-oped; an agent commit / worktree write left the panel's dirty / changedFiles stale | the server watches what the panel reads — .git/HEAD (branch moves), .git/refs/heads (commits), every .worktrees/<TID> — firing ONE git-change at the 500 ms slow window; showGit registers its refresher | live-server: a worktree write AND a main-repo commit each fire git-change; a late worktree dir self-attaches; static: the listener exists AND the refresher is registered (the 0.21 dead wiring fails it) |
+| chat | worse than described: the 0.21 refetch scrolled to the bottom UNCONDITIONALLY — a reader scrolled up was yanked to the tail on every refresh; the missed messages were never shown | the "N new — jump to latest" pill (a count, not a bare "new"); jump snaps to the tail and clears; the refetch now preserves the reader's position | delivered-script probe: the pill template + jump handler + atBottom wiring; headless leg (L4): a deep-linked channel, scrolled up, an append → the pill |
+| config | the snapshot rendered with NO AGE (an hours-old doctor.json looked fresh); the resolved-config block was unverified against `hive llm` — two faces of one fact, drift possible | the snapshot's age renders next to the PASS/FAIL badge ("last run … ago"); the resolved provider / model / base_url / key source must agree with the `hive llm` resolution on the same tree | snapshot age matches the files' mtime (±1s, clock-normalized); the resolved block equals the `hive llm` output (subprocess CLI vs HTTP — one fact); the fixture manifest carries the freshness fields |
+| brief | unverified — the face had never been driven | both empty states name the fact (a bare company has no brief; a seeded manifest renders) | bare company → the empty state names the fact; seeded manifest → the panel renders |
+
+### The worker count is a host fact (T4)
+- First the tail: the three subprocess-heavy e2e tests that flaked
+  at -n 32 (the two harness round-trips, the cut-receipt re-run) are
+  hardened with a bounded single retry INSIDE the test on the
+  transient signature (a subprocess timeout, or the in-flight
+  MCP-call death) — never a suite re-run; a deterministic failure
+  re-raises at once; attempt 2 starts from reset state (a fresh
+  scratch ticket / a reset cut tree with the fake-gh log cleared).
+- Then the default: a bare `pytest tests/` (no -n) runs parallel at
+  the capped adaptive count — min(32, max(4, cpu // 4)) in
+  lib/adaptive_xdist.py, registered by pytest.ini's addopts. An
+  explicit -n always wins; CI's -n auto on the 2-core runners is
+  unchanged.
+- Measured, not pinned (this 88-core box): quiet — -n 8 ≈ 200s /
+  -n 32 ≈ 149s (the 0.21-era figures); under co-tenant load (a
+  local LLM server + monitoring loops sharing the cores) a bare run
+  (22 workers) ≈ 280s green, beating an explicit -n 32 (≈ 365s) in
+  the same session — more workers make a contended box slower (each
+  worker spawns its own process tree), which is what the adaptive
+  count exists to avoid. The probe trio (bash probe_trio.sh) is the
+  verification protocol on a new box: green 5/5 at -n 8 and -n 32
+  on this host.
+- AGENTS.md's loop section states the measured fact (the adaptive
+  default, the cap and why it exists, the probe trio) — no
+  remembered constant.
+
+### CI earns its rows (T5)
+- The matrix carries a third full row: 3.14 (released 2025-10-07;
+  the floor stays 3.11) — a row is a row (the S4 subset machinery
+  is retired). The 3.14 wall lands in the ci.yml comment after its
+  first green row.
+- The browser-legs job installs NOTHING browser-related: the
+  runner's Chrome (located by the standard PATH names) + node
+  builtins (fetch for the DevTools HTTP surface, the built-in
+  WebSocket for the CDP channel). It starts the real dashboard over
+  a copy of the C2 fixture tree and drives the delivered SPA with
+  the zero-dependency driver tests/cdp_legs.js — the leg set is a
+  SUPERSET of the 0.21 receipt: transport-live, spawn-push,
+  reload-stays, chat-pill, gh-absent-diag, log-deep-link (plus a
+  watcher canary that names the cause when the server is not
+  watching the tested tree).
+- The deep-link hole the legs exposed is fixed first: a sub-route
+  rendered by its parent (a chat channel, a log file) owned no view
+  identity — a deep-linked or refreshed tab rendered once and never
+  saw its SSE events. The sub-route now owns activeView + its
+  refresher (and builds its pane shell when the fresh DOM has
+  none).
+- The pins: the workflow carries the 3.14 row and the browser job
+  with no package install (grep-level — the zero-dependency posture
+  is a contract); the driver exists and parses under plain node;
+  the SPA deep-link gates survive the fix.
+
+Before/after — the 0.21.0 and 0.22.0 faces, side by side (R3):
+
+| face | 0.21.0 | 0.22.0 (this host) |
+|---|---|---|
+| stopped read (hive status, company STOPPED) | 1.09s (0.96s of it `import mcp`) | 0.27s (the SDK is gone from the rung) |
+| stream (5-line burst, headless, one driver) | one fetch per batch: 5 push-phase fetches (9 total) | 0 fetches during push (4 total — the open-phase rehydration, same in both eras) |
+| view audit | git / chat / config / brief un-audited (git's refresh wiring was dead) | the four-row table above: git sees agent commits; chat shows what you missed; config proves one fact, two faces; brief's empty states name the fact |
+| suite | -n 8 ≈ 200s (by guidance) | the bare loop at the adaptive default (22 workers here): ≈ 280s under co-tenant load, beating -n 32 (≈ 365s) in the same session; the probe trio green 5/5 at -n 8 and -n 32 |
+| CI | 3.12 / 3.13 full + bash / ruff / dashboard / secrets | + the 3.14 full row + the browser-legs job (the 0.21+ dashboard floor as a standing gate) |
+- The upgrade path from v0.21.0 verifies (the 0.15 T5 contract:
+  scratch-install the published 0.21.0, install the staged tree on
+  top, doctor it) — including the 0.21-shaped orphaned active record
+  (id only, no spawn_id) + its stream file, read by the 0.22
+  dashboard after the in-place install over the NEW push channel
+  (the cut receipt's gate-8 line).
+- PARKED (named in the release notes so the deferral is visible, not
+  silent): server-side event filtering (thinking-token suppression
+  moves from client render to the push payload — less wire, not
+  less event); push backpressure / client render batching under
+  burst load (the 1500-retention cap is the stopgap); the scheduled
+  row's 3.14 coverage (scheduled.yml's PyPI re-resolution against
+  the new row); more browser legs (rounds / releases drill-downs,
+  the Watch-reconnect leg); tailing reads as the push alternative
+  (the push channel makes them optional — parked until a use case
+  shows up).
+
 ## 0.21.0
 
 0.21 starts the dashboard arc. 0.15-0.20 covered the install path, the
