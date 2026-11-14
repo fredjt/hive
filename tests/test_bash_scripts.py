@@ -1131,21 +1131,28 @@ class TestWorkKindResolver:
                               "hr": {"name": "HR", "kind": "code"}}})
         assert r.stdout.strip() == "code", r.stdout
 
-    def test_legacy_list_fallback_for_fixed_admin_dept(self, tmp_path):
-        # no ticket field, no org-chart kind: hr is on the legacy admin
-        # name list → deliverable.
+    @pytest.mark.parametrize("dept", ["hr", "it", "rd", "marketing",
+                                       "legal", "finance"])
+    def test_legacy_list_fallback_for_every_fixed_dept(self, tmp_path, dept):
+        # W2 back-compat: a pre-0.23 chart (no kind anywhere) resolves
+        # EVERY fixed dept to the same pipeline the name list gave it —
+        # the migration is silent until a kind is set.
         company = tmp_path / ".company"
         company.mkdir()
-        r = self._resolve("hr", company_dir=company,
-                          org_chart={"departments": {"hr": {"name": "HR"}}})
-        assert r.stdout.strip() == "deliverable", r.stdout
+        r = self._resolve(dept, company_dir=company,
+                          org_chart={"departments": {dept: {"name": dept.upper()}}})
+        assert r.stdout.strip() == "deliverable", \
+            f"{dept}: {r.stdout!r} (the legacy name list says deliverable)"
 
-    def test_legacy_list_fallback_for_dynamic_dept(self, tmp_path):
+    @pytest.mark.parametrize("dept", ["backend-api-services",
+                                       "data-platform", "devtools"])
+    def test_legacy_list_fallback_for_dynamic_dept(self, tmp_path, dept):
         # no ticket field, no org-chart kind, dept not on the admin list
-        # (and not in the chart at all) → code.
+        # (and not in the chart at all) → code (today's
+        # !is_admin_dept behavior).
         company = tmp_path / ".company"
         company.mkdir()
-        r = self._resolve("backend-api-services", company_dir=company,
+        r = self._resolve(dept, company_dir=company,
                           org_chart={"departments": {}})
         assert r.stdout.strip() == "code", r.stdout
 

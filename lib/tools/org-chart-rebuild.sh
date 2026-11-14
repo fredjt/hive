@@ -56,15 +56,20 @@ if [ -f "$ORG_FILE" ]; then
   fi
 fi
 
-# Hardcoded fixed-department metadata (matches what CEO would write)
+# Hardcoded fixed-department metadata (matches what CEO would write).
+# 0.23: `kind` declares the dept's default WORK KIND — the division of
+# labor as data (the resolver in dept-helpers.sh reads it). The fixed six
+# are documentation departments (deliverable); a project's engineering
+# depts (dynamic) default to code. A CEO may override either in the org
+# chart; the rebuild preserves a valid CEO-set kind.
 FIXED_META=$(cat <<'EOF'
 {
-  "hr":         {"type":"fixed", "vp":"VP-HR",        "purpose":"Hiring, performance, org structure, agent management"},
-  "it":         {"type":"fixed", "vp":"VP-IT",        "purpose":"Build system, CI/CD, dependencies, dev tooling, infra"},
-  "rd":         {"type":"fixed", "vp":"VP-R&D",       "purpose":"Research, competitive analysis, new technology"},
-  "marketing":  {"type":"fixed", "vp":"VP-Marketing", "purpose":"Positioning, pricing, GTM, content, customer acquisition"},
-  "legal":      {"type":"fixed", "vp":"VP-Legal",     "purpose":"Privacy, ToS, license compliance, risk register, IP, regulatory posture"},
-  "finance":    {"type":"fixed", "vp":"VP-Finance",   "purpose":"Budget, runway, unit economics, projections, vendor cost tracking, P&L"}
+  "hr":         {"type":"fixed", "vp":"VP-HR",        "kind":"deliverable", "purpose":"Hiring, performance, org structure, agent management"},
+  "it":         {"type":"fixed", "vp":"VP-IT",        "kind":"deliverable", "purpose":"Build system, CI/CD, dependencies, dev tooling, infra"},
+  "rd":         {"type":"fixed", "vp":"VP-R&D",       "kind":"deliverable", "purpose":"Research, competitive analysis, new technology"},
+  "marketing":  {"type":"fixed", "vp":"VP-Marketing", "kind":"deliverable", "purpose":"Positioning, pricing, GTM, content, customer acquisition"},
+  "legal":      {"type":"fixed", "vp":"VP-Legal",     "kind":"deliverable", "purpose":"Privacy, ToS, license compliance, risk register, IP, regulatory posture"},
+  "finance":    {"type":"fixed", "vp":"VP-Finance",   "kind":"deliverable", "purpose":"Budget, runway, unit economics, projections, vendor cost tracking, P&L"}
 }
 EOF
 )
@@ -88,24 +93,36 @@ DEPTS_JSON=$(jq -n \
 
   # Build map: every fixed dept gets fixed_meta unless existing has data, every discovered dept gets a stub
   # Need ([])[] to iterate items rather than binding the whole array to $name; |unique to dedupe.
+  # 0.23 work kind per provenance: fixed six -> deliverable, dynamic ->
+  # code. A CEO-set kind (code|deliverable) survives the rebuild; an
+  # invalid or absent kind is replaced with the valid default — invalid
+  # values are not written (the resolver fallback would have made the
+  # same decision anyway, and a garbage kind in the chart is a lie).
   reduce (($discovered + ["hr","it","rd","marketing","legal","finance"]) | unique | .[]) as $name ({};
-    if $existing_depts[$name] then
-      .[$name] = $existing_depts[$name]
-    elif $fixed_meta[$name] then
-      .[$name] = $fixed_meta[$name]
-    else
-      .[$name] = {
-        "type": "dynamic",
-        "vp": ("VP-" + ($name | gsub("[-_]"; " ") | split(" ") | map(.[:1] | ascii_upcase) | join(""))),
-        "purpose": ($name | gsub("[-_]"; " ") + " department (auto-discovered from filesystem)"),
-        "depth": "vp-ic",
-        "managers": 0,
-        "components": [],
-        "dependencies": [],
-        "wave": null,
-        "auto_discovered": true
-      }
-    end
+    (if $fixed_meta[$name] then $fixed_meta[$name].kind else "code" end) as $default_kind
+    | if $existing_depts[$name] then
+        ($existing_depts[$name].kind) as $k
+        | .[$name] = (if ($k == "code" or $k == "deliverable") then
+                        $existing_depts[$name]
+                      else
+                        ($existing_depts[$name] + {"kind": $default_kind})
+                      end)
+      elif $fixed_meta[$name] then
+        .[$name] = $fixed_meta[$name]
+      else
+        .[$name] = {
+          "type": "dynamic",
+          "vp": ("VP-" + ($name | gsub("[-_]"; " ") | split(" ") | map(.[:1] | ascii_upcase) | join(""))),
+          "kind": "code",
+          "purpose": ($name | gsub("[-_]"; " ") + " department (auto-discovered from filesystem)"),
+          "depth": "vp-ic",
+          "managers": 0,
+          "components": [],
+          "dependencies": [],
+          "wave": null,
+          "auto_discovered": true
+        }
+      end
   )
   ')
 

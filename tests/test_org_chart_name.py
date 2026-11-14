@@ -67,6 +67,114 @@ def test_stale_org_chart_name_corrected_on_first_rebuild(tmp_path):
     assert org["project_name"] == "Real Project", org
 
 
+FIXED_DEPTS = ["hr", "it", "rd", "marketing", "legal", "finance"]
+
+
+def _rebuild(cd):
+    return subprocess.run(["bash", str(ORGC), "--quiet"], capture_output=True,
+                          text=True, timeout=30,
+                          env={**os.environ, "COMPANY_DIR": str(cd)})
+
+
+class TestOrgChartWorkKind:
+    """W2 (0.23): the org chart declares the division of labor.
+
+    Each dept entry carries `kind` (code|deliverable) — the resolver's
+    middle rung. The scaffold writes the default per provenance: the
+    fixed six are documentation departments (deliverable), a project's
+    engineering depts (dynamic) default to code. A CEO-set kind
+    survives a rebuild; an invalid kind is not written."""
+
+    def test_fresh_rebuild_carries_kinds_by_provenance(self, tmp_path):
+        """A fresh company's org chart DECLARES its division of labor:
+        all six fixed depts deliverable, a discovered dynamic dept code."""
+        cd = tmp_path / ".company"
+        (cd / "departments" / "backend-api-services" / "tickets"
+         / "backlog").mkdir(parents=True)
+        r = _rebuild(cd)
+        assert r.returncode == 0, r.stderr
+        org = _org(cd)
+        for d in FIXED_DEPTS:
+            assert org["departments"][d].get("kind") == "deliverable", \
+                f"fixed dept {d}: {org['departments'][d]!r}"
+        dyn = org["departments"]["backend-api-services"]
+        assert dyn.get("kind") == "code", dyn
+
+    def test_ceo_set_kind_survives_rebuild(self, tmp_path):
+        """A manager can re-point a dept's default kind with one
+        org-chart edit — the rebuild preserves it (the way it already
+        preserves CEO-authored depts)."""
+        cd = tmp_path / ".company"
+        cd.mkdir()
+        (cd / "org-chart.json").write_text(json.dumps({
+            "project_name": "P", "company_name": "P Co.",
+            "departments": {
+                # CEO override: the R&D dept does code (prototypes)
+                "rd": {"type": "fixed", "vp": "VP-R&D", "kind": "code",
+                       "purpose": "Research, competitive analysis, new technology"},
+                # CEO override the other way: an engineering dept that
+                # files docs
+                "backend-api-services": {"type": "dynamic", "vp": "VP-Backend",
+                                         "kind": "deliverable",
+                                         "purpose": "API platform"},
+            }}))
+        (cd / "departments" / "backend-api-services" / "tickets").mkdir(parents=True)
+        r = _rebuild(cd)
+        assert r.returncode == 0, r.stderr
+        org = _org(cd)
+        assert org["departments"]["rd"].get("kind") == "code", \
+            "the CEO-set kind on a fixed dept must survive the rebuild"
+        assert org["departments"]["backend-api-services"].get("kind") == "deliverable"
+
+    def test_invalid_kind_is_not_written(self, tmp_path):
+        """An invalid kind value is replaced with the valid default at
+        the compose step — the rebuild never fails on it, never writes
+        it (the resolver's fallback would have made the same decision
+        anyway)."""
+        cd = tmp_path / ".company"
+        cd.mkdir()
+        (cd / "org-chart.json").write_text(json.dumps({
+            "project_name": "P", "company_name": "P Co.",
+            "departments": {
+                "rd": {"type": "fixed", "vp": "VP-R&D", "kind": "purple",
+                       "purpose": "Research"},
+                "backend-api-services": {"type": "dynamic", "vp": "VP-Backend",
+                                         "kind": "purple", "purpose": "API"},
+            }}))
+        (cd / "departments" / "backend-api-services" / "tickets").mkdir(parents=True)
+        r = _rebuild(cd)
+        assert r.returncode == 0, \
+            f"a garbage kind must not fail the rebuild: {r.stderr}"
+        org = _org(cd)
+        assert org["departments"]["rd"].get("kind") == "deliverable", \
+            "invalid kind on a fixed dept must be replaced by the fixed default"
+        assert org["departments"]["backend-api-services"].get("kind") == "code", \
+            "invalid kind on a dynamic dept must be replaced by the dynamic default"
+
+    def test_absent_kind_filled_from_provenance(self, tmp_path):
+        """A pre-0.23 chart (no kind anywhere) gains the valid defaults
+        on the next rebuild — silently: the legacy name list gave every
+        one of these depts the same pipeline."""
+        cd = tmp_path / ".company"
+        cd.mkdir()
+        (cd / "org-chart.json").write_text(json.dumps({
+            "project_name": "P", "company_name": "P Co.",
+            "departments": {
+                "hr": {"type": "fixed", "vp": "VP-HR", "purpose": "Hiring"},
+                "backend-api-services": {"type": "dynamic", "vp": "VP-Backend",
+                                         "purpose": "API"},
+            }}))
+        (cd / "departments" / "backend-api-services" / "tickets").mkdir(parents=True)
+        r = _rebuild(cd)
+        assert r.returncode == 0, r.stderr
+        org = _org(cd)
+        assert org["departments"]["hr"].get("kind") == "deliverable"
+        assert org["departments"]["backend-api-services"].get("kind") == "code"
+        # every fixed dept present on the rebuilt chart carries the default
+        for d in FIXED_DEPTS:
+            assert org["departments"][d].get("kind") == "deliverable", d
+
+
 def test_manifest_less_rebuild_keeps_existing_name(tmp_path):
     """No manifest + an existing real name -> the rebuild must NOT
     clobber it with the placeholder."""
