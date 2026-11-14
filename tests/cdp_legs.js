@@ -389,14 +389,18 @@ async function main() {
             t.slice(0, 300));
         }
       }
-      // The fix line depends on the HOST: where the restricted PATH truly
-      // has no gh the failing check is 'gh on PATH' (install: cli.github.com);
-      // on the CI runner gh lives in /usr/bin (on the restricted PATH) but
-      // is NOT authenticated there — the failing check is 'gh authenticated'
-      // (gh auth login). Both faces are the diagnostic block: a named
-      // failing check + an actionable fix, not two empty tables.
-      if (t.indexOf('install: https://cli.github.com') === -1 &&
-          t.indexOf('gh auth login') === -1) {
+      // The failing check depends on the HOST (all three faces measured):
+      //   no gh on the restricted PATH       -> 'gh on PATH' FAILED
+      //                                          (install: cli.github.com)
+      //   gh present, unauthenticated (CI)   -> 'gh authenticated' FAILED
+      //                                          (gh auth login)
+      //   gh present + authed, no remote     -> 'origin remote configured'
+      //                                          FAILED (git remote add)
+      // Every face is the diagnostic block: a named failing check + an
+      // actionable fix over the last-good state — not two empty tables.
+      const fix = ['install: https://cli.github.com', 'gh auth login',
+                   'git remote add origin'];
+      if (!fix.some((f) => t.indexOf(f) !== -1)) {
         throw new Error('the diagnostic block names no actionable fix — ' +
           t.slice(0, 300));
       }
@@ -525,6 +529,16 @@ async function main() {
 
     await leg('log-deep-link', async () => {
       await nav('logs', BASE, '#/logs/llm-usage.log');
+      // Wait for the SPA to be UP first (checkStatus resolved — the nav
+      // bar flips from the markup's display:none to flex). A slow runner
+      // tab can stretch the page LOAD past 25s; the content window below
+      // then measures the deep-link render itself, not the load. (The
+      // runner's second CI draw of this leg timed out on the load.)
+      await waitFor('the SPA to connect (nav bar visible)', async () => {
+        const d = await cdp.eval(
+          "(function(){var el=document.getElementById('nav');return el?el.style.display:null})()");
+        return (d && d !== 'none') ? true : null;
+      }, 30000);
       await waitFor('the deep-linked log viewer to render its content', async () => {
         const c = await cdp.eval(
           "(function(){var el=document.getElementById('log-content');return el?el.textContent:null})()");
