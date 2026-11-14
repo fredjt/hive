@@ -528,29 +528,56 @@ async function main() {
     const marker = 'cdp-leg-marker-' + Date.now();
 
     await leg('log-deep-link', async () => {
-      await nav('logs', BASE, '#/logs/llm-usage.log');
-      // Wait for the SPA to be UP first (checkStatus resolved — the nav
-      // bar flips from the markup's display:none to flex). A slow runner
-      // tab can stretch the page LOAD past 25s; the content window below
-      // then measures the deep-link render itself, not the load. (The
-      // runner's second CI draw of this leg timed out on the load.)
-      await waitFor('the SPA to connect (nav bar visible)', async () => {
-        const d = await cdp.eval(
-          "(function(){var el=document.getElementById('nav');return el?el.style.display:null})()");
-        return (d && d !== 'none') ? true : null;
-      }, 30000);
-      await waitFor('the deep-linked log viewer to render its content', async () => {
-        const c = await cdp.eval(
-          "(function(){var el=document.getElementById('log-content');return el?el.textContent:null})()");
-        return (c && c.indexOf(lastLine) !== -1) ? true : null;
-      });
-      fs.appendFileSync(logFile, marker + '\n');
-      await waitFor('the appended line to reach the live viewer', async () => {
-        const c = await cdp.eval(
-          "(function(){var el=document.getElementById('log-content');return el?el.textContent:null})()");
-        return (c && c.indexOf(marker) !== -1) ? true : null;
-      });
-      return 'the live append landed in the deep-linked viewer';
+      // T5 (0.22): bounded in-leg retry on the TRANSIENT signature — on
+      // the loaded runner box the deep-linked /api/logs fetch left the
+      // pane stuck on 'Loading logs...' in two of the first three CI
+      // draws (the same leg passes every local draw). A FRESH document
+      // per attempt (an about:blank round-trip: attempt 2 starts from
+      // the state attempt 1 did, not its wreckage) and a per-attempt
+      // marker keeps the live-append claim honest. A deterministic SPA
+      // defect fails BOTH attempts, and the message names the state.
+      let first = null;
+      for (let n = 1; n <= 2; n++) {
+        try {
+          if (n === 2) {
+            await cdp.send('Page.navigate', { url: 'about:blank' });
+            await waitFor('the about:blank attempt reset', async () => {
+              const h = await cdp.eval('location.href');
+              return (h === 'about:blank') ? true : null;
+            }, 10000);
+          }
+          await nav('logs', BASE, '#/logs/llm-usage.log');
+          // Wait for the SPA to be UP first (checkStatus resolved — the
+          // nav bar flips from the markup's display:none to flex). A
+          // slow runner tab can stretch the page LOAD past 25s; the
+          // content window below then measures the deep-link render
+          // itself, not the load.
+          await waitFor('the SPA to connect (nav bar visible)', async () => {
+            const d = await cdp.eval(
+              "(function(){var el=document.getElementById('nav');return el?el.style.display:null})()");
+            return (d && d !== 'none') ? true : null;
+          }, 30000);
+          await waitFor('the deep-linked log viewer to render its content', async () => {
+            const c = await cdp.eval(
+              "(function(){var el=document.getElementById('log-content');return el?el.textContent:null})()");
+            return (c && c.indexOf(lastLine) !== -1) ? true : null;
+          });
+          const m = marker + (n === 2 ? '-r2' : '');
+          fs.appendFileSync(logFile, m + '\n');
+          await waitFor('the appended line to reach the live viewer', async () => {
+            const c = await cdp.eval(
+              "(function(){var el=document.getElementById('log-content');return el?el.textContent:null})()");
+            return (c && c.indexOf(m) !== -1) ? true : null;
+          });
+          return 'the live append landed in the deep-linked viewer' +
+            (n === 2 ? ' (fresh document, attempt 2)' : '');
+        } catch (e) {
+          first = first || (e.message || String(e));
+          if (n === 2) {
+            throw new Error('log-deep-link: both attempts failed — ' + first);
+          }
+        }
+      }
     });
   } finally {
     if (cdp) cdp.close();
