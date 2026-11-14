@@ -1,5 +1,5 @@
 #!/bin/bash
-# Usage: ticket-create.sh <department> <type> <priority> <title> <description> <created_by> <source> [estimate] [--labels "a,b"] [--ac "criterion per line"]
+# Usage: ticket-create.sh <department> <type> <priority> <title> <description> <created_by> <source> [estimate] [--labels "a,b"] [--ac "criterion per line"] [--work-kind code|deliverable]
 # Example: ticket-create.sh backend-api-services bug high "Fix rate limiting" "Rate limiter not configured" "VP-R&D" "rd-discovery" "medium"
 #
 # Creates a ticket in the department's backlog with all metadata filled in.
@@ -34,22 +34,27 @@ shift 7 2>/dev/null || true
 
 # Optional flags: --external-id <id> links the ticket to a foreign id
 # (empty for native hive tickets); --labels "a,b" and --ac "line per
-# criterion" populate the ticket's labels / acceptance_criteria.
+# criterion" populate the ticket's labels / acceptance_criteria;
+# --work-kind code|deliverable names the kind of work the goal is (0.23)
+# — the runner dispatches on it; omitted, the kind resolves from the
+# dept's org-chart kind (or the legacy name list).
 EXTERNAL_ID=""
 LABELS=""
 AC=""
+WORK_KIND=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --external-id) EXTERNAL_ID="$2"; shift 2 ;;
     --estimate)    ESTIMATE="$2"; shift 2 ;;
     --labels)      LABELS="$2"; shift 2 ;;
     --ac)          AC="$2"; shift 2 ;;
+    --work-kind)   WORK_KIND="$2"; shift 2 ;;
     *) shift ;;
   esac
 done
 
 if [ -z "$DEPT" ] || [ -z "$TYPE" ] || [ -z "$TITLE" ]; then
-  echo "Usage: ticket-create.sh <department> <type> <priority> <title> <description> <created_by> <source> [estimate] [--external-id <id>] [--labels \"a,b\"] [--ac \"per line\"]" >&2
+  echo "Usage: ticket-create.sh <department> <type> <priority> <title> <description> <created_by> <source> [estimate] [--external-id <id>] [--labels \"a,b\"] [--ac \"per line\"] [--work-kind code|deliverable]" >&2
   echo "Types: feature, bug, improvement, chore, infrastructure, research" >&2
   echo "Priorities: critical, high, medium, low" >&2
   echo "Sources: sprint-planning, rd-discovery, qa-finding, user-request, bug-report, improvement, verification" >&2
@@ -59,7 +64,8 @@ fi
 
 RESULT=$(hs ticket-create --dept "$DEPT" --type "$TYPE" --priority "$PRIORITY" \
   --title "$TITLE" --desc "$DESC" --created-by "$CREATED_BY" --source "$SOURCE" \
-  --estimate "$ESTIMATE" --labels "$LABELS" --ac "$AC" --external-id "$EXTERNAL_ID" 2>&1)
+  --estimate "$ESTIMATE" --labels "$LABELS" --ac "$AC" --external-id "$EXTERNAL_ID" \
+  --work-kind "$WORK_KIND" 2>&1)
 RC=$?
 [ $RC -ne 0 ] && { echo "$RESULT" >&2; exit $RC; }
 

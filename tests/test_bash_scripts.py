@@ -1065,6 +1065,109 @@ type is_admin_dept >/dev/null 2>&1 && echo "FOUND" || echo "NOT_FOUND"
         assert result.returncode == 0
 
 
+class TestWorkKindResolver:
+    """W1 (0.23): work_kind_of — the single lookup both the runner and
+    the gates call. Priority: the ticket's own work_kind field → the
+    org chart's dept kind → the legacy name list (the fixed six were
+    admin/deliverable-ish, every other dept engineering/code)."""
+
+    REPO = Path(__file__).resolve().parent.parent
+
+    def _resolve(self, dept, ticket_file=None, company_dir=None,
+                 org_chart=None):
+        if company_dir is not None:
+            company = Path(company_dir)
+            company.mkdir(parents=True, exist_ok=True)
+            if org_chart is not None:
+                (company / "org-chart.json").write_text(
+                    json.dumps(org_chart))
+        args = [dept]
+        if ticket_file is not None:
+            args.append(str(ticket_file))
+        call = " ".join("'%s'" % a for a in args)
+        code = (
+            f'source "{self.REPO / "lib" / "tools" / "dept-helpers.sh"}"\n'
+            f"work_kind_of {call}\n")
+        env = {**os.environ, "HIVE_INSTALL_DIR": str(self.REPO)}
+        if company_dir is not None:
+            env["COMPANY_DIR"] = str(company)
+        return subprocess.run(
+            ["bash", "-c", code],
+            capture_output=True, text=True, timeout=10, env=env)
+
+    def test_resolver_is_defined(self):
+        code = (
+            f'source "{self.REPO / "lib" / "tools" / "dept-helpers.sh"}"\n'
+            "type work_kind_of >/dev/null 2>&1 && echo FOUND || echo NOT_FOUND")
+        result = subprocess.run(
+            ["bash", "-c", code], capture_output=True, text=True, timeout=10,
+            env={**os.environ, "HIVE_INSTALL_DIR": str(self.REPO)})
+        assert result.returncode == 0
+        assert "FOUND" in result.stdout
+
+    def test_ticket_field_wins_over_legacy_list(self, tmp_path):
+        # hr is on the legacy admin list (deliverable); a ticket that
+        # says code is code — the explicit field wins.
+        t = tmp_path / "t.json"
+        t.write_text(json.dumps({"id": "X", "work_kind": "code"}))
+        r = self._resolve("hr", ticket_file=t)
+        assert r.stdout.strip() == "code", r.stdout
+
+    def test_ticket_field_wins_over_org_chart(self, tmp_path):
+        t = tmp_path / "t.json"
+        t.write_text(json.dumps({"id": "X", "work_kind": "deliverable"}))
+        company = tmp_path / ".company"
+        company.mkdir()
+        r = self._resolve("backend", ticket_file=t, company_dir=company,
+                          org_chart={"departments": {
+                              "backend": {"name": "B", "kind": "code"}}})
+        assert r.stdout.strip() == "deliverable", r.stdout
+
+    def test_org_chart_kind_used_when_ticket_field_absent(self, tmp_path):
+        company = tmp_path / ".company"
+        company.mkdir()
+        r = self._resolve("hr", company_dir=company,
+                          org_chart={"departments": {
+                              "hr": {"name": "HR", "kind": "code"}}})
+        assert r.stdout.strip() == "code", r.stdout
+
+    def test_legacy_list_fallback_for_fixed_admin_dept(self, tmp_path):
+        # no ticket field, no org-chart kind: hr is on the legacy admin
+        # name list → deliverable.
+        company = tmp_path / ".company"
+        company.mkdir()
+        r = self._resolve("hr", company_dir=company,
+                          org_chart={"departments": {"hr": {"name": "HR"}}})
+        assert r.stdout.strip() == "deliverable", r.stdout
+
+    def test_legacy_list_fallback_for_dynamic_dept(self, tmp_path):
+        # no ticket field, no org-chart kind, dept not on the admin list
+        # (and not in the chart at all) → code.
+        company = tmp_path / ".company"
+        company.mkdir()
+        r = self._resolve("backend-api-services", company_dir=company,
+                          org_chart={"departments": {}})
+        assert r.stdout.strip() == "code", r.stdout
+
+    def test_invalid_org_chart_kind_falls_through(self, tmp_path):
+        # a chart with a garbage kind must not poison the resolution —
+        # it falls through to the legacy list.
+        company = tmp_path / ".company"
+        company.mkdir()
+        r = self._resolve("hr", company_dir=company,
+                          org_chart={"departments": {
+                              "hr": {"name": "HR", "kind": "purple"}}})
+        assert r.stdout.strip() == "deliverable", r.stdout
+
+    def test_invalid_ticket_field_falls_through(self, tmp_path):
+        # a hand-corrupted ticket with a garbage work_kind falls through
+        # to the legacy list rather than erroring.
+        t = tmp_path / "t.json"
+        t.write_text(json.dumps({"id": "X", "work_kind": "purple"}))
+        r = self._resolve("hr", ticket_file=t)
+        assert r.stdout.strip() == "deliverable", r.stdout
+
+
 class TestTicketPathsScript:
     """Test ticket-paths.sh."""
 

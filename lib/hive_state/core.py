@@ -193,6 +193,13 @@ TICKET_STATUSES = ["backlog", "sprint-current", "in-progress", "in-review", "don
 TICKET_TYPES = ["feature", "bug", "improvement", "chore", "infrastructure", "research"]
 TICKET_PRIORITIES = ["critical", "high", "medium", "low"]
 
+# Work kind (0.23): what KIND of work the goal is. The runner dispatches on
+# it — code tickets take the TDD pipeline, deliverable tickets take the
+# ic-admin deliverable pipeline. A property of the goal, fixed at filing:
+# no write path mutates it after creation (a wrong kind is a new ticket,
+# not an edit), and it is NOT cleared at done (contrast skip_tdd_red).
+WORK_KINDS = ["code", "deliverable"]
+
 
 def _validate_ticket(data: Any, rel: str) -> None:
     t = _require_dict(data, rel)
@@ -216,6 +223,9 @@ def _validate_ticket(data: Any, rel: str) -> None:
         raise SchemaViolation(f"{rel}: ticket type {t['type']!r} not in {TICKET_TYPES}")
     if t["priority"] not in TICKET_PRIORITIES:
         raise SchemaViolation(f"{rel}: ticket priority {t['priority']!r} not in {TICKET_PRIORITIES}")
+    if "work_kind" in t and t["work_kind"] is not None and t["work_kind"] not in WORK_KINDS:
+        raise SchemaViolation(
+            f"{rel}: ticket work_kind {t['work_kind']!r} not in {WORK_KINDS}")
 
 
 def _validate_round(data: Any, rel: str) -> None:

@@ -349,6 +349,7 @@ Args:
   - `estimate`: string
   - `labels`: list of string
   - `acceptance_criteria`: list of string
+  - `work_kind`: string
   - `company_dir`: string
 
 ### `ticket_get`

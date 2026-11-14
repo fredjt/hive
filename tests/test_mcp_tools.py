@@ -650,6 +650,84 @@ class TestTicketRouteExpeditedTool:
             else:
                 os.environ.pop("PYTHONPATH", None)
 
+    def test_ticket_create_work_kind_round_trip(self, install_dir, tmp_company_dir):
+        """W1 (0.23): ticket_create's optional work_kind param lands on
+        the ticket; a bogus value is rejected naming the field; an
+        unchanged-args call adds no key (the 0.22 call shape is
+        byte-identical — old MCP tests pass untouched)."""
+        sys_path = str(install_dir / "lib")
+        old_path = os.environ.get("PYTHONPATH", "")
+        if sys_path not in old_path:
+            os.environ["PYTHONPATH"] = sys_path + (":" + old_path if old_path else "")
+
+        try:
+            from hive_mcp.server import build_server
+            server = build_server()
+            fn = server._tool_manager._tools["ticket_create"].fn
+            (tmp_company_dir / "logs").mkdir(exist_ok=True)
+            # the fixture's org chart carries only it/rd; add hr (a fixed
+            # dept of the legacy admin list) before filing into it
+            _chart = json.loads(
+                (tmp_company_dir / "org-chart.json").read_text())
+            _chart.setdefault("departments", {})["hr"] = {
+                "name": "HR", "reporting_to": None}
+            (tmp_company_dir / "org-chart.json").write_text(
+                json.dumps(_chart, indent=2))
+
+            result = fn(
+                dept="hr",
+                type="chore",
+                priority="medium",
+                title="Work kind round trip",
+                description="desc",
+                work_kind="deliverable",
+                company_dir=str(tmp_company_dir),
+            )
+            assert result.get("ok") is True, result
+            files = list((tmp_company_dir / "departments" / "hr" / "tickets"
+                          / "backlog").glob("*.json"))
+            assert len(files) == 1
+            data = json.loads(files[0].read_text())
+            assert data.get("work_kind") == "deliverable"
+
+            # unchanged-args call: no key added
+            result = fn(
+                dept="hr",
+                type="chore",
+                priority="medium",
+                title="No kind on this one",
+                description="desc",
+                company_dir=str(tmp_company_dir),
+            )
+            assert result.get("ok") is True, result
+            files = list((tmp_company_dir / "departments" / "hr" / "tickets"
+                          / "backlog").glob("*.json"))
+            assert len(files) == 2
+            for f in files:
+                d = json.loads(f.read_text())
+                if d["title"] == "No kind on this one":
+                    assert "work_kind" not in d
+                else:
+                    assert d.get("work_kind") == "deliverable"
+
+            # bogus value: rejected, the field named
+            result = fn(
+                dept="hr",
+                type="chore",
+                priority="medium",
+                title="Bogus kind",
+                description="desc",
+                work_kind="bogus",
+                company_dir=str(tmp_company_dir),
+            )
+            assert result.get("ok") is not True, result
+            assert "work_kind" in result.get("stderr", ""), result
+        finally:
+            if old_path:
+                os.environ["PYTHONPATH"] = old_path
+            else:
+                os.environ.pop("PYTHONPATH", None)
+
 def _is_pure_shim(text):
     """A deprecation shim: a straight-line script that echoes a notice and
     exits non-zero — no conditionals, no arg reading, no real work. Any

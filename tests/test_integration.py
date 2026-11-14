@@ -50,6 +50,108 @@ class TestTicketLifecycle:
         data = json.loads(bf.read_text())
         assert "id" in data and "title" in data and "status" in data
 
+class TestTicketWorkKind:
+    """W1 (0.23): the ticket carries the work kind.
+
+    work_kind (code|deliverable) is a property of the GOAL, not of a
+    pass: it is set at creation (validated against WORK_KINDS), persists
+    across every status move, and is NOT cleared at done (contrast
+    skip_tdd_red, which ticket-move clears — TestTicketMoveScript in
+    test_bash_scripts.py pins that side). No write path mutates it after
+    creation: a wrong kind is a new ticket, not an edit.
+    """
+
+    REPO = Path(__file__).resolve().parent.parent
+
+    def _with_hr(self, company):
+        # The fixture's org chart carries only it/rd; the tests file into
+        # hr (a fixed dept of the legacy admin list — the deliverable-ish
+        # half of the division), so add it.
+        chart = json.loads((company / "org-chart.json").read_text())
+        chart.setdefault("departments", {})["hr"] = {"name": "HR",
+                                                     "reporting_to": None}
+        (company / "org-chart.json").write_text(
+            json.dumps(chart, indent=2))
+
+    def _create(self, company, args):
+        env = {**os.environ, "HIVE_INSTALL_DIR": str(self.REPO),
+               "COMPANY_DIR": str(company)}
+        return subprocess.run(
+            ["bash", str(self.REPO / "lib" / "tools" / "ticket-create.sh")] + args,
+            capture_output=True, text=True, timeout=30,
+            cwd=str(company.parent), env=env)
+
+    def _ticket_file(self, company, dept, status, tid):
+        return (company / "departments" / dept / "tickets" / status /
+                f"{tid}.json")
+
+    def test_create_with_work_kind_writes_field(self, tmp_company_dir):
+        self._with_hr(tmp_company_dir)
+        r = self._create(tmp_company_dir,
+                         ["hr", "chore", "medium", "Memo", "d",
+                          "test", "manual", "--work-kind", "deliverable"])
+        assert r.returncode == 0, r.stderr
+        tid = r.stdout.strip()
+        data = json.loads(self._ticket_file(tmp_company_dir, "hr",
+                                            "backlog", tid).read_text())
+        assert data.get("work_kind") == "deliverable"
+
+    def test_create_without_work_kind_adds_no_key(self, tmp_company_dir):
+        self._with_hr(tmp_company_dir)
+        r = self._create(tmp_company_dir,
+                         ["hr", "chore", "medium", "Memo", "d",
+                          "test", "manual"])
+        assert r.returncode == 0, r.stderr
+        tid = r.stdout.strip()
+        data = json.loads(self._ticket_file(tmp_company_dir, "hr",
+                                            "backlog", tid).read_text())
+        assert "work_kind" not in data, \
+            "a filing without work_kind must be byte-identical to 0.22 (no key)"
+
+    def test_create_with_bogus_work_kind_is_rejected(self, tmp_company_dir):
+        self._with_hr(tmp_company_dir)
+        r = self._create(tmp_company_dir,
+                         ["hr", "chore", "medium", "Memo", "d",
+                          "test", "manual", "--work-kind", "bogus"])
+        assert r.returncode != 0
+        assert "work_kind" in r.stderr, \
+            "the rejection must name the work_kind field"
+        backlog = tmp_company_dir / "departments" / "hr" / "tickets" / "backlog"
+        assert not list(backlog.glob("*.json")), \
+            "a rejected filing must not create a ticket"
+
+    def test_work_kind_survives_the_full_move_sequence(self, tmp_company_dir):
+        """backlog → sprint-current → in-progress → in-review → done:
+        the field rides along and is NOT cleared at done."""
+        self._with_hr(tmp_company_dir)
+        r = self._create(tmp_company_dir,
+                         ["hr", "chore", "medium", "Memo", "d",
+                          "test", "manual", "--work-kind", "deliverable"])
+        assert r.returncode == 0, r.stderr
+        tid = r.stdout.strip()
+        env = {**os.environ, "HIVE_INSTALL_DIR": str(self.REPO),
+               "COMPANY_DIR": str(tmp_company_dir), "HIVE_SCRIPTED_MOVE": "1"}
+        for status in ("sprint-current", "in-progress", "in-review"):
+            mv = subprocess.run(
+                ["bash", str(self.REPO / "lib" / "tools" / "ticket-move.sh"),
+                 "hr", tid, status, "lifecycle move", "sprint-lifecycle"],
+                capture_output=True, text=True, timeout=30, env=env)
+            assert mv.returncode == 0, f"move to {status}: {mv.stderr}"
+            data = json.loads(self._ticket_file(tmp_company_dir, "hr",
+                                                status, tid).read_text())
+            assert data.get("work_kind") == "deliverable", \
+                f"work_kind lost at {status}"
+        mv = subprocess.run(
+            ["bash", str(self.REPO / "lib" / "tools" / "ticket-move.sh"),
+             "hr", tid, "done", "shipped", "sprint-lifecycle", "implemented"],
+            capture_output=True, text=True, timeout=30, env=env)
+        assert mv.returncode == 0, mv.stderr
+        data = json.loads(self._ticket_file(tmp_company_dir, "hr",
+                                            "done", tid).read_text())
+        assert data.get("work_kind") == "deliverable", \
+            "work_kind was cleared at done (it is a property of the goal)"
+
+
 class TestSprintStateLifecycle:
     def test_sprint_state_init(self, tmp_company_dir):
         install_dir = Path(__file__).resolve().parent.parent

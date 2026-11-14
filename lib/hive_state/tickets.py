@@ -18,6 +18,7 @@ from hive_state.core import (
     TICKET_PRIORITIES,
     TICKET_STATUSES,
     TICKET_TYPES,
+    WORK_KINDS,
     CompanyError,
     atomic_write,
     company_root,
@@ -231,10 +232,16 @@ def _duplicate_title(dept: str, title: str, company_dir: str | None) -> str | No
 def ticket_create(dept: str, type: str, priority: str, title: str, description: str,
                   created_by: str = "user", source: str = "manual",
                   estimate: str = "medium", labels: str = "", ac: str = "",
-                  external_id: str = "",
+                  external_id: str = "", work_kind: str = "",
                   company_dir: str | None = None) -> dict:
     """Create a ticket in the dept's backlog. Returns the ticket dict
-    (plus meta keys _dept/_corrected)."""
+    (plus meta keys _dept/_corrected).
+
+    work_kind (0.23): the KIND of work the goal is (code|deliverable).
+    Optional — absent means the runner resolves the kind from the dept's
+    org-chart kind (or the legacy name list). When given, it is written
+    onto the ticket and persists for its whole life (never cleared at
+    done, never edited after filing)."""
     dept, corrected = resolve_dept(dept, company_dir)
     type = _norm(type, TYPE_SYNONYMS)
     priority = _norm(priority, PRIORITY_SYNONYMS)
@@ -244,6 +251,9 @@ def ticket_create(dept: str, type: str, priority: str, title: str, description: 
         raise CompanyError(f"type='{type}' is not valid. Must be one of: {' '.join(TICKET_TYPES)}")
     if priority not in TICKET_PRIORITIES:
         raise CompanyError(f"priority='{priority}' is not valid. Must be one of: {' '.join(TICKET_PRIORITIES)}")
+    if work_kind and work_kind not in WORK_KINDS:
+        raise CompanyError(
+            f"work_kind='{work_kind}' is not valid. Must be one of: {' '.join(WORK_KINDS)}")
     if estimate not in VALID_ESTIMATES:
         estimate = "medium"
     # auto-swap: type looks like a priority and vice versa
@@ -309,6 +319,8 @@ def ticket_create(dept: str, type: str, priority: str, title: str, description: 
         "updated_at": ts,
         "external_id": external_id or None,
     }
+    if work_kind:
+        ticket["work_kind"] = work_kind
     try:
         atomic_write(_ticket_rel(dept, "backlog", ticket_id), ticket, company_dir)
     except CompanyError:

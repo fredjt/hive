@@ -22,6 +22,9 @@ export COMPANY_DIR PROJECT_ROOT SKILL_DIR
 # ticket loop, vp-review after a halted relaunch) - source it unconditionally
 # instead of relying on run_vp_plan to have sourced it earlier in this shell.
 . "$SKILL_DIR/lib/tools/load-agent-prompt.sh"
+# dept-helpers: is_admin_dept (the legacy verifier-selection fallback) and
+# work_kind_of (the 0.23 work-kind dispatch — the single lookup).
+. "$SKILL_DIR/lib/tools/dept-helpers.sh"
 ss_init
 
 LOG="$COMPANY_DIR/logs/sprint-lifecycle.log"
@@ -725,14 +728,30 @@ run_ticket_lifecycle() {
   # in-progress - ticket-move no-ops then.
   scripted_move "$dept" "$ticket" in-progress "sprint-lifecycle: starting ticket lifecycle"
 
-  # Ensure worktree exists
-  ensure_worktree "$dept" "$ticket"
-
   # Read ticket state
   local skip_red tdd_red_attempts bc
   TFILE="$COMPANY_DIR/departments/$dept/tickets/in-progress/${ticket}.json"
   skip_red=$(jq -r '.skip_tdd_red // false' "$TFILE" 2>/dev/null)
   tdd_red_attempts=$(jq -r '.tdd_red_attempts // 0' "$TFILE" 2>/dev/null)
+
+  # 0.23 work-kind dispatch: resolve the ticket's kind ONCE (the single
+  # lookup — ticket field → org-chart dept kind → legacy name list).
+  # A deliverable ticket takes the deliverable pipeline (ic-admin doer,
+  # NO worktree/tester/engineer, the deliverable gates, the content
+  # verifier); a code ticket takes today's pipeline, byte-identical. A
+  # deliverable ticket can never accrue tester attempts, so the
+  # tdd_red_attempts counter and the strike-3 comment stay code-path-only.
+  local WORK_KIND
+  WORK_KIND=$(work_kind_of "$dept" "$TFILE")
+  if [ "$WORK_KIND" = "deliverable" ]; then
+    log "$log_prefix: work kind = deliverable — running the deliverable pipeline"
+    run_deliverable_lifecycle "$dept" "$ticket"
+    return $?
+  fi
+  log "$log_prefix: work kind = code — running the TDD pipeline"
+
+  # Ensure worktree exists
+  ensure_worktree "$dept" "$ticket"
 
   # ── Phase 1: TDD-RED (tester) ──
   # Bounded: each lifecycle pass gets at most MAX_TESTER_ITER tester spawns.
@@ -1192,6 +1211,215 @@ After approve or bounce, EXIT. This script handles the status move."
       defer_on_bounce_cap "$dept" "$ticket" "$bc" "verifier-bounce"
     else
       log "$log_prefix: bounced by verifier (bounce_count=$bc) → in-progress"
+    fi
+    return 1
+  fi
+}
+
+# ── Deliverable ticket lifecycle (0.23) ─────────────────────────────
+# The deliverable pipeline for work_kind=deliverable tickets: ic-admin
+# writes the deliverable through the script tools (NO worktree is created,
+# NO tester loop, NO engineer spawn, NO item-7 commit check — there is no
+# branch to check), the deterministic deliverable gates evaluate it, and
+# verification-ic-admin breaks the content. Bounces and the per-ticket cap
+# run the SAME machinery as the code path (bounce_count++,
+# MAX_VERIFICATION_BOUNCES, defer_on_bounce_cap): a deliverable that keeps
+# failing review defers to backlog exactly like code that keeps failing
+# gates. Called from run_ticket_lifecycle after the scripted claim to
+# in-progress (the ticket already lives at the in-progress path).
+run_deliverable_lifecycle() {
+  local dept="$1" ticket="$2"
+  local log_prefix="  $dept/$ticket"
+  local TFILE EC TITLE DESC AC BC
+  TFILE="$COMPANY_DIR/departments/$dept/tickets/in-progress/${ticket}.json"
+
+  TITLE=$(jq -r '.title // ""' "$TFILE" 2>/dev/null)
+  DESC=$(jq -r '.description // ""' "$TFILE" 2>/dev/null)
+  AC=$(jq -r '(.acceptance_criteria // []) | join("\n")' "$TFILE" 2>/dev/null)
+
+  local PROMPT
+  PROMPT="$(load_agent_prompt "$SKILL_DIR/lib/agents/ic-admin.md")
+
+--- STAGE: deliverable (ticket: $ticket, dept: $dept) ---
+Mode: ic-admin (deliverable).
+
+Ticket: $ticket — $TITLE
+Description:
+$DESC
+
+Acceptance criteria:
+$AC
+
+This is a DELIVERABLE ticket: NO worktree is created for it, there is no
+feature branch, no tests, no PR. Your work product is a document that
+lives under .company/ — write it via the script tools (report-write.sh,
+status-update.sh, chat-send.sh, meeting-record.sh; ticket-create.sh for
+follow-ups), then post the summary comment the deterministic gates parse:
+
+  Delivered: <one paragraph>. Files written:
+  - .company/<path-1>
+  - .company/<path-2>
+  Follow-up tickets filed: <ticket ids, or none>
+
+Every named path must exist and be complete (no placeholders); every
+follow-up id must be a real ticket. After the gates pass, the
+verification IC reviews the content.
+
+Do NOT:
+  - Write/Edit any file outside .company/
+  - move the ticket (this script handles status moves)
+  - touch PRs or git
+  - spawn helpers
+
+When the deliverable and your summary comment are in place, EXIT 0.
+This script moves the ticket to in-review."
+
+  local LOG_TO="$COMPANY_DIR/logs/ic-${ticket}.log"
+  mkdir -p "$(dirname "$LOG_TO")"
+
+  # The doer is recorded under the CURRENT stage (the sprint stage names
+  # the phase; the round entry names the pipeline) with agent ic-admin —
+  # the per-ticket record the dashboard reads for "who worked this ticket".
+  round_entry "$(ss_get_stage)" "ic-admin" "$dept" "IC-Admin" "$ticket" "running" 2>/dev/null || true
+  HIVE_AGENT="ic-admin" HIVE_DEPT="$dept" HIVE_ROLE="IC-Admin" HIVE_TICKET="$ticket" \
+  bash "$SKILL_DIR/lib/core/agent-spawn.sh" -- "$PROMPT" \
+    9<&- >> "$LOG_TO" 2>&1
+  EC=$?
+  round_entry "$(ss_get_stage)" "ic-admin" "$dept" "IC-Admin" "$ticket" "$([ "$EC" -eq 0 ] && echo done || echo failed)" 2>/dev/null || true
+
+  if [ $EC -ne 0 ]; then
+    log "$log_prefix: ic-admin failed (exit=$EC), bouncing to in-progress"
+    scripted_move "$dept" "$ticket" in-progress "ic-admin failed (exit=$EC)"
+    hs jq "$(hs_rel "$TFILE")" '.bounce_count = ((.bounce_count // 0) + 1)' >/dev/null \
+      || log "  bounce_count increment failed for $TFILE"
+    BC=$(jq -r '.bounce_count // 0' "$TFILE" 2>/dev/null)
+    if [ "${BC:-0}" -ge "$MAX_VERIFICATION_BOUNCES" ]; then
+      log "$log_prefix: bounce limit exceeded ($BC >= $MAX_VERIFICATION_BOUNCES, doer-crash) → backlog"
+      defer_on_bounce_cap "$dept" "$ticket" "$BC" "doer-crash"
+    fi
+    return 1
+  fi
+
+  # ── Deliverable gates + content verification ──
+  log "$log_prefix: moving to in-review, running deliverable gates"
+  scripted_move "$dept" "$ticket" in-review "Deliverable complete; ic-admin exited cleanly"
+
+  # Reset gates_passed before running gates (fresh evaluation) — same as
+  # the code path.
+  local _GF
+  for _GF in "$COMPANY_DIR/departments/$dept/tickets/in-review/${ticket}.json" \
+             "$COMPANY_DIR/departments/$dept/tickets/in-progress/${ticket}.json"; do
+    if [ -f "$_GF" ]; then
+      hs jq "$(hs_rel "$_GF")" '.gates_passed = false' >/dev/null || log "  gates_passed reset failed for $_GF"
+      break
+    fi
+  done
+
+  local GATE_LOG="$COMPANY_DIR/logs/gate-${ticket}.log"
+  local GATES_RC=0
+  GATE_LOG="$GATE_LOG" bash "$SKILL_DIR/lib/tools/verification-gates.sh" \
+    "$dept" "$PROJECT_ROOT" --ticket "$ticket" --wait || GATES_RC=$?
+
+  if [ "$GATES_RC" -ne 0 ]; then
+    log "$log_prefix: deliverable gates failed (rc=$GATES_RC) — bouncing to in-progress"
+    scripted_move "$dept" "$ticket" in-progress "Gate failure (rc=$GATES_RC)"
+    hs jq "$(hs_rel "$TFILE")" '.bounce_count = ((.bounce_count // 0) + 1)' >/dev/null \
+        || log "  bounce_count increment failed for $TFILE"
+    BC=$(jq -r '.bounce_count // 0' "$TFILE" 2>/dev/null)
+    if [ "${BC:-0}" -ge "$MAX_VERIFICATION_BOUNCES" ]; then
+      log "$log_prefix: bounce limit exceeded ($BC >= $MAX_VERIFICATION_BOUNCES, gate-failure) → backlog"
+      defer_on_bounce_cap "$dept" "$ticket" "$BC" "gate-failure"
+    fi
+    return 1
+  fi
+
+  log "$log_prefix: deliverable gates passed"
+
+  # The content breaker: verification-ic-admin reviews the deliverable.
+  # Selection is keyed off the resolved work kind — this pipeline only
+  # serves deliverable tickets, so the content reviewer is the reviewer.
+  local VERIF_AGENT="verification-ic-admin"
+  local VERIF_FILE="$SKILL_DIR/lib/agents/${VERIF_AGENT}.md"
+  [ -f "$VERIF_FILE" ] || VERIF_FILE="$SKILL_DIR/lib/agents/verification-ic.md"
+
+  PROMPT="$(load_agent_prompt "$VERIF_FILE")
+
+--- STAGE: verify (ticket: $ticket, dept: $dept) ---
+Mode: verification IC.
+
+Ticket: $ticket — $TITLE
+Description:
+$DESC
+
+This is a DELIVERABLE ticket. It has passed the deterministic
+deliverable gates (deliverable-named, deliverable-exists,
+no-placeholders, followup-scoped): the doer's summary comment names
+every deliverable, each named path exists and is non-empty and free of
+incomplete markers, and every follow-up ticket id exists. Your job is to
+break the CONTENT: does the deliverable satisfy every acceptance
+criterion? Is it factually accurate, internally consistent, free of
+hand-waves?
+
+Steps:
+1. Read the ticket: ticket_get(dept=\"$dept\", ticket_id=\"$ticket\")
+2. Read the doer's summary comment (\"Files written: \" / \"Follow-up
+   tickets filed: \"), then open EVERY named deliverable.
+3. Check each acceptance criterion against the deliverable content.
+4. Spot-check any cited state against .company/.
+5. If satisfied: approve via ticket_approve.
+6. If not satisfied: bounce via ticket_bounce with a numbered
+   rationale (>=80 chars, file references where applicable).
+
+You MUST NOT:
+  - move the ticket manually (use ticket_approve or ticket_bounce)
+  - touch PRs
+  - implement anything
+
+After approve or bounce, EXIT. This script handles the status move."
+
+  LOG_TO="$COMPANY_DIR/logs/verification-${dept}.log"
+  mkdir -p "$(dirname "$LOG_TO")"
+
+  round_entry "verify" "$VERIF_AGENT" "$dept" "Verification-IC" "$ticket" "running" 2>/dev/null || true
+  HIVE_AGENT="$VERIF_AGENT" HIVE_DEPT="$dept" HIVE_ROLE="Verification-IC" HIVE_TICKET="$ticket" \
+  bash "$SKILL_DIR/lib/core/agent-spawn.sh" -- "$PROMPT" \
+    9<&- >> "$LOG_TO" 2>&1
+  EC=$?
+  round_entry "verify" "$VERIF_AGENT" "$dept" "Verification-IC" "$ticket" "$([ "$EC" -eq 0 ] && echo done || echo failed)" 2>/dev/null || true
+
+  if [ $EC -ne 0 ]; then
+    log "$log_prefix: verifier failed (exit=$EC), bouncing to in-progress"
+    scripted_move "$dept" "$ticket" in-progress "Verifier failed (exit=$EC)"
+    hs jq "$(hs_rel "$TFILE")" '.bounce_count = ((.bounce_count // 0) + 1)' >/dev/null \
+        || log "  bounce_count increment failed for $TFILE"
+    BC=$(jq -r '.bounce_count // 0' "$TFILE" 2>/dev/null)
+    if [ "${BC:-0}" -ge "$MAX_VERIFICATION_BOUNCES" ]; then
+      log "$log_prefix: bounce limit exceeded ($BC >= $MAX_VERIFICATION_BOUNCES, verifier-crash) → backlog"
+      defer_on_bounce_cap "$dept" "$ticket" "$BC" "verifier-crash"
+    fi
+    return 1
+  fi
+
+  # Verifier result: approved → done; bounced → in-progress — the same
+  # contract (including the cap check) as the code path. An approved
+  # ticket moved to done, so TFILE is gone; read the done location.
+  local CURRENT_STATUS
+  CURRENT_STATUS=$(jq -r '.status // empty' "$TFILE" 2>/dev/null)
+  if [ -z "$CURRENT_STATUS" ]; then
+    CURRENT_STATUS=$(jq -r '.status // "unknown"' \
+      "$COMPANY_DIR/departments/$dept/tickets/done/${ticket}.json" 2>/dev/null)
+  fi
+
+  if [ "$CURRENT_STATUS" = "done" ]; then
+    log "$log_prefix: verified and approved → done"
+    return 0
+  else
+    BC=$(jq -r '.bounce_count // 0' "$TFILE" 2>/dev/null)
+    if [ "${BC:-0}" -ge "$MAX_VERIFICATION_BOUNCES" ]; then
+      log "$log_prefix: bounce limit exceeded ($BC >= $MAX_VERIFICATION_BOUNCES) → backlog"
+      defer_on_bounce_cap "$dept" "$ticket" "$BC" "verifier-bounce"
+    else
+      log "$log_prefix: bounced by verifier (bounce_count=$BC) → in-progress"
     fi
     return 1
   fi

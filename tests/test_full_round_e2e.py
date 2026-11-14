@@ -109,7 +109,12 @@ class RoundResponder:
             dept = m.group(1)
             if dept == "rd":
                 return self._final(self._vp_plan_rd())
+            if dept == "hr":
+                return self._final(self._vp_plan_hr())
             return self._final(f"Nothing to file for {dept} this sprint.")
+        m = re.search(r"--- STAGE: deliverable \(ticket: (\S+?), dept: (\w+)\)", text)
+        if m:
+            return self._final(self._deliverable(m.group(1), m.group(2)))
         m = re.search(r"--- STAGE: tdd-red \(ticket: (\S+?), dept: (\w+)\)", text)
         if m:
             return self._final(self._tdd_red(m.group(1), text))
@@ -150,12 +155,51 @@ class RoundResponder:
         return "Writing the sprint direction.\n\n```bash:\n%s\n```" % cmd
 
     def _vp_plan_rd(self) -> str:
+        # The rd ticket is CODE work in a fixed dept — the VP declares the
+        # kind explicitly (W1's dispatch is data-driven: without the
+        # field the ticket would resolve to the dept's default kind,
+        # deliverable for the fixed six).
         cmd = (
             'bash %s rd feature high "Implement add(a, b)" '
             '"add(a, b) must return a + b; acceptance: add(1, 2) == 3." '
-            '"vp-rd" "sprint-planning"'
+            '"vp-rd" "sprint-planning" --work-kind code'
             % (self._q(self.tools / "ticket-create.sh")))
         return "Filing the rd ticket.\n\n```bash:\n%s\n```" % cmd
+
+    def _vp_plan_hr(self) -> str:
+        # The hr ticket rides the DEFAULT (no explicit work_kind): the
+        # resolver falls through to the dept's kind — deliverable for hr
+        # (the legacy name list until the org chart declares kinds).
+        cmd = (
+            'bash %s hr chore medium "Hiring memo" '
+            '"Write the Q4 hiring memo for the engineering hiring plan. "'
+            '"Acceptance: the memo names the three open roles." '
+            '"vp-hr" "sprint-planning"'
+            % (self._q(self.tools / "ticket-create.sh")))
+        return "Filing the hr ticket.\n\n```bash:\n%s\n```" % cmd
+
+    def _deliverable(self, tid: str, dept: str) -> str:
+        # ic-admin writes the deliverable through the script tools and
+        # posts the summary comment the deliverable gates parse.
+        memo = (
+            "# Q4 Hiring Memo\n\n"
+            "## Open roles\n"
+            "1. Senior backend engineer — API platform.\n"
+            "2. Staff infra engineer — CI/CD and release pipeline.\n"
+            "3. QA engineer — test automation for the core suite.\n\n"
+            "## Plan\n"
+            "Postings go out in week one; first interviews in week two.\n"
+        )
+        fname = "hiring-memo-e2e.md"
+        rp = ".company/departments/%s/reports/%s" % (dept, fname)
+        cmd = (
+            "cat | bash %s dept:%s %s --stdin <<'MEMO'\n%sMEMO\n"
+            "bash %s %s %s ic-admin "
+            "'Delivered: Q4 hiring memo naming the three open roles. "
+            "Files written:\n- %s\nFollow-up tickets filed: none'"
+            % (self._q(self.tools / "report-write.sh"), dept, fname, memo,
+               self._q(self.tools / "ticket-comment.sh"), dept, tid, rp))
+        return "Writing the deliverable.\n\n```bash:\n%s\n```" % cmd
 
     @staticmethod
     def _worktree(text: str) -> str:
@@ -583,10 +627,59 @@ class TestFullRoundE2E:
                 f"{len(usage)} usage entries for {len(stub.requests)} "
                 f"scripted LLM calls")
             callers = {e["caller"] for e in usage}
-            for needed in ("ceo", "vp-rd", "ic-tester", "ic-engineer",
-                           "verification-ic-admin", "release-ic"):
+            for needed in ("ceo", "vp-rd", "vp-hr", "ic-tester", "ic-engineer",
+                           "ic-admin", "verification-ic-admin", "release-ic"):
                 assert needed in callers, (
                     f"{needed} never called the LLM: {sorted(callers)}")
+
+            # ── deliverable leg (0.23 W1): the hr ticket rides the
+            # deliverable pipeline — zero tester/engineer spawns, no
+            # worktree, no feature branch, doer is ic-admin, it reaches
+            # done. The per-ticket pipeline record is the ticket's ROUND
+            # ENTRIES (the global llm-usage caller set legally contains
+            # ic-tester/ic-engineer from the code ticket in the same
+            # mixed round).
+            archived_hr = list((company / "departments" / "hr" / "tickets" /
+                                "archive").glob("*.json"))
+            assert len(archived_hr) == 1, \
+                f"expected one archived hr ticket: {archived_hr}"
+            th = json.loads(archived_hr[0].read_text())
+            htid = th["id"]
+            assert th["status"] == "done", \
+                f"hr deliverable ticket not done: {th.get('status')}"
+            assert th.get("verified_by"), \
+                "the deliverable ticket was not verification-stamped"
+            assert not (company / ".worktrees" / htid).exists(), \
+                "a worktree was created for a deliverable ticket"
+            r = subprocess.run(["git", "-C", str(proj), "branch", "--list",
+                                f"feature/{htid}"],
+                               capture_output=True, text=True)
+            assert not r.stdout.strip(), \
+                f"a feature branch exists for a deliverable ticket: {r.stdout}"
+            # The round archived with the sprint: current-round.json was
+            # moved to rounds/history/ when the round closed, so the
+            # per-ticket entries ride the archived round file.
+            cur_round = company / "rounds" / "current-round.json"
+            if cur_round.is_file():
+                round_entries = json.loads(cur_round.read_text())
+            else:
+                hist = list((company / "rounds" / "history").glob("*.json"))
+                assert hist, "no archived round to read the entries from"
+                round_entries = json.loads(
+                    max(hist, key=lambda p: p.stat().st_mtime).read_text())
+            hr_entries = [e for e in round_entries["entries"]
+                          if e.get("ticket") == htid]
+            assert hr_entries, f"no round entries for the hr ticket"
+            hr_agents = {e["agent"] for e in hr_entries}
+            assert "ic-tester" not in hr_agents, \
+                f"the deliverable ticket met the tester: {hr_agents}"
+            assert "ic-engineer" not in hr_agents, \
+                f"the deliverable ticket met the engineer: {hr_agents}"
+            doer = [e for e in hr_entries if e["agent"] == "ic-admin"]
+            assert doer and all(e["status"] == "done" for e in doer), \
+                f"the deliverable doer entry is missing or not done: {hr_entries}"
+            assert "verification-ic-admin" in hr_agents, \
+                f"the deliverable content reviewer never ran: {hr_agents}"
 
             # The ticket: done, verification-stamped, archived with the round.
             archived = list((company / "departments" / "rd" / "tickets" /
@@ -595,6 +688,8 @@ class TestFullRoundE2E:
             t = json.loads(archived[0].read_text())
             tid = t["id"]
             assert t["status"] == "done", f"ticket not done: {t.get('status')}"
+            assert t.get("work_kind") == "code", \
+                "the rd code ticket lost its work_kind field"
             assert t.get("verified_by"), "ticket_approve did not stamp verified_by"
             assert t.get("archived_in_sprint"), "archive did not stamp the sprint"
 

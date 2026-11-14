@@ -77,11 +77,15 @@ rejects, or the work is useless) if you try them anyway. Since 0.10 this
 rule is ENFORCED, not just taught: the agent harness blocks commands that
 evade it (subshell/interpreter `-c` invocations, `find -delete/-exec`,
 redirects or `tee`/`cp`/`mv`/`touch`/`mkdir` targeting .company) and
-snapshots .company before/after every bash block — a command that
-mutates .company anyway is flagged in your stream log and in the spawn
-result, the change is not rolled back, and the run is marked failed.
-Commands keep normal access to the ticket worktree itself (you are
-writing code there by design) — the enforced boundary is .company/.
+snapshots .company before/after every bash block. The sanctioned write
+channels are the script tools (bare `bash <install>/lib/tools/<name>.sh`
+— the install is read-only from the agent side) and MCP tools: a
+mutation made while such a command runs is reported in your stream log
+as an authorized write and stands. Any OTHER command that mutates
+.company anyway is flagged in your stream log and in the spawn result,
+the change is not rolled back, and the run is marked failed. Commands
+keep normal access to the ticket worktree itself (you are writing code
+there by design) — the enforced boundary is .company/.
 
    - Write / Edit / NotebookEdit on any file under .company/
    - Bash commands that mutate .company/:

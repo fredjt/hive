@@ -18,6 +18,7 @@ def register(server: Server) -> None:
         estimate: str | None = None,
         labels: list[str] | None = None,
         acceptance_criteria: list[str] | None = None,
+        work_kind: str | None = None,
         company_dir: str | None = None,
     ) -> dict:
         """Create a new ticket in the dept's backlog.
@@ -28,6 +29,12 @@ def register(server: Server) -> None:
           estimate: trivial | small | medium | large | xlarge   (optional, default medium)
           labels:   optional list of short tags (stored on the ticket)
           acceptance_criteria: optional list of criteria, one string each
+          work_kind: optional — code | deliverable (0.23). The kind of work
+                     the goal is: the runner dispatches on it (code → the
+                     TDD pipeline, deliverable → the ic-admin pipeline).
+                     Omit it to let the kind resolve from the dept's
+                     org-chart kind; override it when one ticket's work
+                     differs from its dept's default.
         """
         args = [dept, type, priority, title, description, created_by, source]
         if estimate:
@@ -36,6 +43,8 @@ def register(server: Server) -> None:
             args += ["--labels", ",".join(labels)]
         if acceptance_criteria:
             args += ["--ac", "\n".join(acceptance_criteria)]
+        if work_kind:
+            args += ["--work-kind", work_kind]
         return run("ticket-create", *args, company_dir=company_dir).to_dict()
 
     @server.tool()

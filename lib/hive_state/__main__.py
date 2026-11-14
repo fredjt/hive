@@ -75,7 +75,8 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("ticket-create")
     for f, d in (("dept", None), ("type", None), ("priority", None), ("title", None),
                  ("desc", None), ("created-by", "user"), ("source", "manual"),
-                 ("estimate", "medium"), ("labels", ""), ("ac", ""), ("external-id", "")):
+                 ("estimate", "medium"), ("labels", ""), ("ac", ""), ("external-id", ""),
+                 ("work-kind", "")):
         p.add_argument("--" + f, dest=f.replace("-", "_"), default=d)
     p = sub.add_parser("ticket-get")
     p.add_argument("--dept"); p.add_argument("--ticket")
@@ -164,7 +165,8 @@ def main(argv: list[str] | None = None) -> int:
             result = ticket_create(
                 a.dept, a.type, a.priority, a.title, a.desc,
                 created_by=a.created_by, source=a.source, estimate=a.estimate,
-                labels=a.labels, ac=a.ac, external_id=a.external_id, company_dir=cd)
+                labels=a.labels, ac=a.ac, external_id=a.external_id,
+                work_kind=a.work_kind, company_dir=cd)
             if "duplicate_of" in result:
                 return _emit(True, {"duplicate_of": result["duplicate_of"], "dept": result["_dept"]})
             if result.get("_corrected"):

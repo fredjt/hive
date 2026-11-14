@@ -138,6 +138,21 @@ SANDBOX_WRAPPER_PATTERNS = [
     (r"\bfind\b.*\s-exec(dir)?\b", "find -exec"),
 ]
 
+# 0.23: the SANCTIONED .company write channel. Agents run the script tools
+# as bare `bash <install>/lib/tools/<name>.sh …` (G1: every .company write
+# goes through the state layer via the script tools or MCP). The install
+# is read-only from the agent side, so a command that invokes a script from
+# lib/tools is a state-layer writer by architecture, not an evasion. A
+# mutation made while such a command runs is reported in the stream as an
+# authorized write and is NOT a sandbox violation (flagging it would error
+# every doer whose work product is a .company document — the 0.23
+# deliverable pipeline). Mutations from commands that invoke no lib/tools
+# script (a python writer using the COMPANY_DIR env var) are still
+# flagged. Residual risk (documented in _FRAMEWORK_PRIMER.md): a chained
+# command that BOTH references a lib/tools script and runs a writer the
+# policy regexes miss is reported as an authorized write, not a violation.
+SANCTIONED_SCRIPT_RE = re.compile(r"/(lib|hive/lib)/tools/[\w./-]+\.sh\b")
+
 # Commands whose non-flag args are WRITE targets (arg position varies).
 _COMPANY_ARG_OPS = ("tee", "touch", "mkdir", "ln", "cp", "mv", "install")
 
@@ -337,6 +352,8 @@ def run_shell_command(cmd_line: str, cwd: str | None = None,
                 pass  # different drive (Windows) — cannot relativize
         if mutated:
             out["company_mutated"] = mutated
+            if SANCTIONED_SCRIPT_RE.search(cmd_line):
+                out["company_write_sanctioned"] = True
     return out
 
 
@@ -856,17 +873,27 @@ def run_agent(
                 if result.get("sandbox_blocked"):
                     sandbox_blocked += 1
                 mutated = result.get("company_mutated") or []
+                # 0.23: a mutation made while the command invokes a script
+                # under the install's lib/tools is the sanctioned write
+                # channel (SANCTIONED_SCRIPT_RE) — reported, never flagged.
+                sanctioned = bool(result.get("company_write_sanctioned"))
                 if mutated:
-                    sandbox_violations += 1
-                    out += ("\nSANDBOX VIOLATION: this command modified "
-                            ".company live state (" + ", ".join(mutated[:10])
-                            + ") — .company is written ONLY through MCP "
-                            "tools / script tools; the change is not rolled "
-                            "back. Flag this in your final message.")
+                    if sanctioned:
+                        out += ("\nNote: this command wrote .company state "
+                                "(" + ", ".join(mutated[:10])
+                                + ") via the script tools — the sanctioned "
+                                "write channel; the change stands.")
+                    else:
+                        sandbox_violations += 1
+                        out += ("\nSANDBOX VIOLATION: this command modified "
+                                ".company live state (" + ", ".join(mutated[:10])
+                                + ") — .company is written ONLY through MCP "
+                                "tools / script tools; the change is not rolled "
+                                "back. Flag this in your final message.")
                 action_results.append(out)
                 print(json.dumps({"type": "tool_result", "tool": "bash",
                                   "ok": bool(result.get("ok")),
-                                  "sandbox_violation": bool(mutated),
+                                  "sandbox_violation": bool(mutated and not sanctioned),
                                   "response": out[:8000]}))
             elif action["type"] == "mcp":
                 tool_name = action["name"]

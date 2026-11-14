@@ -155,6 +155,48 @@ class TestSnapshotBackstop:
             "mutation of .company not flagged by the snapshot backstop"
         assert any("sneaky.json" in p for p in res["company_mutated"]), res
 
+    def test_script_tool_write_is_sanctioned_not_flagged(self, company, tmp_path):
+        """0.23: a command invoking a script under <install>/lib/tools that
+        mutates .company is the SANCTIONED write channel (G1: the script
+        tools are the state-layer writers; the install is read-only from
+        the agent side) — the mutation is still reported, but it is
+        marked sanctioned so the run is not a sandbox violation. This is
+        what lets a deliverable doer (ic-admin) write its work product via
+        the script tools and exit 0."""
+        tools = tmp_path / "install" / "lib" / "tools"
+        tools.mkdir(parents=True)
+        script = tools / "report-write.sh"
+        script.write_text(
+            "#!/bin/bash\n"
+            'echo memo > "$COMPANY_DIR/memo.md"\n')
+        res = H.run_shell_command(
+            "bash " + shlex.quote(str(script)), cwd=str(tmp_path))
+        assert res["ok"], f"command itself failed: {res['stderr']}"
+        assert res.get("company_mutated"), \
+            "the sanctioned write must still be reported"
+        assert res.get("company_write_sanctioned") is True, \
+            "a lib/tools script write is the sanctioned channel"
+        assert (Path(company) / "memo.md").exists()
+
+    def test_non_script_tool_write_still_flagged(self, company, tmp_path):
+        """The backstop's teeth remain for commands that invoke NO
+        lib/tools script — a python writer using the COMPANY_DIR env var
+        is a violation, not a sanctioned write."""
+        writer = tmp_path / "writer.py"
+        writer.write_text(
+            "import os\n"
+            "p = os.path.join(os.environ['COMPANY_DIR'], 'sneaky2.json')\n"
+            "open(p, 'w').write('pwned\\n')\n"
+        )
+        res = H.run_shell_command(
+            shlex.quote(sys.executable) + " " + shlex.quote(str(writer)),
+            cwd=str(tmp_path))
+        assert res["ok"], f"command itself failed: {res['stderr']}"
+        assert res.get("company_mutated"), \
+            "mutation of .company not flagged by the snapshot backstop"
+        assert not res.get("company_write_sanctioned"), \
+            "a python writer is NOT the sanctioned channel"
+
     def test_deletion_is_flagged(self, company, tmp_path):
         victim = str(Path(company) / "roster.json")
         res = H.run_shell_command(f"rm {victim}", cwd=str(Path(company).parent))
