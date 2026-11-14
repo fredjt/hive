@@ -229,7 +229,11 @@ fi
 SUITE_SUMMARY="$(grep -E '^[0-9]+ (passed|failed)' "$SUITE_LOG" | tail -1)"
 [ -n "$SUITE_SUMMARY" ] || SUITE_SUMMARY="$(tail -1 "$SUITE_LOG")"
 echo "    suite green ($SUITE_SUMMARY)"
-record_gate "gate-2: PASS (suite: $SUITE_SUMMARY)"
+# The receipt NAMES the suite command (T4, 0.22): gate 2's default is
+# replaceable via --suite, and the 0.22 cut rides the T4 default — a
+# BARE `pytest tests/` (no -n: the capped adaptive worker count is the
+# host's own fact). The receipt line says what actually ran.
+record_gate "gate-2: PASS (suite: $SUITE_SUMMARY; command: $SUITE)"
 
 # ---- Gate 3: build -----------------------------------------------------------
 echo "==> Gate 3: build-package"
@@ -444,8 +448,88 @@ PYEOF
     echo "FAIL: the delivered tree is missing atomic commit points:$APROBLEMS" >&2
     rm -rf "$USTAGE" "$UNSTAGE"; exit 1
   fi
+  # T6 (0.22): the orphan-record leg over the NEW push channel. A
+  # 0.21-era company's active record (the 0.20/0.21 writer shape:
+  # `id` only, no `spawn_id`) + its stream file must be READ by the
+  # delivered (v$VERSION) dashboard after the in-place install — the
+  # record resolves in the active listing (the fallback chain) and the
+  # stream's new line arrives over the SSE push channel
+  # (spawn-stream-event), not a refetch. Node is the dashboard's own
+  # runtime — a named dependency of this leg, like the dashboard itself.
+  ORPHAN_BAD=""
+  if ! command -v node >/dev/null 2>&1; then
+    ORPHAN_BAD="node not on PATH (the orphan leg drives the delivered dashboard)"
+  else
+    UCOMPANY="$USTAGE/orphan-company"
+    mkdir -p "$UCOMPANY/logs/active" "$UCOMPANY/logs/streams"
+    cat > "$UCOMPANY/logs/active/orphan-021.json" <<'ORPHAN'
+{"id": "orphan-021", "agent": "ic-orphan-021", "dept": "backend",
+ "role": "IC", "ticket": "ORPHAN-021",
+ "started_ts": 1764000000, "started_at": "2025-11-24T12:00:00Z"}
+ORPHAN
+    printf '%s\n' '{"type": "system", "subtype": "init", "spawn_id": "orphan-021"}' \
+      > "$UCOMPANY/logs/streams/orphan-021.jsonl"
+    UP_PORT="$("$UINSTALL/venv/bin/python" -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1]); s.close()')"
+    ( node "$UINSTALL/lib/dashboard/server.js" --dir "$UCOMPANY" --port "$UP_PORT" \
+        > "$USTAGE/orphan-dash.log" 2>&1 ) &
+    UP_PID=$!
+    UP_UP=0
+    for _ in $(seq 1 50); do
+      if curl -sf "http://127.0.0.1:$UP_PORT/api/status" >/dev/null 2>&1; then UP_UP=1; break; fi
+      sleep 0.2
+    done
+    if [ "$UP_UP" = 1 ]; then
+      UP_BASE="http://127.0.0.1:$UP_PORT" UP_SID="orphan-021" \
+      UP_FILE="$UCOMPANY/logs/streams/orphan-021.jsonl" \
+      UP_LINE='{"type": "assistant", "message": {"content": [{"type": "text", "text": "the orphan line over the push channel"}]}}' \
+      node <<'UPROBE' || ORPHAN_BAD="orphan record not read over the push channel (see orphan-dash.log)"
+// CJS stdin (no top-level await): the probe is an async main.
+const base = process.env.UP_BASE, id = process.env.UP_SID;
+const fs = require('fs');
+async function main() {
+  const act = await (await fetch(base + '/api/spawns/active')).text();
+  if (act.indexOf(id) === -1) {
+    console.error('the active listing does not resolve the orphan record: ' + act.slice(0, 300));
+    process.exit(1);
+  }
+  const ctrl = new AbortController();
+  const r = await fetch(base + '/api/events', { signal: ctrl.signal });
+  const reader = r.body.getReader();
+  let buf = '';
+  const evt = new Promise((resolve) => {
+    const t = setTimeout(() => resolve(false), 8000);
+    (async () => {
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buf += Buffer.from(value).toString('utf8');
+          if (buf.indexOf('event: spawn-stream-event') !== -1 && buf.indexOf('"' + id + '"') !== -1) {
+            clearTimeout(t); resolve(true);
+          }
+        }
+        resolve(false);
+      } catch { resolve(false); }
+    })();
+  });
+  fs.appendFileSync(process.env.UP_FILE, process.env.UP_LINE + '\n');
+  const ok = await evt;
+  ctrl.abort();
+  if (!ok) console.error('no spawn-stream-event for the orphan record within 8 s');
+  process.exit(ok ? 0 : 1);
+}
+main().catch((e) => { console.error(e.message); process.exit(1); });
+UPROBE
+    fi
+    kill "$UP_PID" 2>/dev/null || true
+    wait "$UP_PID" 2>/dev/null || true
+  fi
+  if [ -n "$ORPHAN_BAD" ]; then
+    echo "FAIL: the orphan-record leg failed on the upgraded install: $ORPHAN_BAD" >&2
+    rm -rf "$USTAGE" "$UNSTAGE"; exit 1
+  fi
   rm -rf "$USTAGE" "$UNSTAGE"
-  record_gate "gate-8: PASS (live upgrade from $UPGRADE_FROM verified: scratch install, overlay, doctor, atomic commit points present)"
+  record_gate "gate-8: PASS (live upgrade from $UPGRADE_FROM verified: scratch install, overlay, doctor, atomic commit points present; the 0.21-shaped orphan record + stream read by the delivered dashboard over the push channel)"
 fi
 
 if [ "$DRY_RUN" = 1 ]; then
