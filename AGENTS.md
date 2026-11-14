@@ -324,7 +324,8 @@ python -m pytest tests/ -v
 # adaptive count exists to avoid. The CAP (32) is the measured fact,
 # not a constant: the load-sensitive tail (the two subprocess-heavy
 # harness round-trips and the cut-receipt re-run — the "probe trio",
-# the verification protocol on a new box) flakes beyond it. An
+# the verification protocol on a new box: bash probe_trio.sh,
+# five consecutive runs at -n 8 and -n 32) flakes beyond it. An
 # explicit -n always wins. The suite is xdist-safe by construction
 # (see the "xdist worker contract" in Test Suite Architecture):
 # ephemeral ports, per-test temp dirs, in-process MCP servers, no
