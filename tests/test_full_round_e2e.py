@@ -440,12 +440,54 @@ class TestFullRoundE2E:
 
     # ── the test ───────────────────────────────────────────────────────
 
+    # T4 (0.22): load-sensitive tail — the heaviest single test in the
+    # suite (a FULL company round: ~10 agent spawns, MCP round-trips,
+    # the release pipeline). Under parallel load an agent spawn or its
+    # LLM round-trip can die in flight (the same signature family as the
+    # probe trio's two harness round-trips): the round still completes —
+    # but one IC never reached the stub LLM — or the round outlives its
+    # wall-clock budget. Both are TRANSIENT (the test passes serially
+    # and at low -n), so the test hardens with a bounded single retry
+    # INSIDE the test on a FRESH tree per attempt (never a suite re-run):
+    # a deterministic failure (a ticket in the wrong state, a missing
+    # TDD commit, a dead daemon — any assertion not carrying a transient
+    # signature) fails on the first attempt with full pytest granularity.
+    ROUND_TRANSIENT_HINTS = (
+        "never called the LLM",            # an agent spawn died in flight
+        "round did not complete within",   # the wall-clock budget, load
+        "hive start failed",               # the company-start chain
+    )
+
+    @classmethod
+    def _is_round_transient(cls, exc) -> bool:
+        msg = str(exc)
+        return any(h in msg for h in cls.ROUND_TRANSIENT_HINTS)
+
     def test_full_round_drives_ticket_to_done(self, tmp_path):
         self._require_prerequisites()
 
-        home = tmp_path / "home"
+        first = None
+        for n in (1, 2):
+            try:
+                self._full_round_attempt(tmp_path, n)
+                return
+            except subprocess.TimeoutExpired as e:
+                first = first or f"attempt {n}: subprocess timeout: {e}"
+            except Exception as e:
+                if first is None and not self._is_round_transient(e):
+                    raise  # deterministic — full granularity, no retry
+                first = first or f"attempt {n}: {str(e)[:300]}"
+            if n == 2:
+                pytest.fail(f"full round e2e: both attempts failed — {first}")
+
+    def _full_round_attempt(self, tmp_path, n):
+        # A FRESH home + proj per attempt: the failed attempt may have
+        # left the company half-stopped, and the stub/MCP/dashboard ports
+        # are re-allocated below anyway — attempt 2 starts from the same
+        # state attempt 1 did, not from its wreckage.
+        home = tmp_path / f"home-{n}"
         (home / ".config" / "hive").mkdir(parents=True)
-        proj = tmp_path / "proj"
+        proj = tmp_path / f"proj-{n}"
         proj.mkdir()
         self._seed_project(proj)
         self._init_project(proj, home)

@@ -57,6 +57,57 @@ def _free_http_port_and_start(factory):
     return f"http://127.0.0.1:{server.server_address[1]}", server
 
 
+# T4 (0.22): the load-sensitive tail. The -n 32 flake: under full-suite
+# CPU contention the harness's MCP call (30s httpx budget, which includes
+# the tool's own bash script) can time out in flight; the canned LLM
+# walks on regardless, so the harness still exits 0 — and the test finds
+# no ticket on disk ("expected exactly one ticket, got []"). The
+# signature is TRANSIENT (it passes serially and at -n 8), so the class
+# hardens with a bounded single retry INSIDE the test (never a suite
+# re-run): a deterministic failure (a non-transient assertion) fails on
+# the first attempt with full pytest granularity.
+TRANSIENT_ASSERT_HINTS = (
+    "exactly one ticket",   # the MCP write never landed in flight
+    "the routed ticket",    # same, via the bash-block routing test
+    "harness failed",       # rc != 0 — a spawn/call died under load
+    "timed out",
+    "timeout",
+)
+
+
+def _is_transient_assertion(exc) -> bool:
+    msg = str(exc).lower()
+    return any(h in msg for h in TRANSIENT_ASSERT_HINTS)
+
+
+def _with_single_retry(attempt, what, clean=None):
+    """Run attempt() up to TWICE. The second run happens only when the
+    first failed with the transient signature (a subprocess timeout, or
+    an assertion carrying one of the TRANSIENT_ASSERT_HINTS — the
+    in-flight MCP-call death). A deterministic failure re-raises at once.
+    clean(), when given, resets the shared scratch state between the
+    attempts (both attempts of a round trip share ONE company_dir — a
+    first attempt that created its ticket before dying would otherwise
+    poison attempt 2's 'exactly one ticket' assert). When both attempts
+    fail, the report carries both."""
+    first = None
+    for n in (1, 2):
+        try:
+            return attempt()
+        except subprocess.TimeoutExpired as e:
+            first = (first or f"attempt 1: subprocess timeout: {e}")
+            if n == 2:
+                pytest.fail(f"{what}: both attempts timed out — {first}")
+        except AssertionError as e:
+            if first is None and not _is_transient_assertion(e):
+                raise  # deterministic — full granularity, no retry
+            first = first or f"attempt 1: {e}"
+            if n == 2:
+                pytest.fail(f"{what}: both attempts failed — {first}")
+        if clean is not None and n == 1:
+            clean()
+
+
 class _TurnLLMHandler(BaseHTTPRequestHandler):
     """Canned 3-turn LLM: turn 1 calls ticket_create, turn 2 calls
     ticket_get (ticket id pulled from the tool result the harness
@@ -158,68 +209,89 @@ def mcp_http_server(tmp_path):
 
 def test_tool_loop_round_trip(mcp_http_server):
     """C.1: write tool lands on disk, read tool returns it, stream log
-    carries the tool events."""
+    carries the tool events. T4 (0.22): the round trip is the load-
+    sensitive tail — a bounded single retry on the transient signature
+    (the in-flight MCP-call death under -n 32), never a suite re-run."""
     mcp_url, company_dir = mcp_http_server
 
-    llm_base, llm_server = _free_http_port_and_start(_TurnLLMHandler)
-    llm_server.requests = []
-    llm_server.turn = 0
-    try:
-        env = {
-            "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
-            "HOME": str(Path(company_dir).parent / "home"),
-            "HIVE_ROOT": str(REPO),
-            "COMPANY_DIR": company_dir,
-            "MCP_URL": mcp_url,
-            "HIVE_PROVIDER": "openai",
-            "HIVE_API_BASE": llm_base,
-            "HIVE_MODEL": "stub",
-            "HIVE_API_KEY": "test-key",
-        }
-        r = subprocess.run(
-            [sys.executable, str(REPO / "lib" / "core" / "agent-harness.py"),
-             "--", "Create the ticket, read it back, then finish."],
-            capture_output=True, text=True, timeout=120, env=env,
-            cwd=str(Path(company_dir).parent),
-        )
-        assert r.returncode == 0, f"harness failed: {r.stderr[-800:]}"
+    def attempt():
+        llm_base, llm_server = _free_http_port_and_start(_TurnLLMHandler)
+        llm_server.requests = []
+        llm_server.turn = 0
+        try:
+            _tool_loop_round_trip_body(mcp_url, company_dir,
+                                       llm_base, llm_server)
+        finally:
+            llm_server.shutdown()
+            llm_server.server_close()
 
-        # (a) the write really landed in the scratch .company
-        tickets_root = Path(company_dir) / "departments" / TICKET_DEPT / "tickets"
-        found = list(tickets_root.rglob("*.json"))
-        found = [f for f in found if f.name != "counter.json"]
-        assert len(found) == 1, f"expected exactly one ticket, got {found}"
-        data = json.loads(found[0].read_text())
-        assert data["title"] == TICKET_TITLE
-        assert data["status"] == "backlog"
-        ticket_id = data["id"]
+    def clean():
+        # Wipe attempt 1's ticket files (NOT counter.json — the id
+        # sequence is irrelevant to the asserts; the ticket dir itself
+        # stays, the tool recreates its files in it).
+        tickets_root = (Path(company_dir) / "departments" / TICKET_DEPT
+                        / "tickets")
+        if tickets_root.exists():
+            for f in tickets_root.rglob("*.json"):
+                if f.name != "counter.json":
+                    f.unlink()
+    _with_single_retry(attempt, "harness tool-loop round trip", clean=clean)
 
-        # (b) the read returned the write: turn 3's prompt carried the
-        # ticket_get result, which contains the title and the id
-        assert len(llm_server.requests) == 3, \
-            f"expected 3 LLM turns, got {len(llm_server.requests)}"
-        turn3 = llm_server.requests[2]
-        assert TICKET_TITLE in turn3, "read result missing from turn-3 prompt"
-        assert ticket_id in turn3, "ticket id missing from turn-3 prompt"
 
-        # (c) the stream log (harness stdout) carries the tool events
-        events = [json.loads(line) for line in r.stdout.strip().splitlines()
-                  if line.strip().startswith("{")]
-        tool_uses = [e for e in events if e.get("type") == "tool_use"]
-        tool_results = [e for e in events if e.get("type") == "tool_result"]
-        assert [e["tool"] for e in tool_uses] == ["ticket_create", "ticket_get"], \
-            f"tool_use events wrong: {tool_uses}"
-        assert [e["tool"] for e in tool_results] == ["ticket_create", "ticket_get"]
-        assert all(e.get("ok") for e in tool_results), \
-            f"a tool result failed: {tool_results}"
-        assert any(e.get("type") == "assistant" for e in events)
-        final = events[-1]
-        assert final["type"] == "result"
-        assert final["is_error"] is False
-        assert "created and read back" in final["result"]
-    finally:
-        llm_server.shutdown()
-        llm_server.server_close()
+def _tool_loop_round_trip_body(mcp_url, company_dir, llm_base, llm_server):
+    """One attempt of the C.1 round trip (the asserts are the contract)."""
+    env = {
+        "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
+        "HOME": str(Path(company_dir).parent / "home"),
+        "HIVE_ROOT": str(REPO),
+        "COMPANY_DIR": company_dir,
+        "MCP_URL": mcp_url,
+        "HIVE_PROVIDER": "openai",
+        "HIVE_API_BASE": llm_base,
+        "HIVE_MODEL": "stub",
+        "HIVE_API_KEY": "test-key",
+    }
+    r = subprocess.run(
+        [sys.executable, str(REPO / "lib" / "core" / "agent-harness.py"),
+         "--", "Create the ticket, read it back, then finish."],
+        capture_output=True, text=True, timeout=120, env=env,
+        cwd=str(Path(company_dir).parent),
+    )
+    assert r.returncode == 0, f"harness failed: {r.stderr[-800:]}"
+
+    # (a) the write really landed in the scratch .company
+    tickets_root = Path(company_dir) / "departments" / TICKET_DEPT / "tickets"
+    found = list(tickets_root.rglob("*.json"))
+    found = [f for f in found if f.name != "counter.json"]
+    assert len(found) == 1, f"expected exactly one ticket, got {found}"
+    data = json.loads(found[0].read_text())
+    assert data["title"] == TICKET_TITLE
+    assert data["status"] == "backlog"
+    ticket_id = data["id"]
+
+    # (b) the read returned the write: turn 3's prompt carried the
+    # ticket_get result, which contains the title and the id
+    assert len(llm_server.requests) == 3, \
+        f"expected 3 LLM turns, got {len(llm_server.requests)}"
+    turn3 = llm_server.requests[2]
+    assert TICKET_TITLE in turn3, "read result missing from turn-3 prompt"
+    assert ticket_id in turn3, "ticket id missing from turn-3 prompt"
+
+    # (c) the stream log (harness stdout) carries the tool events
+    events = [json.loads(line) for line in r.stdout.strip().splitlines()
+              if line.strip().startswith("{")]
+    tool_uses = [e for e in events if e.get("type") == "tool_use"]
+    tool_results = [e for e in events if e.get("type") == "tool_result"]
+    assert [e["tool"] for e in tool_uses] == ["ticket_create", "ticket_get"], \
+        f"tool_use events wrong: {tool_uses}"
+    assert [e["tool"] for e in tool_results] == ["ticket_create", "ticket_get"]
+    assert all(e.get("ok") for e in tool_results), \
+        f"a tool result failed: {tool_results}"
+    assert any(e.get("type") == "assistant" for e in events)
+    final = events[-1]
+    assert final["type"] == "result"
+    assert final["is_error"] is False
+    assert "created and read back" in final["result"]
 
 
 class _McpInBashLLMHandler(BaseHTTPRequestHandler):
@@ -256,49 +328,73 @@ class _McpInBashLLMHandler(BaseHTTPRequestHandler):
 def test_mcp_call_in_bash_block_routes_to_mcp(mcp_http_server):
     """Item 3 end to end: a prefixed tool call typed in a bash block is
     routed to the MCP server (the ticket is created) — not executed by
-    /bin/sh, where it dies with 'syntax error near unexpected token'."""
+    /bin/sh, where it dies with 'syntax error near unexpected token'.
+    T4 (0.22): load-sensitive tail — bounded single retry on the
+    transient signature, like the C.1 round trip above."""
     mcp_url, company_dir = mcp_http_server
 
-    llm_base, llm_server = _free_http_port_and_start(_McpInBashLLMHandler)
-    llm_server.turn = 0
-    try:
-        env = {
-            "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
-            "HOME": str(Path(company_dir).parent / "home"),
-            "HIVE_ROOT": str(REPO),
-            "COMPANY_DIR": company_dir,
-            "MCP_URL": mcp_url,
-            "HIVE_PROVIDER": "openai",
-            "HIVE_API_BASE": llm_base,
-            "HIVE_MODEL": "stub",
-            "HIVE_API_KEY": "test-key",
-        }
-        r = subprocess.run(
-            [sys.executable, str(REPO / "lib" / "core" / "agent-harness.py"),
-             "--", "Create the ticket, then finish."],
-            capture_output=True, text=True, timeout=120, env=env,
-            cwd=str(Path(company_dir).parent),
-        )
-        assert r.returncode == 0, f"harness failed: {r.stderr[-800:]}"
+    def attempt():
+        llm_base, llm_server = _free_http_port_and_start(
+            _McpInBashLLMHandler)
+        llm_server.turn = 0
+        try:
+            _mcp_in_bash_round_trip_body(mcp_url, company_dir,
+                                         llm_base, llm_server)
+        finally:
+            llm_server.shutdown()
+            llm_server.server_close()
 
-        # The MCP call really executed: the ticket exists in the scratch
-        # .company (a shell-executed call would have created nothing).
-        tickets_root = Path(company_dir) / "departments" / TICKET_DEPT / "tickets"
-        found = [f for f in tickets_root.rglob("*.json")
-                 if f.name != "counter.json"]
-        assert len(found) == 1, f"expected the routed ticket, got {found}"
-        assert json.loads(found[0].read_text())["title"] == "Item 3 routing probe"
+    def clean():
+        # Wipe attempt 1's ticket files (NOT counter.json — the id
+        # sequence is irrelevant to the asserts; the ticket dir itself
+        # stays, the tool recreates its files in it).
+        tickets_root = (Path(company_dir) / "departments" / TICKET_DEPT
+                        / "tickets")
+        if tickets_root.exists():
+            for f in tickets_root.rglob("*.json"):
+                if f.name != "counter.json":
+                    f.unlink()
+    _with_single_retry(attempt, "bash-block MCP routing round trip",
+                       clean=clean)
 
-        # The stream shows an MCP tool_use, not a bash one, and it was ok.
-        events = [json.loads(line) for line in r.stdout.strip().splitlines()
-                  if line.strip().startswith("{")]
-        tool_uses = [e for e in events if e.get("type") == "tool_use"]
-        tool_results = [e for e in events if e.get("type") == "tool_result"]
-        assert [e["tool"] for e in tool_uses] == ["ticket_create"],             f"the bash-embedded call was not routed to MCP: {tool_uses}"
-        assert all(e.get("ok") for e in tool_results), f"{tool_results}"
-    finally:
-        llm_server.shutdown()
-        llm_server.server_close()
+
+def _mcp_in_bash_round_trip_body(mcp_url, company_dir, llm_base,
+                                 llm_server):
+    """One attempt of the Item 3 routing round trip."""
+    env = {
+        "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
+        "HOME": str(Path(company_dir).parent / "home"),
+        "HIVE_ROOT": str(REPO),
+        "COMPANY_DIR": company_dir,
+        "MCP_URL": mcp_url,
+        "HIVE_PROVIDER": "openai",
+        "HIVE_API_BASE": llm_base,
+        "HIVE_MODEL": "stub",
+        "HIVE_API_KEY": "test-key",
+    }
+    r = subprocess.run(
+        [sys.executable, str(REPO / "lib" / "core" / "agent-harness.py"),
+         "--", "Create the ticket, then finish."],
+        capture_output=True, text=True, timeout=120, env=env,
+        cwd=str(Path(company_dir).parent),
+    )
+    assert r.returncode == 0, f"harness failed: {r.stderr[-800:]}"
+
+    # The MCP call really executed: the ticket exists in the scratch
+    # .company (a shell-executed call would have created nothing).
+    tickets_root = Path(company_dir) / "departments" / TICKET_DEPT / "tickets"
+    found = [f for f in tickets_root.rglob("*.json")
+             if f.name != "counter.json"]
+    assert len(found) == 1, f"expected the routed ticket, got {found}"
+    assert json.loads(found[0].read_text())["title"] == "Item 3 routing probe"
+
+    # The stream shows an MCP tool_use, not a bash one, and it was ok.
+    events = [json.loads(line) for line in r.stdout.strip().splitlines()
+              if line.strip().startswith("{")]
+    tool_uses = [e for e in events if e.get("type") == "tool_use"]
+    tool_results = [e for e in events if e.get("type") == "tool_result"]
+    assert [e["tool"] for e in tool_uses] == ["ticket_create"],             f"the bash-embedded call was not routed to MCP: {tool_uses}"
+    assert all(e.get("ok") for e in tool_results), f"{tool_results}"
 
 
 def _run_round_trip(mcp_url, company_dir, llm_base, llm_server, extra_env=None):

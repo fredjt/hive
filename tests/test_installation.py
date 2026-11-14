@@ -2252,37 +2252,97 @@ exit 0
             "the receipt must be uploaded as a release asset"
 
     def test_rerun_clobbers_the_receipt(self, receipt_env, tmp_path):
+        """T4 (0.22): load-sensitive tail (it was the third probe of the
+        -n 32 flake trio). Each _cut is a heavy subprocess chain (tar,
+        git, the in-cut suite, the fake-gh publish) on a 600s budget;
+        under full-suite CPU contention one of its subprocesses can
+        outwait its budget and the cut exits nonzero — a TRANSIENT
+        signature (the cut passes serially). Hardening: a bounded
+        single retry INSIDE the test on a freshly reset tree (never a
+        suite re-run); a deterministic failure (a receipt-content
+        assert) fails on the first attempt."""
         version = (receipt_env["tree"] / "VERSION").read_text().strip()
-        r1 = self._cut(receipt_env["tree"], receipt_env["env"],
-                       tmp_path / "dist1")
-        assert r1.returncode == 0, r1.stdout + "\n" + r1.stderr
-        assert (tmp_path / "dist1" / f"hive-{version}.receipt.txt").is_file()
-        # Re-publish: the release already exists (the fake gh reports it),
-        # and the local tag is gone (gate 1 requires it absent; the
-        # remote copy stays — exactly the real re-publish state).
-        subprocess.run(["git", "tag", "-d", f"v{version}"],
-                       cwd=str(receipt_env["tree"]), check=True, timeout=30)
-        env2 = {**receipt_env["env"], "FAKE_GH_RELEASE_EXISTS": "1"}
-        r2 = self._cut(receipt_env["tree"], env2, tmp_path / "dist2")
-        assert r2.returncode == 0, (
-            "the re-run publish must succeed idempotently:\n"
-            + r2.stdout[-2000:] + r2.stderr[-1000:]
-        )
-        receipt2 = tmp_path / "dist2" / f"hive-{version}.receipt.txt"
-        assert receipt2.is_file(), \
-            "the re-run must write a fresh receipt"
-        calls = receipt_env["gh_log"].read_text()
-        assert "release edit" in calls, \
-            "the re-run must take the existing-release branch (edit)"
-        receipt_uploads = [
-            l for l in calls.splitlines()
-            if "release upload" in l
-            and f"hive-{version}.receipt.txt" in l]
-        assert len(receipt_uploads) == 2, (
-            "the receipt must be re-uploaded with --clobber on re-run; "
-            f"uploads: {receipt_uploads}"
-        )
-        assert "--clobber" in receipt_uploads[-1]
+
+        def attempt(n):
+            d1 = tmp_path / f"dist1-{n}"
+            d2 = tmp_path / f"dist2-{n}"
+            r1 = self._cut(receipt_env["tree"], receipt_env["env"], d1)
+            assert r1.returncode == 0, (
+                f"cut attempt {n} failed (transient under load?):\n"
+                + r1.stdout[-2000:] + r1.stderr[-1000:])
+            assert (d1 / f"hive-{version}.receipt.txt").is_file()
+            # Re-publish: the release already exists (the fake gh
+            # reports it), and the local tag is gone (gate 1 requires
+            # it absent; the remote copy stays — exactly the real
+            # re-publish state).
+            subprocess.run(["git", "tag", "-d", f"v{version}"],
+                           cwd=str(receipt_env["tree"]), check=True,
+                           timeout=30)
+            env2 = {**receipt_env["env"], "FAKE_GH_RELEASE_EXISTS": "1"}
+            r2 = self._cut(receipt_env["tree"], env2, d2)
+            assert r2.returncode == 0, (
+                f"the re-run publish must succeed idempotently "
+                f"(attempt {n}):\n" + r2.stdout[-2000:]
+                + r2.stderr[-1000:])
+            receipt2 = d2 / f"hive-{version}.receipt.txt"
+            assert receipt2.is_file(), "the re-run must write a fresh receipt"
+            calls = receipt_env["gh_log"].read_text()
+            assert "release edit" in calls, (
+                "the re-run must take the existing-release branch (edit)")
+            receipt_uploads = [
+                l for l in calls.splitlines()
+                if "release upload" in l
+                and f"hive-{version}.receipt.txt" in l]
+            assert len(receipt_uploads) == 2, (
+                "the receipt must be re-uploaded with --clobber on re-run; "
+                f"uploads: {receipt_uploads}")
+            assert "--clobber" in receipt_uploads[-1]
+
+        first = None
+        for n in (1, 2):
+            try:
+                attempt(n)
+                return
+            except subprocess.TimeoutExpired as e:
+                first = first or f"attempt 1: cut timed out: {e}"
+            except AssertionError as e:
+                msg = str(e)
+                transient = ("cut attempt 1 failed" in msg
+                             or "attempt 1" in msg)
+                if first is None and not transient:
+                    raise  # deterministic — full granularity, no retry
+                first = first or f"attempt 1: {e}"
+            if n == 2:
+                pytest.fail(f"cut re-run: both attempts failed — {first}")
+            self._reset_tree_for_retry(receipt_env)
+
+    def _reset_tree_for_retry(self, receipt_env):
+        """Between the two cut attempts: the tree back to the base state
+        (the failed cut may have tagged / pushed), the fake-gh log
+        cleared (the upload-count assert counts within ONE attempt).
+        The bare origin lives at the tmp_path LEVEL (the fixture builds
+        it there, not under tree/) — gh_log is the fixture's sibling
+        marker, so it names the level."""
+        tree = receipt_env["tree"]
+        env = receipt_env["env"]
+        bare = receipt_env["gh_log"].parent / "origin.git"
+        tag = "v" + (tree / "VERSION").read_text().strip()
+        subprocess.run(["git", "tag", "-d", tag], cwd=str(tree),
+                       env=env, capture_output=True, timeout=30)
+        subprocess.run(["git", "reset", "--hard", "-q", "HEAD"],
+                       cwd=str(tree), env=env, check=True, timeout=60)
+        # Untracked litter from the failed cut's in-tree work (the cut's
+        # gate 1 requires a CLEAN tree): reset --hard keeps it.
+        subprocess.run(["git", "clean", "-qfd"],
+                       cwd=str(tree), env=env, check=True, timeout=60)
+        for r in subprocess.run(["git", "for-each-ref", "--format=%(refname)"],
+                                cwd=str(bare),
+                                capture_output=True, text=True,
+                                timeout=30).stdout.split():
+            subprocess.run(["git", "update-ref", "-d", r],
+                           cwd=str(bare),
+                           env=env, check=True, timeout=30)
+        receipt_env["gh_log"].write_text("")
 
 
 class TestRequiredEntriesConstant:
