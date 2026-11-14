@@ -326,6 +326,17 @@ async function main() {
     const tab = await newTab(chrome.dtUrl, BASE + '/?leg=open#/dashboard');
     cdp = await CDP.connect(tab.webSocketDebuggerUrl);
     ACTIVE_CDP = cdp;
+    // T5 (0.22): page-level exception capture — the deep-link leg's
+    // failure signature ('Loading logs...' with no content) is
+    // INDISTINGUISHABLE between a hung fetch and a boot-time exception
+    // until something says which; exceptionThrown names it.
+    const pageErrors = [];
+    cdp.on('Runtime.exceptionThrown', (p) => {
+      const d = p.exceptionDetails || {};
+      const desc = (d.exception && d.exception.description) || d.text || 'unknown';
+      pageErrors.push(desc.slice(0, 300));
+      if (pageErrors.length > 5) pageErrors.shift();
+    });
 
     // The chat leg's history, appended BEFORE any page opens: the
     // resulting chat-change (500 ms debounce) must die with zero clients
@@ -536,7 +547,21 @@ async function main() {
       // the state attempt 1 did, not its wreckage) and a per-attempt
       // marker keeps the live-append claim honest. A deterministic SPA
       // defect fails BOTH attempts, and the message names the state.
+      pageErrors.length = 0;
       let first = null;
+      // T5: the failure signature ('Loading logs...', no #log-content)
+      // is indistinguishable between a hung /api/logs fetch and a
+      // boot-time exception — this names which. The resource entries
+      // prove whether the SPA's fetch ever COMPLETED; the parallel
+      // page-context fetch proves the route itself is open.
+      const diag = async () => {
+        try {
+          const s = await cdp.eval(
+            "(function(){var e=performance.getEntriesByType('resource').filter(function(x){return x.name.indexOf('/api/logs')!==-1}).map(function(x){return Math.round(x.duration)+'ms/'+(x.encodedBodySize||0)+'B'}).join(',')||'no /api/logs entry (the SPA fetch never completed)';return 'readyState='+document.readyState+' | /api/logs: '+e+' | diag-fetch: '+(window.__diagOutcome||'not scheduled')})()");
+          const errs = pageErrors.length ? ' | page exceptions: ' + pageErrors.join(' ;; ').slice(0, 400) : ' | page exceptions: none';
+          return s + errs;
+        } catch { return 'diag eval failed'; }
+      };
       for (let n = 1; n <= 2; n++) {
         try {
           if (n === 2) {
@@ -557,6 +582,14 @@ async function main() {
               "(function(){var el=document.getElementById('nav');return el?el.style.display:null})()");
             return (d && d !== 'none') ? true : null;
           }, 30000);
+          // T5: schedule the parallel diagnostic fetch (the same
+          // read-only URL the SPA is fetching; a 3s abort keeps it
+          // honest — if it completes while the SPA's did not, the SPA
+          // is at fault, not the route).
+          try {
+            await cdp.eval(
+              "window.__diagOutcome='pending';(async()=>{try{var ctl=new AbortController();var t=setTimeout(function(){ctl.abort()},3000);var r=await fetch('/api/logs',{signal:ctl.signal,cache:'no-store'});clearTimeout(t);var j=await r.json();window.__diagOutcome='OK '+r.status+' ('+(Array.isArray(j)?j.length+' entries':'weird shape')+')'}catch(err){window.__diagOutcome='FAILED '+(err.name||'')+' '+(err.message||'')}})()");
+          } catch {}
           await waitFor('the deep-linked log viewer to render its content', async () => {
             const c = await cdp.eval(
               "(function(){var el=document.getElementById('log-content');return el?el.textContent:null})()");
@@ -574,7 +607,8 @@ async function main() {
         } catch (e) {
           first = first || (e.message || String(e));
           if (n === 2) {
-            throw new Error('log-deep-link: both attempts failed — ' + first);
+            throw new Error('log-deep-link: both attempts failed — ' + first +
+              ' | diag: ' + await diag());
           }
         }
       }
