@@ -66,6 +66,9 @@ def normalize_clock(value, timestamp_keys=TIMESTAMP_KEYS,
                 for v in value]
     return value
 
+# ---------------------------------------------------------------------------
+
+
 # Ensure hive lib is on PYTHONPATH for all tests.
 _hive_lib = str(Path(__file__).resolve().parent.parent / "lib")
 if _hive_lib not in sys.path:
