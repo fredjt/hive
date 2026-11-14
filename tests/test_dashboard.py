@@ -3466,6 +3466,104 @@ class TestChatNewPillSpa:
             "the follow branch must not leave a stale count")
 
 
+class TestDeepLinkViewIdentity:
+    """T5 (0.22): a deep-linked sub-route owns its view identity.
+
+    0.21's hash routing (T4) makes a deep link the REFRESH path —
+    rehydration lands the browser on #/chat/<channel> or #/logs/<file>
+    by calling the sub-route renderer DIRECTLY, without the parent
+    view's showX ever running. The parent (showChats / showLogs) is
+    what sets activeView and registers the panel refresher, so the
+    direct path rendered once and went stale: chat-change / log-change
+    SSE events gated on activeView never reached the open view (the
+    'N new' pill — T3 — was dead on a refreshed chat tab). The
+    sub-route renderers own their identity now; this guard pins it
+    in the delivered script. The standing browser proof is the T5
+    CI legs (tests/cdp_legs.js): the chat-pill leg drives a fresh
+    deep link and the log leg watches a live append land in the
+    refreshed viewer."""
+
+    @staticmethod
+    def _fn_body(content, fn_name):
+        m = re.search(r"(?:async )?function %s\(" % re.escape(fn_name),
+                      content)
+        assert m, f"{fn_name} not found in the delivered script"
+        rest = content[m.end():]
+        m2 = re.search(r"\n(?:async )?function ", rest)
+        return rest[:m2.start()] if m2 else rest
+
+    @pytest.mark.parametrize("fn,view",
+                             [("showChannel", "chat"),
+                              ("showLogFile", "logs")])
+    def test_sub_route_owns_view_identity_before_first_hash_write(self,
+                                                                   fn, view):
+        c = _spa_text()
+        body = self._fn_body(c, fn)
+        i_view = body.find("activeView='%s'" % view)
+        assert i_view != -1, (
+            f"{fn} must set activeView='{view}' — a deep link (and a "
+            "refresh, T4 rehydration) calls it directly, without the "
+            "parent view's showX ever running; without it the view "
+            "renders once and goes stale (the SSE refresh gates on "
+            "activeView)")
+        i_hash = body.find("writeHash(")
+        assert i_hash != -1 and i_view < i_hash, (
+            f"{fn} must set activeView BEFORE its first writeHash — "
+            "the hashchange listener fires routeFromHash, and the view "
+            "must already own its identity when it re-enters")
+        i_refresh = body.find("startAutoRefresh(")
+        assert i_refresh != -1 and i_refresh < i_hash, (
+            f"{fn} must REGISTER its panel refresher (startAutoRefresh) "
+            "on the direct path — the parent view's registration "
+            "never ran on a deep link, so refreshActive has nothing "
+            "to fire")
+
+    @pytest.mark.parametrize("sub,parent,shell",
+                             [("showChannel", "showChats", "chat-view"),
+                              ("showLogFile", "showLogs", "log-view")])
+    def test_sub_route_builds_missing_pane_shell(self, sub, parent, shell):
+        """The pane shell (#chat-view / #log-view) is rendered by the PARENT
+        view — a fresh-DOM deep link / refresh never ran it, so the sub-route
+        renderer must build it first or throw on a null element (blank
+        content on every refreshed chat/log tab)."""
+        c = _spa_text()
+        body = self._fn_body(c, sub)
+        assert f"getElementById('{shell}')) await {parent}(" in body, (
+            f"{sub} must build the missing pane shell via {parent} when "
+            f"#{shell} is absent (the deep link / refresh path)")
+        assert f"async function {parent}(openName)" in c, (
+            f"{parent} takes the openName flag so the explicit sub-route "
+            "name suppresses the auto-open (no racing render)")
+
+
+class TestSseClientDeepLinkSpa:
+    """T5 (0.22): the SSE refresh gates survive the deep-link fix.
+
+    The fix makes the sub-route renderers own activeView — the event
+    handlers must KEEP their activeView gate (the fix must not turn
+    every SSE event into a global refresh; the gate is what keeps a
+    background view quiet)."""
+
+    def test_chat_change_still_gated_on_active_view(self):
+        c = _spa_text()
+        m = re.search(r"addEventListener\('chat-change',function\(e\)\{[\s\S]*?\n  \}\);",
+                      c)
+        assert m, "the chat-change SSE handler not found"
+        assert "if(activeView==='chat') refreshActive('chat')" in m.group(0), (
+            "chat-change must still refresh only when the chat view is "
+            "active — the deep-link fix owns activeView, it does not "
+            "remove the gate")
+
+    def test_log_change_still_gated_on_active_view(self):
+        c = _spa_text()
+        m = re.search(r"addEventListener\('log-change',function\(e\)\{[\s\S]*?\n  \}\);",
+                      c)
+        assert m, "the log-change SSE handler not found"
+        assert "if(activeView==='logs')     refreshActive('logs')" in m.group(0), (
+            "log-change must still refresh only when the logs view is "
+            "active")
+
+
 @pytest.mark.skipif(not _node_available(), reason="node not available")
 class TestGhMirror:
     """T3 (0.21): the GitHub page shows GitHub's actual state.
