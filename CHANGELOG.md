@@ -1,3 +1,153 @@
+## 0.23.0
+
+0.23 is the division-of-labor release — the runner dispatches on
+the ticket's work kind: a deliverable ticket (an HR memo, a
+marketing report) no longer rides the TDD code cycle it can never
+pass (the 0.22 cost per loop pass: up to 3 tester spawns + 1
+engineer spawn, plus a strict gate run it can never pass, bounced
+to the cap; the 0.23 cost: ZERO tester/engineer spawns — the
+ic-admin doer and a gate set that checks the deliverable), the org
+chart declares the division of labor (kind per dept — a fresh
+company's day-one chart; the legacy name list demoted to fallback),
+the deliverable gates replace the blind waiver (named, exists, no
+placeholders, follow-ups scoped — the doer's summary comment is the
+input), the breakers stay (code work meets verification-ic in ANY
+dept; a deliverable meets verification-ic-admin in ANY dept), and
+the managers' goals reach the implementer (the kind in the plan
+schema; the dept's direction above the ticket row in every doer
+prompt). No rc moves to call out: the release contract and the gate
+sequence are unchanged, and the 0.22 filing stays byte-identical.
+
+### The ticket carries the work kind; the runner dispatches on it (W1)
+- State layer: ticket_create gains an optional work_kind validated
+  against WORK_KINDS (code|deliverable). Given, it is written onto
+  the ticket; absent, the field is absent (the 0.22 filing stays
+  byte-identical). A property of the goal, not of a pass: it
+  persists across every move and is NOT cleared at done; no write
+  path mutates it after creation.
+- Wire + CLI (additive): the MCP ticket_create param and
+  ticket-create.sh --work-kind; a bad value is a usage error naming
+  the field (exit 2), not a silent default.
+- The resolver: work_kind_of (dept-helpers.sh) — the single lookup
+  the runner and the gates both call: the ticket's own field → the
+  org chart's dept kind → the legacy name list (today's semantics
+  for pre-0.23 charts; the migration is silent until a kind is set).
+- The dispatch: the ticket lifecycle resolves the kind once. code →
+  the code pipeline, byte-identical. deliverable → the deliverable
+  pipeline: scripted claim, NO worktree, NO tester/engineer,
+  ic-admin writes the deliverable through the script tools and posts
+  the 'Files written:' summary comment, the gates run,
+  verification-ic-admin breaks the content; approve/bounce/cap/defer
+  run the same machinery as the code path.
+- The harness's sanctioned-channel fact: a .company mutation made
+  while the command invokes a script under the install's lib/tools
+  is the sanctioned write channel (the install is read-only from the
+  agent side) — reported, never flagged; mutations from other
+  commands are still flagged, and the policy still blocks direct
+  writes and wrapper evasions.
+- The flagship round is MIXED: an rd code ticket (the VP declares
+  work_kind=code — the prototype in a docs-heavy dept) and an hr
+  deliverable ticket (rides the dept default), both done in the same
+  round, each meeting its breaker.
+
+### The org chart declares the division of labor (W2)
+- Each org-chart dept entry gains kind (code|deliverable) — the
+  resolver's middle rung.
+- The scaffold writes the default per provenance: the fixed six are
+  documentation departments (deliverable); a project's engineering
+  depts (dynamic) default to code. A fresh init's chart declares
+  the division of labor on day one.
+- A CEO-set kind survives a rebuild the way CEO-authored depts
+  already do; an invalid kind value is replaced with the valid
+  default at the compose step — never written, never a rebuild
+  failure (the resolver's legacy fallback would have made the same
+  decision).
+
+### The deliverable gates: check the deliverable, don't waive it (W3)
+- The blind name-based waiver (admin-dept-ticket / non-code-ticket
+  pass) is gone — nothing passes on a name match anymore.
+- The pre-gate classification keys off the resolver, and a
+  deliverable runs the four deterministic gates (same per-ticket
+  record shape as the code gates), whether or not a stray worktree
+  exists: deliverable-named (the doer's last 'Files written:'
+  summary names >= 1 path; no summary is a FAIL, not a skip),
+  deliverable-exists (every named path exists and is non-empty),
+  no-placeholders (no incomplete marker — the configurable,
+  case-insensitive list, default TBD/TODO/FIXME/PLACEHOLDER/more to
+  come/to be determined — and no empty section heading),
+  followup-scoped (every id in 'Follow-up tickets filed:' exists in
+  the company's ticket dirs; 'none' passes).
+- A code ticket runs the strict code gates exactly as before; a
+  code ticket with no worktree and no branch now fails Gate 1 for
+  the right reason (there is no work to verify).
+- require_deliverable_gates=false (gates.json) disables the path for
+  a company; the marker list is deliverable_markers.
+- The B.4 gate-serialization fixture meets the gate it now runs
+  (summary comment + a minimal real deliverable) — the lock, not
+  the gate, is under test.
+
+### The breakers stay: every kind of work meets a breaker (W4)
+- Verifier routing is keyed off the resolver, not the dept name
+  list: a code-kind ticket in a fixed dept (the rd prototype, filed
+  work_kind=code) meets the code breaker (verification-ic); a
+  deliverable in any dept meets the content breaker
+  (verification-ic-admin).
+- The routing reads the ticket from its IN-REVIEW path (the
+  in-progress file is stale by Phase 4 — the resolver's ticket-field
+  rung would have fallen through to the org chart).
+- The code gate set and the release contract are untouched.
+
+### The managers' goals reach the implementer (W5)
+- The CEO's direction seed_tickets[] gain an optional work_kind (the
+  same enum as the ticket field). A given value passes through
+  untouched; a bad value is a usage error that names the field and
+  writes NOTHING; an absent value adds no key (the goal keeps the
+  dept's kind — the resolver's job, not the doc's).
+- The division line: you and your VPs write the goals; the ICs
+  implement them. The default is the dept's kind; an override is how
+  one ticket's work differs from its dept's — a prototype that must
+  produce runnable code in a docs-heavy dept, a written deliverable
+  in an engineering dept.
+- The doer's prompt carries the GOAL CONTEXT: the dept's direction
+  paragraph from the direction doc (ceo_direction_path) goes ABOVE
+  the ticket's title/description/AC in every doer stage prompt
+  (tdd-red, tdd-green, deliverable) — the ticket is the WHAT, the
+  goal is the WHY, and a divergence is named in the exit summary
+  instead of picked silently. When no direction doc exists the
+  block says so rather than inventing one. Freshness is invariant:
+  the implementer is always a NEW spawn; the routing only delivers
+  the managers' file.
+
+### The prompts, the primer, the docs, and the flagship play the true cycle (W6)
+- Every prompt and doc line about the dispatch now states the fact,
+  and a stale line is a suite failure, not drift: the stage-4 line
+  splits the doers (ic-engineer / ic-infra implements code tickets
+  · ic-admin delivers deliverable tickets); the primer's worktree
+  rule carries the deliverable exception (a deliverable ticket has
+  NO worktree — the runner does not create one); ic-admin.md and
+  verification-ic-admin.md are rewritten to the true dispatch
+  (spawned by the resolved work kind, not a dept name list; the
+  four gates named; the content breaker named); the role diagram,
+  the root AGENTS.md lifecycle line, and the important conventions
+  gain the work-kind fact.
+- share/docs/sprint-lifecycle.dot: the work-kind diamond after
+  pick_ticket — the code path unchanged, the deliverable path joins
+  it (claim → ic-admin → deliverable gates → verification-ic-admin
+  → done/bounce); the legend's ticket cluster covers both. Renders
+  with graphviz.
+- share/docs/MCP-TOOLS.md: the ticket_get doc (regenerated from the
+  live server — hand edits drift) documents the work_kind ticket
+  field.
+- vp-dept.md: the ticket-update.sh fiction is gone — the refine
+  path is ticket_comment (the sharpened AC lands as a comment the
+  doer reads) or reject-and-refile; the composed-VP goldens
+  re-captured.
+- The flagship round's ceo-plan direction seeds one code goal (rd)
+  and one deliverable goal (hr); the assertions prove the direction
+  marker for each ticket's dept reaches its doer's prompt, as the
+  stub received it. The round runs in ~57s — well under the
+  2-minute budget.
+
 ## 0.22.0
 
 0.22 is the walls-and-legs release — the stopped read stops paying
