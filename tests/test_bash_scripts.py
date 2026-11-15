@@ -1009,6 +1009,95 @@ echo "STAGES=${{SS_VALID_STAGES[@]}}"
         assert "ceo-plan" in result.stdout
 
 
+class TestSprintDirectionWrite:
+    """W5 (0.23): the plan schema carries the work kind.
+
+    The CEO's direction seed_tickets[] gain an optional work_kind
+    (code|deliverable — the same enum as the ticket field). A given
+    value passes through into the direction JSON untouched, a bad value
+    is a usage error that names the field (and writes nothing), and an
+    absent value adds no key (the goal keeps the dept's kind — the
+    resolver's job, not the doc's)."""
+
+    REPO = Path(__file__).resolve().parent.parent
+
+    def _write(self, company, direction, bugfix=False):
+        cmd = ["bash", str(self.REPO / "lib" / "tools" / "sprint-direction-write.sh")]
+        if bugfix:
+            cmd.append("--bugfix")
+        return subprocess.run(
+            cmd, input=json.dumps(direction), capture_output=True, text=True,
+            timeout=30, env={**os.environ, "COMPANY_DIR": str(company),
+                             "HIVE_INSTALL_DIR": str(self.REPO)})
+
+    def _seed_company(self, tmp_path):
+        company = tmp_path / ".company"
+        (company / "sprints").mkdir(parents=True)
+        (company / "sprints" / "current.json").write_text(json.dumps(
+            {"sprint_id": "sprint-test", "stage": "ceo-plan",
+             "ceo_direction_path": None}))
+        return company
+
+    def _seed(self, **extra):
+        t = {"title": "Add X", "type": "feature", "priority": "high",
+             "description": "d"}
+        t.update(extra)
+        return {"rationale": "r", "departments": {
+            "rd": {"direction": "focus", "seed_tickets": [t]}}}
+
+    def test_seed_ticket_with_work_kind_passes_through(self, tmp_path):
+        company = self._seed_company(tmp_path)
+        direction = self._seed(work_kind="deliverable")
+        r = self._write(company, direction)
+        assert r.returncode == 0, r.stderr
+        out = company / "sprints" / "sprint-test-direction.json"
+        assert out.exists(), "the direction file was not written"
+        data = json.loads(out.read_text())
+        seed = data["departments"]["rd"]["seed_tickets"][0]
+        assert seed.get("work_kind") == "deliverable", (
+            f"work_kind lost in the direction JSON: {seed}")
+        # the state pointer moved to the written file
+        state = json.loads((company / "sprints" / "current.json").read_text())
+        assert state["ceo_direction_path"] == str(out)
+
+    @pytest.mark.parametrize("kind", ["code", "deliverable"])
+    def test_seed_ticket_with_each_valid_kind(self, tmp_path, kind):
+        company = self._seed_company(tmp_path)
+        r = self._write(company, self._seed(work_kind=kind))
+        assert r.returncode == 0, r.stderr
+
+    @pytest.mark.parametrize("bad", ["bogus", "CODE", 42, ""])
+    def test_seed_ticket_with_bogus_work_kind_is_rejected(self, tmp_path, bad):
+        company = self._seed_company(tmp_path)
+        r = self._write(company, self._seed(work_kind=bad))
+        assert r.returncode != 0, "a bad work_kind must be a usage error"
+        assert "work_kind" in r.stderr, (
+            "the rejection must name the work_kind field: "
+            f"{r.stderr!r}")
+        out = company / "sprints" / "sprint-test-direction.json"
+        assert not out.exists(), "a rejected doc must not be written"
+
+    def test_seed_ticket_without_work_kind_adds_no_key(self, tmp_path):
+        company = self._seed_company(tmp_path)
+        r = self._write(company, self._seed())
+        assert r.returncode == 0, r.stderr
+        out = company / "sprints" / "sprint-test-direction.json"
+        seed = json.loads(out.read_text())["departments"]["rd"]["seed_tickets"][0]
+        assert "work_kind" not in seed, (
+            "an absent work_kind must stay absent (no key added) — the "
+            f"default is the dept's kind, resolved at dispatch: {seed}")
+
+    def test_empty_seed_tickets_array_is_unchanged_shape(self, tmp_path):
+        # the pre-0.23 doc shape (the test-suite's CEO stub writes exactly
+        # this) must keep passing untouched.
+        company = self._seed_company(tmp_path)
+        r = self._write(company, {
+            "rationale": "stub direction",
+            "departments": {"backend": {"direction": "stub focus",
+                                        "seed_tickets": []}}})
+        assert r.returncode == 0, r.stderr
+
+
 class TestStatusRebuildScript:
     """status-rebuild.sh daemon contract: quiet mode must exit 0 on success.
 

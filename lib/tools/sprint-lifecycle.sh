@@ -475,6 +475,48 @@ file_release_blocker() {
   fi
 }
 
+# ── W5: the doer's goal context ─────────────────────────────────────
+# The managers' goal for the ticket's dept (the CEO's direction doc, the
+# file recorded at ceo_direction_path) goes ABOVE the ticket's
+# title/description/AC in every doer stage prompt (the tdd-red/tdd-green
+# code blocks and the deliverable block): the ticket is the WHAT, the
+# goal is the WHY. Freshness is invariant — the implementer is always a
+# NEW spawn; this only routes the managers' file to that spawn, it does
+# not change the agent. When no direction doc exists (the CEO plan failed
+# verification) the block says so rather than inventing one (the existing
+# "(no direction document…" convention); a doc that never addressed the
+# dept is named as such too.
+goal_context_block() {
+  local dept="$1"
+  local DFILE DIRN
+  DFILE=$(ss_get_field .ceo_direction_path)
+  DIRN=""
+  if [ -n "$DFILE" ] && [ -f "$DFILE" ]; then
+    DIRN=$(jq -r --arg d "$dept" '.departments[$d].direction // empty' "$DFILE" 2>/dev/null)
+  fi
+  if [ -n "$DIRN" ]; then
+    {
+      echo "═══════════════════════════════════════════════════════════════"
+      echo "GOAL CONTEXT — what the managers want from dept $dept this sprint"
+      echo "(from the CEO's direction document)"
+      echo "═══════════════════════════════════════════════════════════════"
+      echo "The ticket below is the WHAT; this is the WHY. Do the ticket in"
+      echo "service of this goal — when the ticket row and the goal diverge,"
+      echo "the goal is the tie-breaker for scope and quality, and name the"
+      echo "divergence in your exit summary instead of picking silently."
+      echo
+      printf '%s\n' "$DIRN"
+    }
+  elif [ -n "$DFILE" ] && [ -f "$DFILE" ]; then
+    echo "GOAL CONTEXT: the CEO's direction document does not address dept"
+    echo "$dept this sprint — the ticket below is the only goal context."
+  else
+    echo "GOAL CONTEXT: no direction document was written by the CEO this"
+    echo "sprint (the CEO plan failed verification) — act on the ticket row"
+    echo "below and prior sprint context."
+  fi
+}
+
 # ── CEO planning ────────────────────────────────────────────────────
 # $1: the stage to record while the CEO plans (ceo-plan for a new sprint,
 # ceo-bugfix-plan for a release bugfix cycle). The stage is the dispatch
@@ -811,6 +853,8 @@ Pick a sensible default if the language is ambiguous."
 --- STAGE: tdd-red (ticket: $ticket, dept: $dept) ---
 Mode: ic-cycle-tester (TDD-RED).
 
+$(goal_context_block "$dept")
+
 Ticket: $ticket — $TITLE
 Description:
 $DESC
@@ -957,6 +1001,8 @@ Then proceed with any remaining implementation work."
 
 --- STAGE: tdd-green (ticket: $ticket, dept: $dept) ---
 Mode: ic-cycle-eng (TDD-GREEN).
+
+$(goal_context_block "$dept")
 
 Ticket: $ticket — $TITLE
 Description:
@@ -1250,6 +1296,8 @@ run_deliverable_lifecycle() {
 
 --- STAGE: deliverable (ticket: $ticket, dept: $dept) ---
 Mode: ic-admin (deliverable).
+
+$(goal_context_block "$dept")
 
 Ticket: $ticket — $TITLE
 Description:

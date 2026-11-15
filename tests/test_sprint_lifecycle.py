@@ -1137,6 +1137,121 @@ def test_relance_on_planned_sprint_skips_planning(tmp_path):
     assert h.sprint_archive.exists()
 
 
+# ── W5 (0.23): the managers' goal reaches the implementer ──────────
+
+def _seed_direction(h, depts):
+    """Write the sprint's direction doc (the managers' goal file) and
+    point ceo_direction_path at it, relaunching at the ticket loop
+    (stage tdd-red) so the CEO/VP planning stages — and their stub
+    direction write — do not clobber the seeded doc."""
+    d = h.project / ".company" / "sprints" / "sprint-preset-direction.json"
+    d.write_text(json.dumps({"rationale": "stub direction",
+                             "departments": depts}, indent=2))
+    f = h.project / ".company" / "sprints" / "current.json"
+    state = json.loads(f.read_text())
+    state["ceo_direction_path"] = str(d)
+    state["stage"] = "tdd-red"
+    f.write_text(json.dumps(state, indent=2))
+    return d
+
+
+def _seed_it_ticket(h, status="sprint-current"):
+    """A ticket in the it dept — the harness's other dept, which the
+    legacy name list (and no org-chart kind) resolves to deliverable.
+    The doer pipeline for it is the deliverable one (ic-admin)."""
+    f = (h.project / ".company" / "departments" / "it" / "tickets"
+         / status / f"{TICKET}.json")
+    f.write_text(_ticket_json(status))
+
+
+def _marker_above_ticket(prompt, marker):
+    """Assert the direction marker is in the prompt AND above the
+    ticket row (the ticket is the WHAT, the goal is the WHY — the
+    goal block precedes the title/description/AC)."""
+    assert "GOAL CONTEXT" in prompt, \
+        "no GOAL CONTEXT block in the doer prompt"
+    assert marker in prompt, \
+        f"the dept's direction marker is missing from the doer prompt"
+    assert prompt.index(marker) < prompt.index("Ticket: "), \
+        "the goal context must be ABOVE the ticket row in the prompt"
+
+
+def test_goal_context_reaches_deliverable_doer(tmp_path):
+    """W5: the deliverable doer (ic-admin) reads the managers' goal for
+    its dept above the ticket row in the stage prompt. The round entry
+    is untouched — the implementer is still a NEW spawn per ticket per
+    stage; this only routes the managers' file to that spawn."""
+    h = LifecycleHarness(tmp_path, mode="noop")
+    _seed_it_ticket(h)
+    _seed_current_state(h)
+    _seed_direction(h, {"it": {"direction":
+        "BETTER-TOGETHER-ALPHA: ship the onboarding playbook end to end."}})
+
+    r = h.run()
+    assert r.returncode == 0, r.stderr
+
+    admins = h.spawn_blocks("ic-admin")
+    assert len(admins) >= 1, (
+        f"the deliverable doer (ic-admin) was never spawned: "
+        f"{[(a, s) for a, s, _ in h.spawn_blocks()]}")
+    for _agent, _stage, prompt in admins:
+        _marker_above_ticket(
+            prompt, "BETTER-TOGETHER-ALPHA: ship the onboarding playbook end to end.")
+        # the ticket row itself still leads the work section
+        assert "Ticket: " in prompt and TITLE in prompt
+
+
+def test_goal_context_reaches_code_doers(tmp_path):
+    """W5: the code leg's doer prompts (the tdd-red tester and the
+    tdd-green engineer) carry the dept's direction too — the same
+    GOAL-CONTEXT block, both kinds. The code pipeline is otherwise
+    untouched: tester first, engineer after (no [TDD-RED] commit is
+    produced by the noop stub, so the engineer takes over)."""
+    h = LifecycleHarness(tmp_path, mode="noop")
+    _seed_ticket(h)
+    _seed_current_state(h)
+    _seed_direction(h, {"backend": {"direction":
+        "CALC-CORE-OCTANE: harden the math core before the next cut."}})
+
+    r = h.run()
+    assert r.returncode == 0, r.stderr
+
+    testers = h.spawn_blocks("ic-tester")
+    engineers = h.spawn_blocks("ic-engineer")
+    assert len(testers) >= 1 and len(engineers) >= 1, (
+        f"expected tester and engineer spawns, got: "
+        f"{[(a, s) for a, s, _ in h.spawn_blocks()]}")
+    for _agent, _stage, prompt in testers + engineers:
+        _marker_above_ticket(
+            prompt, "CALC-CORE-OCTANE: harden the math core before the next cut.")
+
+
+def test_goal_context_names_missing_direction(tmp_path):
+    """W5: when no direction doc exists (the CEO plan failed
+    verification — ceo_direction_path unset), the block says so rather
+    than inventing a goal: the doer prompt names the missing doc and
+    carries no GOAL CONTEXT section of the marked kind."""
+    h = LifecycleHarness(tmp_path, mode="noop")
+    _seed_it_ticket(h)
+    _seed_current_state(h)  # ceo_direction_path stays None
+    f = h.project / ".company" / "sprints" / "current.json"
+    state = json.loads(f.read_text())
+    state["stage"] = "tdd-red"
+    f.write_text(json.dumps(state, indent=2))
+
+    r = h.run()
+    assert r.returncode == 0, r.stderr
+
+    admins = h.spawn_blocks("ic-admin")
+    assert len(admins) >= 1, "the deliverable doer was never spawned"
+    for _agent, _stage, prompt in admins:
+        assert "GOAL CONTEXT: no direction document was written by the CEO" \
+            in prompt, (
+            "a missing direction doc must be named in the prompt rather "
+            "than invented")
+        assert "(from the CEO's direction document)" not in prompt
+
+
 def test_full_happy_path_forward_flow(tmp_path):
     """Release goal 7: one green-path run that drives a full ticket
     forward — create -> claim -> TDD-RED (tester writes the failing test

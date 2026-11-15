@@ -152,6 +152,20 @@ class TestCEOPrompt:
         content = Path(f"{AGENTS_DIR}/ceo.md").read_text()
         assert "MCP" in content or "mcp" in content
 
+    def test_ceo_prompt_teaches_the_work_kind(self):
+        """W5 (0.23): the direction schema carries the optional work_kind
+        seed field, and the division-of-labor line names who does the
+        work and when an override beats the dept default."""
+        content = Path(f"{AGENTS_DIR}/ceo.md").read_text()
+        assert '"work_kind": "code|deliverable"' in content, \
+            "ceo.md's direction schema must carry the optional work_kind field"
+        assert "the ICs implement them" in content, \
+            "ceo.md must teach the division: managers/VPs write goals, ICs implement"
+        assert "default is the dept's kind" in content, \
+            "ceo.md must name the dept default as the work_kind fallback"
+        assert "an override is how one ticket's work" in content, \
+            "ceo.md must say when a work_kind override is warranted"
+
 
 class TestVerificationICPrompt:
     """Test the verification IC prompt."""
@@ -305,6 +319,19 @@ class TestVPComposition:
         """Dynamic departments (HR-created depts) spawn the base as-is."""
         base = Path(f"{AGENTS_DIR}/vp-dept.md").read_text()
         assert hive_agents.compose_dept_vp("frontend-web") == base
+
+    def test_vp_base_teaches_the_work_kind(self):
+        """W5 (0.23): the VP's ticket_create example names work_kind and
+        when to override the dept default — the composed goldens carry
+        the same line (test_composed_render_matches_golden pins the full
+        bytes); the base test covers the standalone/dynamic path."""
+        base = Path(f"{AGENTS_DIR}/vp-dept.md").read_text()
+        assert 'work_kind="<code | deliverable (optional)>"' in base, \
+            "vp-dept.md's ticket_create example must show work_kind"
+        assert "Override it only when one ticket's work differs" in base, \
+            "vp-dept.md must name the override cases"
+        assert "gets your dept's kind from" in base, \
+            "vp-dept.md must state the default comes from the org chart"
 
     def test_base_is_a_complete_standalone_prompt(self):
         """vp-dept.md is itself a live prompt (the dynamic-dept fallback),

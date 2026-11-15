@@ -47,10 +47,19 @@ ticket_create(
   priority="<critical | high | medium | low>",
   title="<imperative; 'Add X', 'Fix Y', 'Refactor Z'>",
   description="<2-4 sentences>",
+  work_kind="<code | deliverable (optional)>",
   created_by=$HIVE_AGENT,
   source="vp-plan"
 )
 ```
+
+`work_kind` names the kind of work the goal needs: `code` (the engineer
+doer, the TDD pipeline) or `deliverable` (the admin doer, the document
+pipeline). It is optional — a ticket without it gets your dept's kind from
+the org chart. Override it only when one ticket's work differs from the
+dept's: a prototype or a research ticket that must produce runnable code
+(file `code` in a deliverable-default dept), or a written deliverable that
+lives in an engineering dept (file `deliverable`).
 
 The script writes the ticket to `tickets/backlog/<ID>.json` and returns the
 ID. The sprint-fill script (stage 2.5) promotes the top 5 backlog tickets

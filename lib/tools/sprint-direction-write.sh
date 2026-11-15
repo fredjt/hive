@@ -16,7 +16,14 @@ set -uo pipefail
 #       "backend-api-services": {
 #         "direction": "<paragraph: what this dept should focus on this sprint>",
 #         "seed_tickets": [               # optional; VPs may file more
-#           {"title": "...", "type": "feature", "priority": "high", "description": "..."}
+#           {
+#             "title": "...", "type": "feature", "priority": "high",
+#             "description": "...",
+#             "work_kind": "code|deliverable"   # optional (0.23) — the kind
+#                                                  # of work the goal needs;
+#                                                  # absent = the dept's kind
+#                                                  # from the org chart
+#           }
 #         ]
 #       },
 #       ...
@@ -70,6 +77,29 @@ fi
 if ! printf '%s' "$INPUT" | jq -e '.rationale and .departments' >/dev/null 2>&1; then
   echo "sprint-direction-write: required keys missing (.rationale, .departments)" >&2
   exit 2
+fi
+
+if [ "$BUGFIX" = 0 ]; then
+  # W5: seed_tickets[].work_kind is optional; when present it must be one
+  # of code|deliverable (the same enum as the ticket field, WORK_KINDS in
+  # lib/hive_state/core.py). A bad value is a usage error naming the field
+  # — the CEO fixes the doc; the direction file is not written.
+  BAD_KINDS=$(printf '%s' "$INPUT" | jq -r '[
+    .departments[]?
+    | (.seed_tickets // [])[]?
+    | select(type == "object")
+    | select(has("work_kind") and .work_kind != null)
+    | select(.work_kind != "code" and .work_kind != "deliverable")
+    | .work_kind
+  ] | unique
+  | map(if . == "" then "\"(empty string)\""
+         elif type != "string" then (. | tostring)
+         else . end)
+  | join(", ")' 2>/dev/null)
+  if [ -n "$BAD_KINDS" ]; then
+    echo "sprint-direction-write: invalid work_kind in a seed ticket: $BAD_KINDS (allowed: code|deliverable)" >&2
+    exit 2
+  fi
 fi
 
 if [ "$BUGFIX" = 1 ]; then

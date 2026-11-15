@@ -64,7 +64,8 @@ bash $SKILL_DIR/lib/tools/sprint-direction-write.sh <<'EOF'
           "title": "<imperative: 'Add X', 'Fix Y', 'Refactor Z'>",
           "type": "feature|bug|chore|infrastructure|research",
           "priority": "critical|high|medium|low",
-          "description": "<2-3 sentences>"
+          "description": "<2-3 sentences>",
+          "work_kind": "code|deliverable"
         }
       ]
     }
@@ -75,6 +76,14 @@ EOF
 
 `seed_tickets` is optional — VPs will file additional tickets in stage 2.
 Use seeds for cross-cutting work the VPs might miss.
+
+`work_kind` is optional per seed (and per ticket your VPs file). You and
+your VPs write the goals; the ICs implement them. Name the kind of work
+each goal needs (code → the engineer, deliverable → the admin doer); the
+default is the dept's kind, and an override is how one ticket's work
+differs from its dept's — a prototype or research ticket that must
+produce runnable code in a docs-heavy dept, a written deliverable in an
+engineering dept.
 
 Address every dept that has work this sprint. Omit depts that should sit
 this sprint out (rare).
