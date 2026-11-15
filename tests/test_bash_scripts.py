@@ -1775,8 +1775,13 @@ class TestGatesRunSerialization:
     """B.4: per-ticket gate runs are flock-serialized. While a first run
     holds the ticket's lock, a second run on the SAME ticket skips
     (daemon mode, exit 0) or blocks (--wait, lifecycle mode). Uses an
-    admin-dept ticket: its gate run auto-passes in milliseconds, so the
-    serialization is what's under test — not gate evaluation."""
+    it-dept ticket: its gate run completes in milliseconds, so the
+    serialization is what's under test — not gate evaluation. Under
+    0.23 the classification is by work kind (W3), and the it dept
+    resolves to the deliverable kind (legacy name list), so the fixture
+    carries the doer's summary comment + a minimal real deliverable —
+    without them the deliverable gates bounce (rc 2) and the test would
+    be testing the gate, not the lock."""
 
     TID = "TICKET-LOCK-1"
 
@@ -1786,9 +1791,21 @@ class TestGatesRunSerialization:
         review = proj / ".company" / "departments" / "it" / "tickets" / "in-review"
         review.mkdir(parents=True)
         (proj / ".company" / "logs").mkdir(parents=True, exist_ok=True)
+        deliverable = proj / ".company" / "departments" / "it" / "reports" / "gate-fixture.md"
+        deliverable.parent.mkdir(parents=True, exist_ok=True)
+        deliverable.write_text(
+            "Gate serialization fixture: the deliverable the ticket's "
+            "summary comment names.\n")
         (review / f"{cls.TID}.json").write_text(json.dumps({
             "id": cls.TID, "dept": "it", "type": "feature",
             "priority": "medium", "title": "t", "status": "in-review",
+            "comments": [{
+                "author": "ic-admin",
+                "timestamp": "2026-01-01T00:00:00Z",
+                "body": ("Delivered: gate fixture. Files written:\n"
+                         "- .company/departments/it/reports/gate-fixture.md\n"
+                         "Follow-up tickets filed: none"),
+            }],
         }))
         return proj
 
