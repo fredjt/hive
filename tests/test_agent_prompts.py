@@ -360,3 +360,49 @@ class TestVPComposition:
         primer = (repo / "lib" / "agents" / "_FRAMEWORK_PRIMER.md").read_text()
         golden = (repo / "tests" / "golden" / "vp-it-composed.md").read_text()
         assert out.stdout == primer + "\n" + golden
+
+
+class TestWorkKindDispatchWording:
+    """W6 (0.23): the prompts and docs that describe the cycle are TRUE
+    of the runner. The pre-dispatch lines (ic-admin as a generic stage-4
+    doer among the engineers; the stage-4 = tdd-green table row; the
+    fiction of a ticket-edit tool) are pinned — a stale line is a suite
+    failure, not drift."""
+
+    def test_primer_stage4_line(self):
+        content = Path(f"{AGENTS_DIR}/_FRAMEWORK_PRIMER.md").read_text()
+        assert "ic-engineer / ic-infra implements code tickets" in content
+        assert "ic-admin delivers deliverable tickets" in content
+        assert "ic-engineer / ic-infra / ic-admin does the work" not in content
+
+    def test_primer_worktree_rule_deliverable_exception(self):
+        content = Path(f"{AGENTS_DIR}/_FRAMEWORK_PRIMER.md").read_text()
+        assert "deliverable ticket has NO worktree" in content
+
+    def test_ceo_stage4_line(self):
+        content = Path(f"{AGENTS_DIR}/ceo.md").read_text()
+        assert "ic-admin delivers deliverable tickets" in content
+
+    def test_agents_md_ic_admin_row(self):
+        content = Path(f"{AGENTS_DIR}/AGENTS.md").read_text()
+        assert "Stage 4, deliverable tickets only" in content
+        assert "the runner dispatches on the ticket's work kind" in content
+
+    def test_vp_base_no_ticket_update_fiction(self):
+        base = Path(f"{AGENTS_DIR}/vp-dept.md").read_text()
+        assert "ticket-update.sh" not in base, \
+            "vp-dept.md must not name the ticket-edit tool that does not exist"
+        assert "reject-and-refile" in base
+
+    def test_ic_admin_sprint_staged_context(self):
+        content = Path(f"{AGENTS_DIR}/ic-admin.md").read_text()
+        # The true dispatch: spawned by resolved work kind, not by dept
+        # name list.
+        assert "deliverable ticket" in content
+        assert "NO worktree is created for you" in content
+        # The four deliverable gates are named.
+        for gate in ("deliverable-named", "deliverable-exists",
+                     "no-placeholders", "followup-scoped"):
+            assert gate in content, f"ic-admin.md must name the {gate} gate"
+        # The content breaker is named.
+        assert "verification-ic-admin" in content

@@ -354,7 +354,7 @@ Args:
 
 ### `ticket_get`
 
-Read a ticket's full JSON.
+Read a ticket's full JSON. The JSON carries the `work_kind` field (code|deliverable) — the kind of work the runner dispatches on (resolver: the ticket's field → the org-chart dept's kind → the legacy name list). Set at creation; persists across moves and done.
 
 Args:
   - `dept`: string (required)

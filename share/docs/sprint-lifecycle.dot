@@ -11,7 +11,7 @@ digraph "sprint-lifecycle" {
     fontsize=10;
     c_start [label="Start", shape=circle, fillcolor="#4CAF50", fontcolor=white, style=filled, penwidth=3];
     c_planning [label="Planning", fillcolor="#90CAF9"];
-    c_ticket [label="Ticket lifecycle", fillcolor="#FFF59D"];
+    c_ticket [label="Ticket lifecycle\n(code + deliverable paths)", fillcolor="#FFF59D"];
     c_release [label="Release", fillcolor="#CE93D8"];
     c_end [label="End", shape=circle, fillcolor="#4CAF50", fontcolor=white, style=filled, penwidth=3];
     c_fail [label="Failure", fillcolor="#EF5350", fontcolor=white];
@@ -41,6 +41,17 @@ digraph "sprint-lifecycle" {
 
   loop_safety [label="Loop iteration\n< MAX_LOOP?", shape=diamond, fillcolor="#E3F2FD", style="rounded,filled"];
   safety_defer [label="Defer all remaining\ntickets to backlog", fillcolor="#EF5350", fontcolor=white, style="rounded,filled"];
+
+  // ── Work-kind dispatch + deliverable path (0.23) ──
+  work_kind [label="Ticket work kind\n(code | deliverable)?", shape=diamond, fillcolor="#E3F2FD", style="rounded,filled"];
+  claim_deliv [label="Claim → in-progress\nNO worktree (the runner skips it)", fillcolor="#FFF59D"];
+  spawn_icadmin [label="Spawn ic-admin\nwrites the deliverable", fillcolor="#FFB74D"];
+  admin_ok [label="ic-admin\nexit 0?", shape=diamond, fillcolor="#FFB74D", style="rounded,filled"];
+  move_in_review_d [label="Move → in-review", fillcolor="#FFF59D"];
+  run_deliv_gates [label="Run deliverable gates\nnamed · exists · no-placeholders\n· follow-ups scoped", fillcolor="#FFB74D"];
+  deliv_gates_pass [label="All four gates\npassed?", shape=diamond, fillcolor="#FFB74D", style="rounded,filled"];
+  deliv_gates_bounce [label="Bounce → in-progress\nbounce_count++", fillcolor="#FFB74D"];
+  spawn_verifier_admin [label="Spawn verification-ic-admin\ncontent review", fillcolor="#81C784"];
 
   // ── Per-ticket lifecycle ──
   ensure_worktree [label="Create worktree\nat main tip", fillcolor="#FFF59D"];
@@ -96,7 +107,19 @@ digraph "sprint-lifecycle" {
 
   pick_ticket -> loop_safety [label=""];
   loop_safety -> safety_defer [label="no", color=red];
-  loop_safety -> ensure_worktree [label="yes", color=green];
+  loop_safety -> work_kind [label="yes", color=green];
+  work_kind -> ensure_worktree [label="code", color=green];
+  work_kind -> claim_deliv [label="deliverable", color=orange, labelcolor=orange];
+  claim_deliv -> spawn_icadmin [label=""]; 
+  spawn_icadmin -> admin_ok [label=""]; 
+  admin_ok -> move_in_review_d [label="yes", color=green];
+  admin_ok -> deliv_gates_bounce [label="no (spawn failed)", color=red];
+  move_in_review_d -> run_deliv_gates [label=""]; 
+  run_deliv_gates -> deliv_gates_pass [label=""]; 
+  deliv_gates_pass -> spawn_verifier_admin [label="yes", color=green];
+  deliv_gates_pass -> deliv_gates_bounce [label="no", color=red];
+  deliv_gates_bounce -> claim_deliv [label="re-enqueue", color=orange];
+  spawn_verifier_admin -> verifier_ok [label=""];
   safety_defer -> no_tickets [label="deferred", color=red];
 
   ensure_worktree -> move_in_progress [label=""];

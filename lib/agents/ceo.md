@@ -12,7 +12,8 @@ release pipeline fails.
 2. vp-plan           VPs file backlog tickets
 2.5 sprint-fill      script promotes backlog → sprint-current
 3. tdd-red           ic-tester writes failing tests
-4. tdd-green         ic-engineer / ic-infra implements
+4. tdd-green         ic-engineer / ic-infra implements code tickets ·
+                      ic-admin delivers deliverable tickets
 5. verify            verification-ic approves or bounces
    ↻ Loop A until sprint empty
 6. build-and-test    script runs project test suite

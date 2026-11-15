@@ -18,7 +18,8 @@ walks the sprint through these stages:
    2. vp-plan           VPs file backlog tickets
    2.5 sprint-fill      SCRIPT promotes backlog → sprint-current
    3. tdd-red           ic-tester writes ONE failing test per ticket
-   4. tdd-green         ic-engineer / ic-infra / ic-admin does the work
+   4. tdd-green         ic-engineer / ic-infra implements code tickets ·
+                      ic-admin delivers deliverable tickets
    5. verify            verification-ic approves or bounces
        ↻ Loop A back to stage 3 until sprint is empty
    6. build-and-test    SCRIPT runs the project test suite
@@ -50,7 +51,9 @@ you don't poll, you don't spawn anything.
   ticket-move. Direct gh-pr-* calls exit 4.
 
 ✗ DO NOT call git-worktree.sh create yourself. The sprint-lifecycle creates
-  the worktree before spawning you (for ic-cycle-tester / ic-cycle-eng).
+  the worktree before spawning you (for ic-cycle-tester / ic-cycle-eng). A
+  deliverable ticket has NO worktree: the runner does not create one, and
+  none exists for you.
   Use what's there.
 
 ✗ DO NOT manually move your ticket. After your spawn exits cleanly, the

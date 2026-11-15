@@ -134,11 +134,15 @@ class RoundResponder:
         return self._final("Done. (unscripted stage)")
 
     def _ceo_plan(self) -> str:
+        # W5: the direction carries a distinctive marker per dept — the
+        # assertion below proves each doer's prompt carries its dept's
+        # goal (the GOAL CONTEXT block the lifecycle injects).
         direction = {
             "rationale": "Prove the full sprint round runs end to end.",
             "departments": {
                 "rd": {
-                    "direction": "Ship the add() feature end to end.",
+                    "direction": ("RD-CORE-GOAL-MARKER: ship the add() "
+                                  "feature end to end."),
                     "seed_tickets": [{
                         "title": "Implement add(a, b)",
                         "type": "feature",
@@ -146,6 +150,11 @@ class RoundResponder:
                         "description": "add(a, b) returns a + b. "
                                        "Acceptance: add(1, 2) == 3.",
                     }],
+                },
+                "hr": {
+                    "direction": ("HR-MEMO-GOAL-MARKER: the Q4 hiring memo "
+                                  "lands this sprint, naming the three open "
+                                  "roles and the posting plan."),
                 },
             },
         }
@@ -722,6 +731,28 @@ class TestFullRoundE2E:
             for must_not in ("ic-admin", "verification-ic-admin"):
                 assert must_not not in rd_agents, \
                     f"the code ticket met {must_not}: {rd_agents}"
+
+            # W5: the managers' goal reaches the doer. Each dept's
+            # direction marker (seeded above by the ceo-plan stub) must
+            # appear in that ticket's doer prompt — as the stub received
+            # it, every request body is recorded on the stub.
+            def prompt_with(stage_marker: str) -> str:
+                for body in stub.requests:
+                    text = json.dumps(body)
+                    if stage_marker in text:
+                        return text
+                return ""
+            deliv_prompt = prompt_with("--- STAGE: deliverable (ticket: ")
+            assert deliv_prompt, "the ic-admin doer prompt was never sent"
+            assert "HR-MEMO-GOAL-MARKER" in deliv_prompt, (
+                "the hr dept's direction marker is missing from the "
+                "ic-admin doer prompt")
+            code_prompt = prompt_with("--- STAGE: tdd-green (ticket: ")
+            assert code_prompt, "the ic-engineer doer prompt was never sent"
+            assert "RD-CORE-GOAL-MARKER" in code_prompt, (
+                "the rd dept's direction marker is missing from the code "
+                "doer prompt")
+
             assert t.get("archived_in_sprint"), "archive did not stamp the sprint"
 
             # Both TDD commits exist in the repo (on the branch, or already

@@ -89,9 +89,14 @@ bash $SKILL_DIR/lib/tools/ticket-create.sh \
 
 ### Refine existing backlog tickets
 
-If a backlog ticket needs sharper acceptance criteria or a priority bump
-based on the CEO direction, edit it via `ticket-update.sh` (or comment via
-`ticket-comment.sh`).
+There is no ticket-edit tool: a filed ticket's title, description, and
+priority are immutable, and its acceptance criteria sharpen as COMMENTS
+the doer reads. The refine path that actually works is one of:
+- `ticket-comment.sh` (or the `ticket_comment` MCP tool) — post the
+  sharpened AC / guidance as a comment; the doer's prompt carries the
+  ticket's full comment trail.
+- reject-and-refile — reject the ticket (the path below) and file a
+  corrected one.
 
 ### Reject tickets that aren't worth doing
 
@@ -260,8 +265,8 @@ What to read first (in addition to canonical inputs):
 
 ## Allowed side actions
 
-- `ticket-comment.sh` — add a comment to any ticket in your dept.
-- `ticket-update.sh` — refine title/description/priority of a backlog ticket.
+- `ticket-comment.sh` — add a comment to any ticket in your dept (the
+  refine path — sharpened AC lands as a comment the doer reads).
 - `chat-send.sh dept-$HIVE_DEPT $HIVE_AGENT $HIVE_DEPT '<message>'` — talk
   to your dept's chat.
 - `chat-send.sh leadership $HIVE_AGENT $HIVE_DEPT '<message>'` — escalate

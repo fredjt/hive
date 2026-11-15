@@ -86,6 +86,10 @@ The round-runner serially walks through stages:
 5. verify → (loop back to 3) → 6. build-and-test → 7. release-verify →
 8. release-publish → (loop back to 6a) → 9. vp-review → archive → next
 sprint
+Per ticket the runner dispatches on the ticket's work kind: a code
+ticket walks 3 → 4 (tester → engineer) under the code gates; a
+deliverable ticket skips 3 and runs 4 (ic-admin) under the four
+deliverable gates.
 
 ### Important conventions
 
@@ -98,6 +102,11 @@ sprint
   Verification IC, Release IC
 - Worktrees: per-ticket at `$PROJECT_ROOT/.worktrees/$TID` on branch
   `feature/$TID`
+- Work kind: each ticket carries `work_kind` (code|deliverable). The
+  runner dispatches on it (resolver: the ticket's field → the org-chart
+  dept's kind → the legacy name list); deliverable tickets run the
+  deliverable gates (named, exists, no placeholders, follow-ups scoped),
+  not the code gates, and meet verification-ic-admin at verify.
 - The `.company/` directory is live state treated as a database — agents
   read freely, writes go through MCP tools or scripts only
 - **Derived state**: `roster.json` and per-dept `status.json` are rebuilt

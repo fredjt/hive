@@ -66,7 +66,7 @@ from the shared base at spawn time:
 | `ic-engineer.md` | Writes production code to satisfy failing tests | Stage 4 (tdd-green) |
 | `ic-tester.md` | Writes failing tests (TDD-red) | Stage 3 (tdd-red) |
 | `ic-infra.md` | Infrastructure / build / CI work | Stage 4 (tdd-green) |
-| `ic-admin.md` | Admin tasks, documentation, config | Stage 4 (tdd-green) |
+| `ic-admin.md` | Admin tasks, documentation, config | Stage 4, deliverable tickets only — the runner dispatches on the ticket's work kind |
 
 ### Verification & Release
 | File | Role | Spawn stages |
@@ -129,8 +129,10 @@ vp-*.md         →  files backlog tickets from CEO direction
 ic-tester.md    →  writes failing tests for tickets in sprint-current
 ic-engineer.md  →  implements code to make tester's tests pass
 ic-infra.md     →  handles infra/build tickets
-ic-admin.md     →  handles admin/doc/config tickets
+ic-admin.md     →  delivers deliverable-kind tickets (no worktree) →
+                    deliverable gates check what the doer named
 verification-ic.md  →  adversarially reviews PRs before merge
+verification-ic-admin.md →  breaks deliverable content (verify stage)
 release-ic.md       →  reviews release readiness before publish
 ```
 

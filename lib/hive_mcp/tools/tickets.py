@@ -49,7 +49,10 @@ def register(server: Server) -> None:
 
     @server.tool()
     def ticket_get(dept: str, ticket_id: str, company_dir: str | None = None) -> dict:
-        """Read a ticket's full JSON."""
+        """Read a ticket's full JSON. The JSON carries the `work_kind`
+        field (code|deliverable) — the kind of work the runner dispatches on
+        (resolver: the ticket's field → the org-chart dept's kind → the
+        legacy name list). Set at creation; persists across moves and done."""
         return run("ticket-get", dept, ticket_id, "--json", company_dir=company_dir).to_dict()
 
     @server.tool()
